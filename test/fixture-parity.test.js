@@ -84,6 +84,28 @@ test('the master model fixture matches its Node generator and adds master:master
   assert.equal(v2.document.master, undefined);
 });
 
+// m5b-engine-clip-fades: only the faded clips hash differently; a clip without
+// fades omits the fields and every other entity keeps its v2 hash.
+test('the fades model fixture matches its Node generator and changes the faded clips only', () => {
+  const { FIXTURE_FILE_V2_FADES, buildFixtureV2Fades, FIXTURE_FILE_V2 } = generators.model;
+  const committed = JSON.parse(fs.readFileSync(FIXTURE_FILE_V2_FADES, 'utf8'));
+  assert.deepEqual(committed, buildFixtureV2Fades());
+  const v2 = JSON.parse(fs.readFileSync(FIXTURE_FILE_V2, 'utf8'));
+  const byRef = (leaves) => new Map(leaves.map((leaf) => [`${leaf.type}:${leaf.id}`, leaf.entityHash]));
+  const before = byRef(v2.entityHashes);
+  const after = byRef(committed.entityHashes);
+  const changed = [...after.keys()].filter((ref) => before.get(ref) !== after.get(ref));
+  assert.deepEqual(changed, ['clip:clp_1', 'clip:clp_2', 'clip:clp_3']);
+  assert.equal(before.has('clip:clp_3'), false);
+  const clp1 = committed.document.clips.find((clip) => clip.id === 'clp_1');
+  assert.deepEqual(clp1.fadeIn, { length: '480', curve: 'linear' });
+  assert.deepEqual(clp1.fadeOut, { length: '960', curve: 'equal_power' });
+  const clp3 = committed.document.clips.find((clip) => clip.id === 'clp_3');
+  assert.equal('fadeIn' in clp3 || 'fadeOut' in clp3, false);
+  assert.equal(after.get('clip:clp_3'), sha256Jcs(clp3));
+  assert.equal(documentHash(committed.entityHashes), committed.documentHash);
+});
+
 test('the media-name model fixture matches its Node generator', () => {
   const { FIXTURE_FILE_V2_MEDIA_NAME, buildFixtureV2MediaName } = generators.model;
   const committed = JSON.parse(fs.readFileSync(FIXTURE_FILE_V2_MEDIA_NAME, 'utf8'));
@@ -164,4 +186,30 @@ test('time conversions agree with hand-checked values', () => {
   const steps = segmentsOf([[0, 120000], [3840, 60000]]);
   assert.equal(toAudio(steps, 5760, 48000), 96000n);
   assert.equal(toMusic(steps, 72000, 48000), 4800n);
+});
+
+// m5b-engine-buses-sends: format v3 with buses and sends; the entities without a
+// new field keep their v2 hashes.
+test('the buses model fixture matches its Node generator and keeps the untouched v2 hashes', () => {
+  const { FIXTURE_FILE_V3_BUSES, buildFixtureV3Buses, FIXTURE_FILE_V2 } = generators.model;
+  const committed = JSON.parse(fs.readFileSync(FIXTURE_FILE_V3_BUSES, 'utf8'));
+  assert.deepEqual(committed, buildFixtureV3Buses());
+  assert.equal(committed.document.schemaVersion, 'siann.session_document.v3');
+  const v2 = JSON.parse(fs.readFileSync(FIXTURE_FILE_V2, 'utf8'));
+  const v2Hashes = new Map(v2.entityHashes.map((leaf) => [`${leaf.type}:${leaf.id}`, leaf.entityHash]));
+  const changed = committed.entityHashes
+    .filter((leaf) => v2Hashes.get(`${leaf.type}:${leaf.id}`) !== leaf.entityHash)
+    .map((leaf) => `${leaf.type}:${leaf.id}`);
+  assert.deepEqual(changed.sort(), [
+    'bus:bus-drums', 'bus:bus_fx', 'plugin_slot:slt_comp', 'root:root', 'send:snd_drums', 'send:snd_vox',
+    'track:trk-vox', 'track:trk_drums',
+  ]);
+  for (const leaf of committed.entityHashes.filter((l) => l.type === 'bus' || l.type === 'send')) {
+    const table = leaf.type === 'bus' ? committed.document.buses : committed.document.sends;
+    assert.equal(leaf.entityHash, sha256Jcs(table.find((e) => e.id === leaf.id)));
+  }
+  assert.equal(documentHash(committed.entityHashes), committed.documentHash);
+  const slot = committed.document.pluginSlots.find((s) => s.id === 'slt_comp');
+  assert.equal(slot.busId, 'bus-drums');
+  assert.equal(slot.trackId, undefined);
 });

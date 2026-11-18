@@ -317,19 +317,21 @@ void Butler::render(DiskStream& stream, std::int64_t position, std::size_t frame
         for (std::int64_t i = 0; i < to - from; ++i) {
             const auto f = static_cast<std::size_t>(i);
             const auto o = offset + f;
+            // ClipPlayerNode's expression too (siann-graph), so both paths agree.
+            const float gain = clip.gain * graph::fadeGain(clip.fade, from - clip.timelineStart + i, clip.length);
             if (mediaChannels == channels) {
                 for (int c = 0; c < channels; ++c) {
-                    scratch_[static_cast<std::size_t>(c)][o] += readBuffer_[static_cast<std::size_t>(c)][f] * clip.gain;
+                    scratch_[static_cast<std::size_t>(c)][o] += readBuffer_[static_cast<std::size_t>(c)][f] * gain;
                 }
             } else if (mediaChannels == 1) {
                 for (int c = 0; c < channels; ++c) {
-                    scratch_[static_cast<std::size_t>(c)][o] += readBuffer_[0][f] * clip.gain;
+                    scratch_[static_cast<std::size_t>(c)][o] += readBuffer_[0][f] * gain;
                 }
             } else if (channels == 1 && mediaChannels == 2) {
-                scratch_[0][o] += 0.5f * (readBuffer_[0][f] + readBuffer_[1][f]) * clip.gain;
+                scratch_[0][o] += 0.5f * (readBuffer_[0][f] + readBuffer_[1][f]) * gain;
             } else {
                 for (int c = 0; c < std::min(channels, mediaChannels); ++c) {
-                    scratch_[static_cast<std::size_t>(c)][o] += readBuffer_[static_cast<std::size_t>(c)][f] * clip.gain;
+                    scratch_[static_cast<std::size_t>(c)][o] += readBuffer_[static_cast<std::size_t>(c)][f] * gain;
                 }
             }
         }

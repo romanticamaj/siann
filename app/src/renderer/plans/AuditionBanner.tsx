@@ -16,6 +16,7 @@ import type { SessionClient } from '../model/session-client';
 import { Capable } from '../shell/Capable';
 import { runAction, type PlanAction } from './actions';
 import { describeStep } from './describe';
+import { ISOLATE } from './isolate';
 import { usePlanSnapshot, useStepNames } from './hooks';
 import { RefusalLine, type Refusal } from './RefusalLine';
 
@@ -52,7 +53,9 @@ export function AuditionBanner({ client, plans }: AuditionBannerProps) {
   };
   return (
     <div className="audition-banner" data-testid="audition-banner" role="region" aria-label={t('banner.label')}>
-      <span className="audition-banner-text">{text}</span>
+      <span className="audition-banner-text" {...ISOLATE}>
+        {text}
+      </span>
       <Capable method="audition.hear">
         <button type="button" data-testid="banner-hear-main" disabled={busy} onClick={() => run({ kind: 'hear', side: 'main' })}>
           {t('plans.hearMain')}

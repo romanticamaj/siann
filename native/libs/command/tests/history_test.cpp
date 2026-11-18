@@ -1070,3 +1070,85 @@ TEST_CASE("master.set_gain is one revision each; undo and redo restore the first
     CHECK(same.diff.empty());
     CHECK(same.envelope.documentHash == none);
 }
+
+// m5b-engine-buses-sends: bus.remove is one revision that removes the bus, its
+// sends and slots and reroutes its inputs; one undo restores all of it.
+TEST_CASE("One undo of bus.remove restores the bus, its sends, slots and routing; redo removes them again",
+          "[history][buses]") {
+    History history = fresh();
+    history.commit({addTrack("trk_1"), addTrack("trk_2"), cmd(R"({"op":"bus.add","busId":"bus_a","name":"A"})"),
+                    cmd(R"({"op":"bus.add","busId":"bus_b","name":"B"})"),
+                    cmd(R"({"op":"send.add","sendId":"snd_1","trackId":"trk_1","busId":"bus_a","pre":true})"),
+                    cmd(R"({"op":"track.set_output","trackId":"trk_2","output":{"busId":"bus_a"}})"),
+                    cmd(R"({"op":"bus.set_output","busId":"bus_b","output":{"busId":"bus_a"}})"),
+                    cmd(R"({"op":"plugin.insert","busId":"bus_a","index":0,"slotId":"slt_1",
+                        "descriptor":{"format":"clap","uid":"u"},"stateBlob":null})")},
+                   "a", "t");
+    const auto routed = history.head().envelope.documentHash;
+    const std::size_t before = history.revisions().size();
+
+    const Revision& removed = history.commit({cmd(R"({"op":"bus.remove","busId":"bus_a"})")}, "a", "t");
+    CHECK(history.revisions().size() == before + 1);
+    CHECK(removed.diff.size() == 7);  // root, trk_1, trk_2, slt_1, bus_a, bus_b, snd_1
+    const Document& gone = history.head().document;
+    CHECK(gone.bus("bus_a") == nullptr);
+    CHECK(gone.send("snd_1") == nullptr);
+    CHECK(gone.pluginSlot("slt_1") == nullptr);
+    CHECK_FALSE(gone.track("trk_2")->output.has_value());
+    CHECK_FALSE(gone.bus("bus_b")->output.has_value());
+    const auto removedHash = removed.envelope.documentHash;
+
+    const Revision& undone = history.undo("a", "t");
+    CHECK(undone.envelope.documentHash == routed);
+    const Document& back = history.head().document;
+    REQUIRE(back.bus("bus_a") != nullptr);
+    CHECK(back.bus("bus_a")->inserts == std::vector<std::string>{"slt_1"});
+    REQUIRE(back.send("snd_1") != nullptr);
+    CHECK(back.send("snd_1")->pre);
+    CHECK(back.track("trk_1")->sends == std::vector<std::string>{"snd_1"});
+    CHECK(back.track("trk_2")->output == std::optional<std::string>("bus_a"));
+    CHECK(back.bus("bus_b")->output == std::optional<std::string>("bus_a"));
+    CHECK(back.root().busOrder == std::vector<std::string>{"bus_a", "bus_b"});
+    CHECK(back.validate().empty());
+
+    const Revision& redone = history.redo("a", "t");
+    CHECK(redone.envelope.documentHash == removedHash);
+    CHECK(history.head().document.bus("bus_a") == nullptr);
+}
+
+// m5b-engine-clip-fades: clip.set_fade is one revision; undo restores the
+// pre-fade hash and redo the faded one. A clip.trim that shortens the fades is
+// one revision too, with one diff entry for the clip.
+TEST_CASE("clip.set_fade is one revision; undo and redo restore the hashes", "[history][fades]") {
+    History history = fresh();
+    history.commit({addTrack("trk_1"), addMedia("med_1"), placeClip("clp_1", "trk_1", "med_1")}, "a", "t", Cause::plan);
+    const EntityRef ref{EntityType::clip, "clp_1"};
+    const auto before = history.head().envelope.documentHash;
+    const std::size_t count = history.revisions().size();
+
+    const Revision& set = history.commit(
+        {cmd(R"({"op":"clip.set_fade","clipId":"clp_1","fadeIn":{"length":"480","curve":"linear"},)"
+             R"("fadeOut":{"length":"960","curve":"equal_power"}})")},
+        "a", "t");
+    CHECK(history.revisions().size() == count + 1);
+    REQUIRE(set.diff.size() == 1);
+    CHECK(set.diff[0].entity == ref);
+    CHECK(set.diff[0].change == DiffEntry::Change::modified);
+    const auto faded = set.envelope.documentHash;
+    CHECK(faded != before);
+
+    CHECK(history.undo("a", "t").envelope.documentHash == before);
+    CHECK(history.head().document.clip("clp_1")->fadeIn.length == 0);
+    CHECK(history.redo("a", "t").envelope.documentHash == faded);
+    CHECK(history.head().document.clip("clp_1")->fadeOut.length == 960);
+
+    // The trim to 1000 frames shortens both fades in its own single revision.
+    const Revision& trimmed = history.commit(
+        {cmd(R"({"op":"clip.trim","clipId":"clp_1","sourceStart":"0","length":"1000"})")}, "a", "t");
+    REQUIRE(trimmed.diff.size() == 1);
+    CHECK(trimmed.diff[0].entity == ref);
+    CHECK(history.head().document.clip("clp_1")->fadeIn.length == 480);
+    CHECK(history.head().document.clip("clp_1")->fadeOut.length == 520);
+    CHECK(history.undo("a", "t").envelope.documentHash == faded);
+    CHECK(history.head().document.clip("clp_1")->fadeOut.length == 960);
+}

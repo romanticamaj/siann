@@ -38,7 +38,6 @@ function commandStep(command, manifest) {
     return {
       kind: 'create_track',
       name: command.name,
-      inputChannels: command.inputChannels,
       outputChannels: command.outputChannels,
       count: command.count,
     };
@@ -69,8 +68,6 @@ function commandStep(command, manifest) {
       kind: 'render_preview',
       outputPath: command.outputPath,
       sampleRate: command.sampleRate,
-      bitDepth: command.bitDepth,
-      normalize: command.normalize,
     };
   }
   if (command.op === 'observe_session') {

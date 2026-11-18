@@ -131,7 +131,8 @@ test('the editing keys (m5-ui-edit-basics) never fire while typing; 1 is the num
     assert.equal(resolveKey({ ...key, targetIsTextField: true }, CUBASE_PRESET), null, `${code} while typing`);
   }
   assert.equal(resolveKey(input({ code: 'Digit1', key: '1' }), CUBASE_PRESET)?.commandId, 'tool.select');
-  assert.equal(resolveKey(input({ code: 'Numpad1', key: '1' }), CUBASE_PRESET)?.commandId, undefined);
+  // Num 1 is not the tool: it goes to the left locator (m5-ui-loop-click).
+  assert.equal(resolveKey(input({ code: 'Numpad1', key: '1' }), CUBASE_PRESET)?.commandId, 'transport.toLeftLocator');
   assert.equal(resolveKey(input({ code: 'Numpad3', key: '3' }), CUBASE_PRESET)?.commandId, undefined);
   // Cmd+D on macOS, Ctrl+D elsewhere.
   assert.equal(resolveKey(input({ code: 'KeyD', key: 'd', modifiers: { ...NONE, meta: true }, platform: 'mac' }), CUBASE_PRESET)?.commandId, 'edit.duplicate');
@@ -191,4 +192,49 @@ test('F toggles auto-scroll in the project zone only; the numpad keys are not th
   assert.equal(resolveKey(input({ code: 'Enter', key: 'Enter' }), CUBASE_PRESET)?.commandId, 'focus.enterZone');
   // The numpad's decimal point (key 'Delete' with Num Lock off) is not Delete.
   assert.equal(resolveKey(input({ code: 'NumpadDecimal', key: 'Delete' }), CUBASE_PRESET)?.commandId, 'transport.toStart');
+});
+
+// m5-ui-loop-click: the locator, cycle and metronome keys.
+const LOOP_KEYS: Array<{ code: string; key: string; modifiers?: Partial<typeof NONE>; commandId: string }> = [
+  { code: 'KeyP', key: 'p', commandId: 'transport.locatorsToSelection' },
+  { code: 'KeyP', key: 'p', modifiers: { alt: true }, commandId: 'transport.loopSelection' },
+  { code: 'KeyC', key: 'c', commandId: 'transport.metronomeToggle' },
+  { code: 'NumpadDivide', key: '/', commandId: 'transport.cycleToggle' },
+  { code: 'Slash', key: '/', commandId: 'transport.cycleToggle' },
+  { code: 'Numpad1', key: '1', commandId: 'transport.toLeftLocator' },
+  { code: 'Numpad2', key: '2', commandId: 'transport.toRightLocator' },
+  { code: 'Digit1', key: '!', modifiers: { shift: true }, commandId: 'transport.toLeftLocator' },
+  { code: 'Digit2', key: '@', modifiers: { shift: true }, commandId: 'transport.toRightLocator' },
+  { code: 'Numpad1', key: '1', modifiers: { ctrl: true }, commandId: 'transport.setLeftLocator' },
+  { code: 'Numpad2', key: '2', modifiers: { ctrl: true }, commandId: 'transport.setRightLocator' },
+];
+
+test('the locator, cycle and metronome keys resolve in every zone and never in a text field', () => {
+  for (const { code, key, modifiers, commandId } of LOOP_KEYS) {
+    const press = input({ code, key, modifiers: { ...NONE, ...modifiers } });
+    for (const focusedZone of ['project', 'left', 'lower', 'right'] as const) {
+      assert.equal(resolveKey({ ...press, focusedZone }, CUBASE_PRESET)?.commandId, commandId, `${code} in ${focusedZone}`);
+    }
+    assert.equal(resolveKey({ ...press, targetIsTextField: true }, CUBASE_PRESET), null, `${code} in a text field`);
+    assert.equal(resolveKey({ ...press, offline: true }, CUBASE_PRESET), null, `${code} while offline`);
+  }
+  // Cmd+Num 1 on macOS sets the left locator; the number row's 1 stays the tool, Num 1 is not Digit1.
+  assert.equal(resolveKey(input({ code: 'Numpad1', key: '1', modifiers: { ...NONE, meta: true }, platform: 'mac' }), CUBASE_PRESET)?.commandId, 'transport.setLeftLocator');
+  assert.equal(resolveKey(input({ code: 'Digit1', key: '1' }), CUBASE_PRESET)?.commandId, 'tool.select');
+  assert.equal(resolveKey(input({ code: 'KeyP', key: 'P', modifiers: { ...NONE, shift: true } }), CUBASE_PRESET)?.commandId, 'transport.enterPosition');
+});
+
+test('Ctrl+P opens the Pool on Windows and Linux, Cmd+P on macOS, from any zone and not while typing (m5-ui-port-toolbar)', () => {
+  const ctrlP = input({ code: 'KeyP', key: 'p', modifiers: { ...NONE, ctrl: true } });
+  const cmdP = input({ code: 'KeyP', key: 'p', modifiers: { ...NONE, meta: true }, platform: 'mac' });
+  assert.equal(chordOf(ctrlP), 'Mod+P');
+  assert.equal(chordOf(cmdP), 'Mod+P');
+  for (const key of [ctrlP, cmdP]) {
+    for (const focusedZone of ['project', 'left', 'lower', 'right'] as const) {
+      assert.equal(resolveKey({ ...key, focusedZone }, CUBASE_PRESET)?.commandId, 'pool.open', focusedZone);
+    }
+    assert.equal(resolveKey({ ...key, targetIsTextField: true }, CUBASE_PRESET), null);
+  }
+  // Ctrl+P on macOS is the Control key: not the Pool.
+  assert.notEqual(resolveKey(input({ code: 'KeyP', key: 'p', modifiers: { ...NONE, ctrl: true }, platform: 'mac' }), CUBASE_PRESET)?.commandId, 'pool.open');
 });

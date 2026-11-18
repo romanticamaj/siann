@@ -20,6 +20,21 @@ function oneDecimal(tenths: number): string {
   return `${tenths > 0 ? '+' : '-'}${text}`;
 }
 
+// Two decimals, the same rules: half away from zero, an explicit sign, no
+// sign on zero (the info line's volume, UI redesign 3.2 and 10.8).
+function twoDecimals(hundredths: number): string {
+  if (hundredths === 0) return '0.00';
+  const text = (Math.abs(hundredths) / 100).toFixed(2);
+  return `${hundredths > 0 ? '+' : '-'}${text}`;
+}
+
+// A gain in milli-dB with two decimals, as the info line shows a clip's
+// volume: 0.00 dB, -3.50 dB, +1.24 dB, -inf dB.
+export function formatDb2(milliDb: number): string {
+  if (milliDb === MINUS_INFINITY_MILLI_DB) return '-inf dB';
+  return `${twoDecimals(Math.sign(milliDb) * Math.round(Math.abs(milliDb) / 10))} dB`;
+}
+
 // A gain in milli-dB as the mixer shows it: +1.5 dB, -6.0 dB, 0.0 dB, -inf dB.
 export function formatDb(milliDb: number): string {
   if (milliDb === MINUS_INFINITY_MILLI_DB) return '-inf dB';

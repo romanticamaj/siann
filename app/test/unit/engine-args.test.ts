@@ -6,7 +6,15 @@ import os from 'node:os';
 import path from 'node:path';
 import { test } from 'node:test';
 
-import { engineArgs, engineTestArgs, pluginRegistryFile } from '../../src/main/engine-args';
+import {
+  TEST_CAPABILITIES_ARG,
+  TEST_ENVIRONMENT_ARG,
+  engineArgs,
+  engineTestArgs,
+  fidelityEnvironmentArgs,
+  pluginRegistryFile,
+  testCapabilitiesArgs,
+} from '../../src/main/engine-args';
 
 const session = '/tmp/Untitled.siann';
 
@@ -119,4 +127,47 @@ test('SIANN_ENGINE_TEST_ARGS that starts as JSON but is not an array of strings 
   for (const text of ['[--device fake]', '["--device", 7]', '[', '["a"] trailing']) {
     assert.throws(() => engineTestArgs(text), /SIANN_ENGINE_TEST_ARGS/, text);
   }
+});
+
+// m5-ui-loop-click: SIANN_TEST_CAPABILITIES reaches the renderer only under
+// SIANN_SHELL_TEST=1, as one argument carrying the file's JSON.
+test('SIANN_TEST_CAPABILITIES: one renderer argument under SIANN_SHELL_TEST=1, nothing otherwise', () => {
+  const answer = { methods: ['engine.capabilities'], commands: [], features: { plans: true } };
+  const read = (file: string) => {
+    assert.equal(file, '/tmp/caps.json');
+    return JSON.stringify(answer);
+  };
+  const args = testCapabilitiesArgs({ SIANN_SHELL_TEST: '1', SIANN_TEST_CAPABILITIES: '/tmp/caps.json' }, read);
+  assert.equal(args.length, 1);
+  assert.ok(args[0]!.startsWith(TEST_CAPABILITIES_ARG));
+  assert.deepEqual(JSON.parse(decodeURIComponent(args[0]!.slice(TEST_CAPABILITIES_ARG.length))), answer);
+  // Not under test, or no file: nothing, and the file is not read.
+  const never = () => assert.fail('read');
+  assert.deepEqual(testCapabilitiesArgs({ SIANN_TEST_CAPABILITIES: '/tmp/caps.json' }, never), []);
+  assert.deepEqual(testCapabilitiesArgs({ SIANN_SHELL_TEST: '0', SIANN_TEST_CAPABILITIES: '/tmp/caps.json' }, never), []);
+  assert.deepEqual(testCapabilitiesArgs({ SIANN_SHELL_TEST: '1' }, never), []);
+  // Not an engine.capabilities answer: refused.
+  assert.throws(() => testCapabilitiesArgs({ SIANN_SHELL_TEST: '1', SIANN_TEST_CAPABILITIES: '/tmp/caps.json' }, () => '{"commands": []}'), /SIANN_TEST_CAPABILITIES/);
+});
+
+// m5-ui-alignment-chrome (UI redesign 10.2): SIANN_FIDELITY_ENVIRONMENT, the
+// manifest's environment object as JSON, reaches the renderer only under
+// SIANN_SHELL_TEST=1, as one argument, the same shape as the capabilities'.
+test('SIANN_FIDELITY_ENVIRONMENT: one renderer argument under SIANN_SHELL_TEST=1, nothing otherwise', () => {
+  const environment = {
+    device: { id: 'ASIO/Scarlett 4i4', sampleRate: 48000, bufferFrames: 128, inputLatencyFrames: 128, outputLatencyFrames: 128 },
+    engineAbout: { name: 'siann-engine', version: '0.1.0', license: 'X', source: { commit: 'a'.repeat(40), dirty: false } },
+  };
+  const text = JSON.stringify(environment);
+  const args = fidelityEnvironmentArgs({ SIANN_SHELL_TEST: '1', SIANN_FIDELITY_ENVIRONMENT: text });
+  assert.equal(args.length, 1);
+  assert.ok(args[0]!.startsWith(TEST_ENVIRONMENT_ARG));
+  assert.deepEqual(JSON.parse(decodeURIComponent(args[0]!.slice(TEST_ENVIRONMENT_ARG.length))), environment);
+  // The variable does nothing without SIANN_SHELL_TEST=1.
+  assert.deepEqual(fidelityEnvironmentArgs({ SIANN_FIDELITY_ENVIRONMENT: text }), []);
+  assert.deepEqual(fidelityEnvironmentArgs({ SIANN_SHELL_TEST: '0', SIANN_FIDELITY_ENVIRONMENT: text }), []);
+  assert.deepEqual(fidelityEnvironmentArgs({ SIANN_SHELL_TEST: '1' }), []);
+  // Not an object: refused, so a run never draws what it did not mean.
+  assert.throws(() => fidelityEnvironmentArgs({ SIANN_SHELL_TEST: '1', SIANN_FIDELITY_ENVIRONMENT: '[1]' }), /SIANN_FIDELITY_ENVIRONMENT/);
+  assert.throws(() => fidelityEnvironmentArgs({ SIANN_SHELL_TEST: '1', SIANN_FIDELITY_ENVIRONMENT: 'nonsense' }), /SIANN_FIDELITY_ENVIRONMENT/);
 });

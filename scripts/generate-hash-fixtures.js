@@ -82,6 +82,15 @@ const valid = [
     entity('locators', 'locators'),
     entity('track', 'trk_1'),
   ]],
+  // m5b-engine-buses-sends: bus and send leaves sort as any other ("bus" <
+  // "clip" < ... < "send" < "track").
+  ['bus_and_send_leaves', [
+    entity('track', 'trk_1'),
+    entity('send', 'snd_1'),
+    entity('bus', 'bus_b'),
+    entity('root', 'root'),
+    entity('bus', 'bus_a'),
+  ]],
 ].map(([name, entities]) => ({ name, entities, documentHash: expectedDocumentHash(entities) }));
 
 const valid64 = 'a'.repeat(64);

@@ -26,6 +26,7 @@
 #include "siann/host/fake_audio_device.hpp"
 #include "siann/host/fake_callback_clock.hpp"
 #include "siann/host/manual_audio_device.hpp"
+#include "siann/protocol/realtime_channel.hpp"
 #include "siann/protocol/transport_port.hpp"
 #include "siann/rt/realtime_thread.hpp"
 #include "support/flac_test_encoder.hpp"
@@ -753,17 +754,24 @@ TEST_CASE("the host publishes the meter legend after each graph, and frames carr
 
     // A frame before any meter reading: the transport is what a client needs.
     rig.host->tick();
-    auto frames = harness.transport.binary(realtimeConnection);
-    REQUIRE_FALSE(frames.empty());
-    auto frame = protocol::decodeMeterFrame(frames.back());
+    // Each tick sends the meter frame, then the loudness frame (m5b-engine-load-loudness).
+    const auto newestMeterFrame = [&] {
+        const auto frames = harness.transport.binary(realtimeConnection);
+        for (auto it = frames.rbegin(); it != frames.rend(); ++it) {
+            if (auto decoded = protocol::decodeMeterFrame(*it)) {
+                return decoded;
+            }
+        }
+        return std::optional<protocol::MeterFrame>{};
+    };
+    auto frame = newestMeterFrame();
     REQUIRE(frame.has_value());
     CHECK_FALSE(frame->playing);
     CHECK(frame->playheadSamples == 0);
 
     rig.host->locate(4'800);
     rig.host->tick();
-    frames = harness.transport.binary(realtimeConnection);
-    frame = protocol::decodeMeterFrame(frames.back());
+    frame = newestMeterFrame();
     REQUIRE(frame.has_value());
     CHECK(frame->playheadSamples == 4'800);
 
@@ -1359,4 +1367,218 @@ TEST_CASE("a master gesture through the port starts from the heard side and canc
     const protocol::GestureEnd still = port.end(target, "user", "t");
     CHECK(still.revision == nullptr);
     CHECK(still.value == -3'000.0);
+}
+
+// m5b-engine-buses-sends: bus gain and send level targets through the host's
+// GesturePort on the live graph: not_found for an unknown id, the start value
+// from the document, cancel back to it, end one bus.set_gain / send.set_level.
+TEST_CASE("bus and send gestures through the port", "[engine][host][gesture][buses]") {
+    Rig rig;
+    session::Session& session = rig.fixture.session;
+    rig.fixture.exec(R"({"op":"bus.add","busId":"b1","name":"Bus"})");
+    rig.fixture.exec(R"({"op":"track.set_output","trackId":"trk_a","output":{"busId":"b1"}})");
+    rig.fixture.exec(R"({"op":"send.add","sendId":"s1","trackId":"trk_b","busId":"b1","levelMilliDb":-6000})");
+    rig.host->auditionPort()->mainCommitted();
+    rig.host->play();
+    rig.settle();
+    rig.pump(8);
+    protocol::GesturePort& port = *rig.host;
+    const protocol::GestureTarget bus = protocol::GestureTarget::busGain("b1");
+    const protocol::GestureTarget send = protocol::GestureTarget::sendLevel("s1");
+    CHECK(bus.ref() == "bus:b1");
+    CHECK(send.ref() == "send:s1");
+    CHECK(send.param == "level");
+    // The bus meter peak over the trk_a meter peak, both of the newest block: trk_a
+    // and trk_b's send sum on b1, so mute trk_b's send to read the bus gain alone.
+    try {
+        (void)port.begin(protocol::GestureTarget::busGain("b9"));
+        FAIL("expected not_found");
+    } catch (const protocol::GesturePortError& error) {
+        CHECK(error.code() == "not_found");
+    }
+    try {
+        (void)port.begin(protocol::GestureTarget::sendLevel("s9"));
+        FAIL("expected not_found");
+    } catch (const protocol::GesturePortError& error) {
+        CHECK(error.code() == "not_found");
+    }
+
+    CHECK(port.begin(bus) == 0.0);
+    port.update(bus, -20'000.0);
+    rig.pump(8);
+    port.cancel(bus);
+    rig.pump(8);
+    CHECK(port.begin(send) == -6'000.0);
+    port.cancel(send);
+
+    const std::size_t revisions = session.history().revisions().size();
+    const std::size_t compiles = rig.engine().compileCount();
+    CHECK(port.begin(bus) == 0.0);
+    port.update(bus, -3'000.0);
+    rig.pump(4);
+    const protocol::GestureEnd ended = port.end(bus, "user", "t");
+    REQUIRE(ended.revision != nullptr);
+    CHECK(ended.value == -3'000.0);
+    REQUIRE(ended.revision->commands.size() == 1);
+    CHECK(ended.revision->commands[0].op() == "bus.set_gain");
+    CHECK(session.history().head().document.bus("b1")->gain.milliDb == -3'000);
+
+    CHECK(port.begin(send) == -6'000.0);
+    port.update(send, -12'000.0);
+    rig.pump(4);
+    const protocol::GestureEnd sent = port.end(send, "user", "t");
+    REQUIRE(sent.revision != nullptr);
+    CHECK(sent.startValue == -6'000.0);
+    CHECK(sent.value == -12'000.0);
+    CHECK(sent.revision->commands[0].op() == "send.set_level");
+    CHECK(session.history().head().document.send("s1")->level.milliDb == -12'000);
+    CHECK(session.history().revisions().size() == revisions + 2);
+    rig.host->auditionPort()->mainCommitted();
+    rig.pump(8);
+    CHECK(rig.engine().compileCount() == compiles);
+    const auto meter = rig.engine().dispatcher().meter("bus:b1");
+    REQUIRE(meter.has_value());
+    CHECK(meter->reading.peak[0] > 0.0f);
+}
+
+// ---- DSP load and loudness (m5b-engine-load-loudness, Protocol v0 item 31) ---------
+
+namespace {
+
+bool minusInfinity(float value) {
+    return std::isinf(value) && value < 0.0f;
+}
+
+// Replaces the rig's two clips with `seconds` of a 1 kHz stereo sine at `dbfs`
+// peak per channel on trk_a (EBU Tech 3341's test signal), from position 0.
+void placeTone(Rig& rig, double dbfs, double seconds) {
+    const auto frames = static_cast<std::int64_t>(seconds * 48'000.0);
+    media::AudioBuffer tone;
+    tone.info = media::AudioInfo{2, 48'000, frames};
+    tone.samples.reserve(static_cast<std::size_t>(frames) * 2);
+    const double amplitude = std::pow(10.0, dbfs / 20.0);
+    for (std::int64_t i = 0; i < frames; ++i) {
+        const auto v = static_cast<float>(amplitude * std::sin(2.0 * 3.14159265358979323846 * 1'000.0 *
+                                                                static_cast<double>(i) / 48'000.0));
+        tone.samples.push_back(v);
+        tone.samples.push_back(v);
+    }
+    const fs::path file = rig.fixture.dir.path() / "tone.wav";
+    io::writeFileAtomic(file, media::encodeWavFloat32(tone));
+    session::importMedia(rig.fixture.session, file, "med_tone", "test", "t");
+    rig.fixture.exec(R"({"op":"clip.remove","clipId":"clp_a"})");
+    rig.fixture.exec(R"({"op":"clip.remove","clipId":"clp_b"})");
+    rig.fixture.exec(live_rig::place("clp_tone", "trk_a", "med_tone", 0, 0, frames));
+    rig.host->auditionPort()->mainCommitted();
+    rig.service();
+}
+
+int blocksOf(double seconds) {
+    return static_cast<int>(seconds * 48'000.0 / kBlock);
+}
+
+}  // namespace
+
+TEST_CASE("a -23 dBFS 1 kHz tone through the engine reads -23 LUFS, and -6 dB of master gain 6 LU less",
+          "[engine][host][loudness]") {
+    const std::uint64_t violations = rt::allocationViolations();
+    Rig rig;
+    placeTone(rig, -23.0, 8.0);
+    rig.host->play();
+    rig.settle();
+    rig.pump(blocksOf(5.0));
+    const realtime::LoudnessReading reading = rig.engine().driver().loudness();
+    CHECK(std::abs(reading.momentary - -23.0f) <= 0.1f);
+    CHECK(std::abs(reading.shortTerm - -23.0f) <= 0.1f);
+    CHECK(std::abs(reading.integrated - -23.0f) <= 0.1f);
+
+    // The master gain is applied before the meter.
+    rig.fixture.exec(R"({"op":"master.set_gain","gainMilliDb":-6000})");
+    rig.host->auditionPort()->mainCommitted();
+    rig.pump(blocksOf(1.0));
+    CHECK(std::abs((reading.momentary - rig.engine().driver().loudness().momentary) - 6.0f) <= 0.05f);
+    CHECK(rt::allocationViolations() == violations);
+}
+
+TEST_CASE("a realtime client receives loudness frames while the session plays", "[engine][host][loudness]") {
+    Rig rig;
+    placeTone(rig, -23.0, 4.0);
+    protocol::ServerOptions serverOptions = protocol::testing::manualOptions();
+    serverOptions.transportPort = rig.host.get();
+    serverOptions.auditionPort = rig.host->auditionPort();
+    protocol::testing::Harness harness(rig.fixture.session, serverOptions);
+    const protocol::ConnectionId realtimeConnection = harness.realtimeAuthed();
+    rig.host->attachPublisher(harness.server.realtime(), harness.server.events());
+
+    rig.host->play();
+    rig.settle();
+    rig.pump(blocksOf(1.0));
+    rig.host->tick();
+    const auto frames = harness.transport.binary(realtimeConnection);
+    REQUIRE(frames.size() >= 2);
+    // Every tick: the meter frame, then the loudness frame.
+    CHECK(protocol::decodeMeterFrame(frames[frames.size() - 2]).has_value());
+    const auto loudness = protocol::decodeLoudnessFrame(frames.back());
+    REQUIRE(loudness.has_value());
+    CHECK(std::abs(loudness->momentary - -23.0f) <= 0.1f);
+    CHECK(loudness->integrated == rig.engine().driver().loudness().integrated);
+    CHECK(protocol::decodeMeterFrame(frames.back()) == std::nullopt);  // an SMTR-only client ignores it
+}
+
+TEST_CASE("engine.select_device keeps the integrated value; meter.reset_loudness returns it to -inf",
+          "[engine][host][loudness][devices]") {
+    Rig rig;
+    placeTone(rig, -23.0, 8.0);
+    rig.host->play();
+    rig.settle();
+    rig.pump(blocksOf(3.0));
+    const float integrated = rig.engine().driver().loudness().integrated;
+    REQUIRE(std::abs(integrated - -23.0f) <= 0.1f);
+
+    rig.host->selectDevice("b");
+    rig.useMade();
+    CHECK(rig.engine().driver().loudness().integrated == integrated);
+    // Stopped on the new device: silence. The gating blocks that overlap the
+    // stop still count, then the absolute gate leaves the silence out.
+    rig.pump(blocksOf(0.5));
+    const float held = rig.engine().driver().loudness().integrated;
+    CHECK(held > -24.0f);  // three partial blocks against about 27 at -23, not a restart
+    rig.pump(blocksOf(1.0));
+    CHECK(rig.engine().driver().loudness().integrated == held);
+
+    rig.host->resetLoudness();
+    rig.pump(1);
+    CHECK(minusInfinity(rig.engine().driver().loudness().integrated));
+    rig.host->play();
+    rig.settle();
+    rig.pump(blocksOf(2.0));
+    CHECK(std::abs(rig.engine().driver().loudness().integrated - -23.0f) <= 0.1f);
+
+    // Without a device it is no error: the meter is the engine's.
+    rig.device->reportLost();
+    rig.host->tick();
+    REQUIRE_FALSE(rig.host->status().device.has_value());
+    REQUIRE_NOTHROW(rig.host->resetLoudness());
+    CHECK(minusInfinity(rig.engine().driver().loudness().integrated));
+}
+
+TEST_CASE("engine.status load is the driver's and 0 once the device is gone", "[engine][host][load]") {
+    playback::PlaybackOptions options = live_rig::testOptions();
+    options.callbackClock = &host::fakeCallbackClock;
+    host::setFakeCallbackNanos(1'000'000);  // 1 ms of a 5.33 ms period
+    Rig rig(options);
+    CHECK(rig.host->status().load.average == 0.0);
+    rig.pump(187);  // 47,872 frames: not a full second yet
+    CHECK(rig.host->status().load.average == 0.0);
+    rig.pump(1);
+    const protocol::EngineStatus status = rig.host->status();
+    const double expected = 1'000'000.0 * 48'000.0 / (kBlock * 1e9);
+    CHECK(std::abs(status.load.average - expected) <= 1e-9);
+    CHECK(std::abs(status.load.peak - expected) <= 1e-9);
+
+    rig.device->reportLost();
+    rig.host->tick();
+    REQUIRE_FALSE(rig.host->status().device.has_value());
+    CHECK(rig.host->status().load.average == 0.0);
+    CHECK(rig.host->status().load.peak == 0.0);
 }

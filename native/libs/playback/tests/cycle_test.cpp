@@ -516,3 +516,107 @@ TEST_CASE("Cycling through device-side SRC equals the range laid end to end thro
         CHECK(mismatches == 0);
     }
 }
+
+// ---- m5b-engine-clip-fades: faded clips through the realtime path -----------
+
+namespace {
+
+// The rig's tracks plus a long stereo clip with a one-second fade in (linear)
+// and a one-second fade out (equal power) at 48 kHz, far longer than the 5 ms
+// duck, and a short faded mono clip on trk_b.
+struct FadeFixture : Fixture {
+    static constexpr std::int64_t kFrames = 200'000;
+    static constexpr std::int64_t kFade = 48'000;
+
+    FadeFixture() {
+        importWav("med_long", 2, kFrames);
+        exec(addTrack("trk_c"));
+        exec(place("clp_c", "trk_c", "med_long", 0, 0, kFrames));
+        exec(R"({"op":"clip.set_fade","clipId":"clp_c","fadeIn":{"length":"48000","curve":"linear"},)"
+             R"("fadeOut":{"length":"48000","curve":"equal_power"}})");
+        exec(R"({"op":"clip.set_fade","clipId":"clp_b","fadeIn":{"length":"777","curve":"equal_power"},)"
+             R"("fadeOut":{"length":"5001","curve":"linear"}})");
+    }
+};
+
+}  // namespace
+
+TEST_CASE("A locate into the middle of a fade plays the faded offline render from the end of the duck",
+          "[playback][fades][locate]") {
+    FadeFixture f;
+    const auto reference = offline(f.doc(), f.bundle(), FadeFixture::kFrames);
+    Live live(f.session, stoppedOptions());
+    live.engine.transport().locate(2'000);
+    live.engine.transport().play();
+    Runner run{live};
+    run.untilPlaying();
+    for (int b = 0; b < 10; ++b) {
+        run.step();
+    }
+    constexpr std::int64_t target = 30'001;  // inside clp_c's fade in, not on a block boundary
+    live.engine.transport().locate(target);
+    const std::uint64_t generation = live.engine.transport().generation();
+    for (int b = 0; b < 64 && live.engine.driver().appliedLocate() < generation; ++b) {
+        run.step();
+    }
+    REQUIRE(live.engine.driver().appliedLocate() >= generation);
+    const std::int64_t at = live.engine.driver().playhead();
+    REQUIRE(at >= target);
+    REQUIRE(at < FadeFixture::kFade);
+    // The block after the duck rises from the target: skip it, then compare
+    // through the rest of the fade in.
+    Expected expected{reference, at, 0, 0, false};
+    expected.skip(run.step()[0].size());
+    std::size_t mismatches = 0;
+    while (expected.position < FadeFixture::kFade + 2'000) {
+        mismatches += expected.compare(run.step());
+    }
+    CHECK(mismatches == 0);
+    CHECK(live.engine.underruns() == 0);
+}
+
+TEST_CASE("A cycle that starts inside a fade in and ends inside a fade out nulls against the range end to end",
+          "[playback][fades][cycle][null]") {
+    FadeFixture f;
+    constexpr std::int64_t left = 20'003;                        // inside the fade in
+    constexpr std::int64_t right = FadeFixture::kFrames - 9'999;  // inside the fade out
+    static_assert(left % kBlock != 0 && right % kBlock != 0);
+    f.exec(setLocators(left, right));
+    const auto reference = offline(f.doc(), f.bundle(), right);
+
+    Live live(f.session, stoppedOptions());
+    live.engine.setCycle(true);
+    live.engine.transport().locate(left - 5'000);
+    live.engine.transport().play();
+    Runner run{live};
+    Expected expected{reference, left - 5'000, left, right};
+    expected.skip(run.untilPlaying()[0].size());
+    std::size_t mismatches = 0;
+    while (expected.wraps < 4) {
+        mismatches += expected.compare(run.step());
+    }
+    CHECK(mismatches == 0);
+    CHECK(expected.wraps == 4);
+    CHECK(live.engine.underruns() == 0);
+    CHECK(live.engine.transport().lateLocates() == 0);
+}
+
+TEST_CASE("No audio-thread allocation across cycle wraps with faded clips", "[playback][fades][cycle][rt]") {
+    FadeFixture f;
+    f.exec(setLocators(40'003, 43'007));  // inside clp_c's fade in
+    Live live(f.session, stoppedOptions());
+    live.engine.setCycle(true);
+    live.engine.transport().locate(40'003);
+    live.engine.transport().play();
+    Runner run{live};
+    run.untilPlaying();
+    for (int b = 0; b < 20; ++b) {
+        run.step();
+    }
+    const auto before = rt::allocationViolations();
+    for (int b = 0; b < 200; ++b) {
+        run.step();
+    }
+    CHECK(rt::allocationViolations() == before);
+    CHECK(live.engine.underruns() == 0);
+}

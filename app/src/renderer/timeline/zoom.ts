@@ -6,7 +6,7 @@
 // to MAX_FRAMES_PER_PIXEL; the scroll never goes before the session's start.
 // Positions stay BigInt, as in geometry.ts. Framework-free.
 
-import { MAX_LANE_HEIGHT, MIN_LANE_HEIGHT, clampLaneHeight, xToFrame, type Viewport } from './geometry';
+import { MAX_LANE_HEIGHT, MIN_LANE_HEIGHT, clampLaneHeight, lanesTopOf, xToFrame, type Viewport } from './geometry';
 
 // H and G halve and double the frames per pixel.
 export const ZOOM_STEP = 2;
@@ -66,7 +66,7 @@ export function scrollFramesBy(view: Viewport, dx: number): Viewport {
 
 // The largest vertical scroll for lanes `content` px high in this view.
 export function maxScrollY(view: Viewport, content: number): number {
-  const visible = Math.max(0, (view.height ?? 0) - view.rulerHeight);
+  const visible = Math.max(0, (view.height ?? 0) - lanesTopOf(view));
   return Math.max(0, Math.ceil(content - visible));
 }
 

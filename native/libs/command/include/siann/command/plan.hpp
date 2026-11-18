@@ -69,8 +69,10 @@ struct PlanMetadata {
 // The submission limits: a title is 1 to kPlanTitleMaxBytes UTF-8 bytes on one
 // line without a control character (U+0000 to U+001F, U+007F to U+009F); an
 // intent is 1 to kPlanIntentMaxBytes bytes without a control character other
-// than tab, LF and CR. Throws CommandError invalid_plan_metadata. The text is
-// valid UTF-8 (it came through the JSON parser).
+// than tab, LF and CR. Neither may carry a display-unsafe character (bidi
+// formatting, U+2028, U+2029: display_text.hpp), and both must be well-formed
+// UTF-8, checked here rather than trusted to the JSON parser. Throws
+// CommandError invalid_plan_metadata.
 inline constexpr std::size_t kPlanTitleMaxBytes = 200;
 inline constexpr std::size_t kPlanIntentMaxBytes = 2000;
 void checkPlanMetadata(const PlanMetadata& metadata);
@@ -186,6 +188,11 @@ public:
     const Revision& rollback(History& history, std::string_view planHashText, std::string actor, std::string time);
     const Revision& rollback(std::string_view planHashText, std::string actor, std::string time,
                              const Rollback& rollbackRevision);
+
+    // A plan rolled back by its revision instead of its hash (siann-protocol
+    // item 14, plan.rollback {revision}): every applied plan whose
+    // appliedRevision is revisionId becomes rolled_back. No-op when none is.
+    void markRolledBack(std::string_view revisionId);
 
     const Plan* find(std::string_view planHashText) const noexcept;
     std::size_t size() const noexcept { return plans_.size(); }

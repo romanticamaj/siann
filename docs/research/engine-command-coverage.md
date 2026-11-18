@@ -41,6 +41,7 @@ rollback coverage, and at least one render or Ardour visual verification path.
 | `render` | implemented | Render a preview/export from batch mode. | Compare with live `render.preview`. |
 | `save_session` | implemented | Save the batch session. | Keep as journal fixture. |
 | `observe_session` | implemented | Emit canonical observed state. | Align with session observation v0 schema. |
+| `rollback_plan` | implemented | Roll back a plan revision an earlier run applied (`plan.rollback {revision}`; m5b-bridge-native-client, command journal v1). | `rollback-workflow`, the engine-gated workflow test. |
 | `rename_track` | next | Rename tracks without changing stable IDs. | Observe old/new names and rollback. |
 | `delete_track` | next | Remove tracks and owned playlists where safe. | Reject non-empty deletion unless explicit. |
 | `set_track_mute` | next | Mute or unmute tracks. | Render amplitude and observed mixer state. |

@@ -82,8 +82,14 @@ public:
         refuseIfAsked();
         return protocol::DeviceInfo{id, 44'100, 128, 128, 64};
     }
+    // m5b-engine-load-loudness: never no_device (the meter is the engine's).
+    void resetLoudness() override {
+        ++calls;
+        ++loudnessResets;
+    }
 
     int calls = 0;
+    int loudnessResets = 0;
     mutable int deviceListings = 0;
     std::vector<std::string> selected;
     std::vector<protocol::DeviceDescription> listed;
@@ -196,7 +202,7 @@ TEST_CASE("engine.status carries the device and the driver's timing, counts as d
         const Value status = f.ok(c, "engine.status");
         CHECK(keysOf(status) == std::set<std::string>{"device", "playing", "cycle", "click", "recording", "armed", "xruns",
                                                       "maxCallbackMicros", "unmeasuredCallbacks", "underruns",
-                                                      "srcUnderruns", "monitorRoundTripFrames", "agents"});
+                                                      "srcUnderruns", "monitorRoundTripFrames", "load", "agents"});
         CHECK(at(status, "agents").asArray().empty());  // m5b-engine-plan-metadata: no MCP session yet
         CHECK(at(status, "monitorRoundTripFrames").isNull());  // m5b-engine-monitoring: no input open
         const Value& device = at(status, "device");
@@ -633,5 +639,119 @@ TEST_CASE("engine.capabilities lists set_cycle and set_click with features cycle
         CHECK(at(features, "locators").asBool());
         CHECK(at(features, "cycle").asBool() == withTransport);
         CHECK(at(features, "click").asBool() == withTransport);
+    }
+}
+
+// ---- DSP load and loudness (m5b-engine-load-loudness, Protocol v0 item 31) ------
+
+TEST_CASE("engine.status carries load {average, peak} as numbers from the port", "[protocol][transport][load]") {
+    FakePort port;
+    Fixture f(withPort(port));
+    const ConnectionId c = f.authed();
+
+    SECTION("with a device") {
+        port.reported.device = protocol::DeviceInfo{"fake", 48'000, 256, 256, 128};
+        port.reported.load = protocol::DspLoad{0.25, 1.5};  // a callback over its period reads above 1
+        const Value status = f.ok(c, "engine.status");
+        const Value& load = at(status, "load");
+        CHECK(keysOf(load) == std::set<std::string>{"average", "peak"});
+        CHECK(at(load, "average").kind() == Value::Kind::number);
+        CHECK(at(load, "average").asNumber() == 0.25);
+        CHECK(at(load, "peak").asNumber() == 1.5);
+    }
+    SECTION("without a device") {
+        port.reported.deviceError = protocol::DeviceProblem{"no_device", "no output device"};
+        const Value status = f.ok(c, "engine.status");
+        CHECK(at(at(status, "load"), "average").asNumber() == 0.0);
+        CHECK(at(at(status, "load"), "peak").asNumber() == 0.0);
+    }
+}
+
+TEST_CASE("meter.reset_loudness calls the port once and answers {}", "[protocol][transport][loudness]") {
+    FakePort port;
+    Fixture f(withPort(port));
+    const ConnectionId c = f.authed(true);
+    const ConnectionId watcher = f.authed(true);
+    const std::string head = f.head().envelope.id;
+    const std::size_t revisions = f.session.history().revisions().size();
+    f.server.pump();
+    const std::size_t eventsBefore = f.events(watcher).size();
+
+    const Value result = f.ok(c, "meter.reset_loudness");
+    CHECK(result.kind() == Value::Kind::object);
+    CHECK(result.asObject().empty());
+    CHECK(port.loudnessResets == 1);
+
+    // Engine state: no revision and no event.
+    CHECK(f.head().envelope.id == head);
+    CHECK(f.session.history().revisions().size() == revisions);
+    f.server.pump();
+    CHECK(f.events(watcher).size() == eventsBefore);
+
+    // Without a device it still runs: the port is asked, never no_device.
+    port.refusal = "no_device";
+    CHECK(f.ok(c, "meter.reset_loudness").asObject().empty());
+    CHECK(port.loudnessResets == 2);
+}
+
+TEST_CASE("meter.reset_loudness: a duplicate requestId is cached and a stale expectedRevision runs nothing",
+          "[protocol][transport][loudness]") {
+    FakePort port;
+    Fixture f(withPort(port));
+    const ConnectionId c = f.authed();
+    const std::string request = f.request("dup_reset", "meter.reset_loudness", Value(Object{}));
+    f.transport.deliver(c, request);
+    f.server.pump();
+    f.transport.deliver(c, request);
+    f.server.pump();
+    CHECK(port.loudnessResets == 1);
+    const auto sent = f.transport.sent(c);
+    REQUIRE(sent.size() >= 2);
+    CHECK(sent[sent.size() - 1] == sent[sent.size() - 2]);
+
+    f.transport.deliver(c, jcs::canonicalize(Value(Object{{"requestId", Value("stale_reset")},
+                                                          {"sessionId", Value(f.server.sessionId())},
+                                                          {"method", Value("meter.reset_loudness")},
+                                                          {"params", Value(Object{})},
+                                                          {"expectedRevision", Value("rev_not_the_head")}})));
+    f.server.pump();
+    CHECK(errorCode(json::parse(f.transport.sent(c).back())) == "revision_mismatch");
+    CHECK(port.loudnessResets == 1);
+}
+
+TEST_CASE("meter.reset_loudness is not_supported without a transport port, and on a port that has no meter",
+          "[protocol][transport][loudness]") {
+    Fixture f;
+    CHECK(errorCode(f.call(f.authed(), "meter.reset_loudness")) == "not_supported");
+
+    // A port that does not override resetLoudness answers not_supported.
+    class Bare final : public TransportPort {
+    public:
+        TransportState play() override { return {}; }
+        TransportState stop() override { return {}; }
+        TransportState locate(std::int64_t) override { return {}; }
+        TransportState setCycle(bool) override { return {}; }
+        TransportState setClick(bool, std::optional<std::int32_t>) override { return {}; }
+        EngineStatus status() const override { return {}; }
+        std::vector<protocol::DeviceDescription> devices() const override { return {}; }
+        protocol::DeviceInfo selectDevice(const std::string&) override { return {}; }
+    } bare;
+    Fixture g(withPort(bare));
+    CHECK(errorCode(g.call(g.authed(), "meter.reset_loudness")) == "not_supported");
+}
+
+TEST_CASE("engine.capabilities lists meter.reset_loudness with features load and loudness",
+          "[protocol][transport][loudness][load]") {
+    for (const bool withTransport : {false, true}) {
+        INFO("with a port: " << withTransport);
+        FakePort port;
+        Fixture f(withTransport ? withPort(port) : manualOptions());
+        const Value capabilities = f.ok(f.authed(), "engine.capabilities");
+        const auto& methods = at(capabilities, "methods").asArray();
+        CHECK(std::any_of(methods.begin(), methods.end(),
+                          [](const Value& m) { return m.asString() == "meter.reset_loudness"; }));
+        const Value& features = at(capabilities, "features");
+        CHECK(at(features, "load").asBool() == withTransport);
+        CHECK(at(features, "loudness").asBool() == withTransport);
     }
 }

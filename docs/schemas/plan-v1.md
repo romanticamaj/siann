@@ -58,10 +58,23 @@ the architecture spec, "Plans", decisions of 2026-11-15):
 
 | Field | Shape | Limit (checked by `plan.submit`) |
 |---|---|---|
-| `title` | string | 1 to 200 UTF-8 bytes, one line: no control character (U+0000 to U+001F, U+007F to U+009F) |
-| `intent` | string | 1 to 2,000 UTF-8 bytes; tab, LF and CR are the only control characters allowed |
+| `title` | string | 1 to 200 UTF-8 bytes, one line: no control character (U+0000 to U+001F, U+007F to U+009F) and no display-unsafe character (below) |
+| `intent` | string | 1 to 2,000 UTF-8 bytes; tab, LF and CR are the only control characters allowed; no display-unsafe character (below) |
 | `actor` | `{kind: "mcp" \| "ui", name}` | set by the server, never by the request |
 
+- Display-unsafe characters, refused in both `title` and `intent` so that a plan
+  cannot be shown in the review as text other than what it says: the bidi
+  formatting characters U+061C (ALM), U+200E (LRM), U+200F (RLM), U+202A to
+  U+202E (LRE, RLE, PDF, LRO, RLO) and U+2066 to U+2069 (LRI, RLI, FSI, PDI), and
+  the line and paragraph separators U+2028 and U+2029. The intent refuses the
+  separators too rather than reading them as newlines: LF (with CR) is the one
+  line break, and renderers disagree on whether U+2028 and U+2029 break a line.
+  The text is decoded as UTF-8 and checked by code point; text that is not
+  well-formed UTF-8 (a stray continuation byte, a truncated or overlong
+  sequence, a surrogate, anything past U+10FFFF) is refused as well. CJK,
+  right-to-left letters, emoji and the zero-width joiner of emoji sequences are
+  allowed. The UI also renders a plan's text with `dir="auto"` and
+  `unicode-bidi: isolate`.
 - The limits are counted in bytes, not characters: a title of 67 characters of
   three bytes each (201 bytes) is refused. A refused title or intent is
   `invalid_plan_metadata` (also a non-string or empty one) and nothing is stored.
@@ -69,7 +82,8 @@ the architecture spec, "Plans", decisions of 2026-11-15):
   token. `actor.name` is the MCP client's `initialize` `clientInfo.name`
   (`protocol-mcp-v0.md`) or the UI's auth frame `client.name`
   (`protocol-events-v1.md`, "Handshake additions"), sanitised: control characters
-  removed, leading and trailing spaces trimmed, cut to 64 UTF-8 bytes at a
+  and the display-unsafe characters above removed (bytes that are not well-formed
+  UTF-8 too), leading and trailing spaces trimmed, cut to 64 UTF-8 bytes at a
   character boundary. An absent, non-string or then empty name is `"MCP client"`
   for MCP and `"SIANN"` for the UI.
 - `plan.submit` takes `title?` and `intent?`; any other param besides `steps`,
@@ -102,6 +116,16 @@ set entries), `invalid_plan` (anything else malformed, including unknown fields)
 `modified`), `invalid_state`, `not_found`, `invalid_params`, and at submission
 `invalid_plan_metadata`. Plans live in engine
 memory in M3 and are not stored in the session bundle.
+
+A plan applied by an earlier engine process is rolled back by its revision:
+`plan.rollback {revision}` (siann-protocol item 14; m5b-bridge-native-client)
+instead of `{plan}`, exactly one of the two (`invalid_params` otherwise). The
+revision must be a `plan` or `branch-merge` revision on main's first-parent
+chain (`not_found` otherwise, `not_a_plan` for any other cause), and it rolls
+back through the history as `{plan}` does (`rollback_conflict` unchanged). When
+the store holds a plan applied at that revision, that plan becomes `rolled_back`
+and `plan.changed` is published. The Node bridge's `siann rollback` uses it with
+the `appliedRevision` its journal recorded ([Command journal v1](command-journal-v1.md)).
 
 ## Protocol methods (m5-plan-review)
 
@@ -149,6 +173,16 @@ applied plan's effects are already there, so one that added an entity answers
 `already_exists` (the renderer shows "applied at `appliedRevision`" for applied
 and rolled-back plans instead of previewing them). Errors: `not_found` (no such
 plan), `invalid_params` (no `plan`).
+
+A step that sets a fade (m5b-engine-clip-fades) previews the clip without the
+fade fields before and with them after; a side set to length `"0"` disappears
+from `after`:
+
+```json
+{"op": "clip.set_fade", "clipId": "clp_1", "fadeIn": {"length": "480", "curve": "linear"}}
+-> {"ref": "clip:clp_1", "before": {"length": "48000", "gainMilliDb": 0, ...},
+    "after": {"length": "48000", "gainMilliDb": 0, "fadeIn": {"length": "480", "curve": "linear"}, ...}}
+```
 
 ### Events
 

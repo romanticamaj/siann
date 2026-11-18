@@ -25,8 +25,8 @@ Three additions:
   Without it the connection gets responses only, exactly as in v0.
 - `client: {name}` (m5b-engine-plan-metadata) names the UI client: the `actor`
   of every plan the connection submits is `{kind: "ui", name}`
-  ([Plan v1](plan-v1.md), "Metadata"), the name sanitised (control characters
-  removed, spaces trimmed, at most 64 UTF-8 bytes). Without it, or with a
+  ([Plan v1](plan-v1.md), "Metadata"), the name sanitised (control and
+  display-unsafe characters removed, spaces trimmed, at most 64 UTF-8 bytes). Without it, or with a
   `client` that is not an object or a `name` that is not a string, the name is
   `"SIANN"`; a malformed `client` never fails the authentication.
 - The reply carries the stream position and the build:
@@ -144,6 +144,14 @@ Published when the engine publishes a graph with meters:
 
 ```json
 {"type": "meters.legend", "epoch": "3", "entities": ["master", "track:trk_1"]}
+```
+
+With buses (m5b-engine-buses-sends) each bus meters under `bus:<id>`. The graph's
+keys are listed in byte order, so buses come first, and the input meters of
+armed tracks (`input:<trackId>`) follow them; a client finds a meter by its key:
+
+```json
+{"type": "meters.legend", "epoch": "4", "entities": ["bus:b1", "master", "track:trk_1"]}
 ```
 
 `entities[i]` is the entity behind `entityIndex == i` in meter frames of that
@@ -308,6 +316,28 @@ The server compares the agents once per pump, after the requests, so the event
 follows the tool call's response and its `plan.changed`. The read model ignores
 it (it advances `lastSeq` only).
 
+### `agent.request_changed` (m5b-engine-agent-requests)
+
+A request from the user to an agent (spec, Protocol v0 item 32) was queued, taken,
+answered, declined, cancelled or expired:
+
+```json
+{"type": "agent.request_changed",
+ "request": {"id": "arq_5c1e9a0b3d2f4e67", "agentId": "agt_3f2a9c1d0b7e6a54", "text": "Lower the drums",
+             "context": {"selection": {"tracks": ["trk_1"], "clips": []},
+                         "locators": null, "cursor": "96000", "headRevision": "r3"},
+             "state": "answered", "plan": "sha256:...", "createdAt": "2026-11-15T10:01:00Z"}}
+```
+
+`request` is the object `agent.request` and `agent.requests` return
+([Protocol engine v0](protocol-engine-v0.md), "Agent requests"); `plan` and
+`message` appear once an answer set them. Published on every state change, to
+every subscribed connection, after the response and the `plan.changed` of the
+request that changed it and before the pump's `agent.changed`; an expiry (its
+agent disconnected or was forgotten, or `session.open`/`session.create` served
+another session) goes out in the pump that noticed it. A request is engine state,
+never a revision: the read model ignores the event (it advances `lastSeq` only).
+
 ### `session.opened` (m3-mcp)
 
 Published when `session.open` switched the server to another bundle:
@@ -341,7 +371,7 @@ happen in between.
 }
 ```
 
-- Entities are listed root, media, tracks, clips, plugin slots, locators, master, each
+- Entities are listed root, media, tracks, clips, plugin slots, locators, master, buses, sends, each
   table in id order, which is the order of `Document::toJson()`. A chunk holds at
   most `syncChunkEntities` entities (server option, default 500); `entities` is the
   total. `pluginSlots` is present only in a chunk that holds slots (M4, see
@@ -350,11 +380,14 @@ happen in between.
   only in the chunk that holds it (a document without locators syncs as before);
   its ref is `locators:locators`. `master` (m5b-engine-master) is the same: a
   single object listed after `locators`, present only in the chunk that holds it
-  and only while the master gain is not 0 dB; its ref is `master:master`.
+  and only while the master gain is not 0 dB; its ref is `master:master`. `buses`
+  and `sends` (m5b-engine-buses-sends) are tables listed after the master, each
+  present only in a chunk that holds rows; their refs are `bus:<id>` and
+  `send:<id>`.
 - Entity JSON is the hashed form, so a client recomputes entity and document
   hashes from the chunks. Concatenating the chunks gives
-  `{schemaVersion: "siann.session_document.v2", root, media, tracks, clips,
-  pluginSlots?, locators?, master?}`.
+  `{schemaVersion: "siann.session_document.v3", root, media, tracks, clips,
+  pluginSlots?, locators?, master?, buses?, sends?}`.
 - `next` is `null` on the last chunk. A cursor that does not belong to the
   connection's current sync (stale, forged, or after a newer sync started) is
   `sync_cursor_invalid`; a cursor that is not a string is `invalid_params`.
@@ -437,3 +470,29 @@ values, then `channels` f32 RMS values (linear gain). An entry is
 `3 + 8 * channels` bytes. A frame whose length differs from the sum is malformed.
 `fixtures/protocol/meter-frames.json` holds byte-exact frames generated from this
 table by `scripts/generate-protocol-fixtures.js`, independent of the C++ encoder.
+
+### Loudness frame (m5b-engine-load-loudness, Protocol v0 item 31)
+
+A second frame kind on the same socket carries the master's loudness
+([Protocol engine v0](protocol-engine-v0.md), "Loudness"). On every publisher tick
+that sends a meter frame, the loudness frame follows it with the same timestamp. A
+client tells the two apart by the magic; a decoder that knows only `"SMTR"`
+rejects it as malformed and ignores it, so the meter frame is unchanged.
+
+| Offset | Size | Field |
+|---|---|---|
+| 0 | 4 | magic `"SLUD"` |
+| 4 | 1 | u8 version, `1` |
+| 5 | 8 | i64 engineTimestampMicros (the meter frame's) |
+| 13 | 4 | f32 momentary (LUFS, 400 ms) |
+| 17 | 4 | f32 shortTerm (LUFS, 3 s) |
+| 21 | 4 | f32 integrated (LUFS, gated, since the last `meter.reset_loudness`) |
+
+The frame is exactly 25 bytes; any other length is malformed. Silence (and an
+integrated value with no block above the absolute gate) is IEEE-754 negative
+infinity, the f32 bytes `00 00 80 ff`. While the transport is stopped momentary and
+short-term fall to negative infinity and the integrated value holds. With no
+authenticated realtime connection the engine builds and sends no loudness frame
+(and does not read the meter), while the meter itself keeps running.
+`fixtures/protocol/loudness-frames.json` holds byte-exact frames, one of them with
+negative infinity, generated by `scripts/generate-protocol-fixtures.js`.

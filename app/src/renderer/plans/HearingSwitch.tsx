@@ -1,10 +1,13 @@
-// The hearing switch (m5-ui-plan-panel; UI redesign 4.3): Main | Proposal at
-// the top of the right zone. It marks the side heard from the PlanStore only,
-// which follows audition.changed and session.inspect; a click sends one
+// The hearing switch (m5-ui-plan-panel; UI redesign 4.3), ported from the
+// mockup by m5-ui-port-plans: div.ab[hearing-switch] > the phones icon and a
+// .seg of two .b, Main | Proposal, at the end of the right zone's tab row
+// (ui/right-zone.css). The side heard is .on, from the PlanStore only, which
+// follows audition.changed and session.inspect; a click sends one
 // audition.hear and the mark moves when the engine says so, never before.
 // Proposal names the heard branch, or the proposal of a proposed plan when
 // main is heard. Disabled while the side heard is unknown; absent when
-// engine.capabilities does not list audition.hear. No branch id is shown.
+// engine.capabilities does not list audition.hear. The label is the group's
+// accessible name; no branch id is shown.
 
 import { useState } from 'react';
 
@@ -12,6 +15,7 @@ import { useT } from '../i18n/t';
 import type { PlanStore } from '../model/plan-store';
 import type { SessionClient } from '../model/session-client';
 import { useCapabilities } from '../shell/Capable';
+import { Icon } from '../shell/icons';
 import { runAction } from './actions';
 import { usePlanSnapshot } from './hooks';
 
@@ -36,26 +40,30 @@ export function HearingSwitch({ client, plans }: HearingSwitchProps) {
     void runAction(client, { kind: 'hear', side: target }).then(() => setBusy(false));
   };
   return (
-    <div className="hearing-switch" role="group" aria-label={t('hearing.label')} data-testid="plan-heard" data-part="hearing-switch" data-heard={side}>
-      <span className="hearing-label">{t('hearing.label')}</span>
-      <button
-        type="button"
-        data-testid="hear-main"
-        aria-pressed={side === 'main'}
-        disabled={heard === null || busy}
-        onClick={() => hear('main')}
-      >
-        {t('hearing.main')}
-      </button>
-      <button
-        type="button"
-        data-testid="hear-proposal"
-        aria-pressed={side === 'proposal'}
-        disabled={heard === null || busy || proposal === undefined}
-        onClick={() => hear(proposal)}
-      >
-        {t('hearing.proposal')}
-      </button>
+    <div className="ab" role="group" aria-label={t('hearing.label')} data-testid="plan-heard" data-part="hearing-switch" data-heard={side}>
+      <Icon name="phones" small />
+      <div className="seg">
+        <button
+          type="button"
+          className={side === 'main' ? 'b on' : 'b'}
+          data-testid="hear-main"
+          aria-pressed={side === 'main'}
+          disabled={heard === null || busy}
+          onClick={() => hear('main')}
+        >
+          {t('hearing.main')}
+        </button>
+        <button
+          type="button"
+          className={side === 'proposal' ? 'b on' : 'b'}
+          data-testid="hear-proposal"
+          aria-pressed={side === 'proposal'}
+          disabled={heard === null || busy || proposal === undefined}
+          onClick={() => hear(proposal)}
+        >
+          {t('hearing.proposal')}
+        </button>
+      </div>
     </div>
   );
 }

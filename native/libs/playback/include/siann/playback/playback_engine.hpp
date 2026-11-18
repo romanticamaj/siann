@@ -17,6 +17,14 @@
 // output; the driver adds the click after it. A master.set_gain revision, like a
 // track fader edit, goes through the parameter channel and compiles nothing.
 //
+// Buses and sends (m5b-engine-buses-sends; spec, "Master path", "Channels and
+// I/O"): the graph of engine::wireMix, with a MeterNode after each bus fader
+// (meter key busSlotKey(id)). A bus gain, pan or mute and a send level or
+// enabled edit are parameter sets (slots busSlotKey and sendSlotKey); a track
+// mute also sets its sends' source mute, so a muted track's pre-fader send is
+// silent too. An edit that changes the solo-silence set, and send.set_pre, are
+// structural.
+//
 // PlaybackEngine owns the graph driver, the control dispatcher, the transport,
 // the butler and the disk streams. Its methods run on one non-realtime control thread; the
 // audio thread only runs the driver's callback. Fader gestures move the sound
@@ -124,6 +132,12 @@ std::string trackSlotKey(const std::string& trackId);
 std::string pluginSlotKey(const std::string& slotId);
 // Meter key of the master bus in the dispatcher's meter map.
 std::string masterMeterKey();
+// Slot key of a bus's fader (a TrackFaderNode: gain, pan, mute) and meter key of
+// its meter: "bus:<id>", the bus entity's ref and its gesture target.
+std::string busSlotKey(const std::string& busId);
+// Slot key of a send's SendNode: "send:<id>", the send entity's ref and its
+// gesture target.
+std::string sendSlotKey(const std::string& sendId);
 // Slot key of the master gain node ("master:master", the master entity's ref),
 // and the gesture target that names it: a track id never holds a ':'.
 std::string masterSlotKey();
@@ -137,6 +151,7 @@ struct StreamClipKey {
     std::int64_t length = 0;
     float gain = 1.0f;
     hash::Digest media{};
+    graph::ClipFade fade{};  // a fade-only edit rebuilds the stream (m5b-engine-clip-fades)
     friend bool operator==(const StreamClipKey&, const StreamClipKey&) = default;
 };
 
@@ -203,13 +218,17 @@ public:
     void stop();
 
     // Parameter gestures on a track fader: gain, pan or mute (TrackFaderNode
-    // parameter ids), or on the master gain when `target` is masterSlotKey()
-    // (gain only). Any other id throws std::invalid_argument before a gesture
-    // opens, so every open gesture can be ended.
+    // parameter ids), on the master gain when `target` is masterSlotKey()
+    // (gain only), on a bus fader when it is busSlotKey(id) (gain only) or on a
+    // send when it is sendSlotKey(id) (SendNode::kLevelMilliDb only). Any other
+    // id throws std::invalid_argument before a gesture opens, so every open
+    // gesture can be ended. A track mute gesture also sets the source mute of
+    // the track's sends in the heard document.
     void beginGesture(const std::string& target, std::uint32_t paramId);
     void updateGesture(const std::string& target, std::uint32_t paramId, double value, int rampFrames);
     // Commits the gesture's last value as one revision (track.set_gain,
-    // track.set_pan, track.set_mute, or master.set_gain for the master) and
+    // track.set_pan, track.set_mute, master.set_gain for the master,
+    // bus.set_gain for a bus, send.set_level for a send) and
     // sends the committed value to the audio thread. Returns nullptr when the
     // gesture never moved.
     // A command::CommandError propagates and commits nothing; the sound then
@@ -218,6 +237,9 @@ public:
     // discarded on the session, not through the Auditioner).
     const command::Revision* endGesture(const std::string& target, std::uint32_t paramId, std::string actor,
                                         std::string time);
+    // Closes the gesture without a commit; the sound returns to the value of the
+    // document gestures commit on (the heard branch or main).
+    void cancelGesture(const std::string& target, std::uint32_t paramId);
 
     // Where endGesture commits: main (nothing, the default) or the proposal
     // branch being heard (session.commitOn). The Auditioner sets it.
@@ -296,6 +318,11 @@ public:
 
 private:
     void compile(const model::Document& document);
+    // The document a gesture commits on: the heard proposal branch, or main.
+    const model::Document& gestureDocument() const;
+    // Sets a gesture parameter, and for a track mute its sends' source mute, to
+    // `value` through the dispatcher.
+    void setGestureValue(const std::string& target, std::uint32_t paramId, double value);
     bool preparedReady() const;
     void publishPrepared();
     void retired(std::uint64_t epoch);

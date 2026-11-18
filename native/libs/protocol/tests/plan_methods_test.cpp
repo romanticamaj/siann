@@ -9,6 +9,7 @@
 #include <utility>
 #include <vector>
 
+#include "support/mcp_agent.hpp"
 #include "support/protocol_fixture.hpp"
 #include "siann/command/plan.hpp"
 #include "siann/hash/sha256.hpp"
@@ -674,6 +675,13 @@ TEST_CASE("plan.submit refuses a title or intent outside the limits with invalid
     refused(Value(std::string("tab\there")), std::nullopt);
     refused(Value(std::string("nul\x01")), std::nullopt);
     refused(Value("\xC2\x85next line"), std::nullopt);  // U+0085, a C1 control
+    refused(Value("Lower \xE2\x80\xAE" "smurd"), std::nullopt);                  // U+202E RLO
+    refused(Value("Lower \xE2\x81\xA7" "drums" "\xE2\x81\xA9"), std::nullopt);  // U+2067 RLI, U+2069 PDI
+    refused(Value("Lower \xE2\x80\x8F" "drums"), std::nullopt);                  // U+200F RLM
+    refused(Value("Lower \xD8\x9C" "drums"), std::nullopt);                      // U+061C ALM
+    refused(Value("two\xE2\x80\xA8" "lines"), std::nullopt);                     // U+2028 LS
+    refused(std::nullopt, Value("why\n\xE2\x80\xAD" "forced LTR"));              // U+202D LRO
+    refused(std::nullopt, Value("para\xE2\x80\xA9" "graph"));                    // U+2029 PS
     refused(Value(""), std::nullopt);
     refused(Value(7), std::nullopt);
     refused(Value(nullptr), std::nullopt);
@@ -831,4 +839,219 @@ TEST_CASE("plan.changed and plan.status carry the rejection note; a split keeps 
         CHECK(at(f.ok(c, "plan.status", planParams(two)), "rejectionNote").asString() ==
               "partially approved as " + subHash);
     }
+}
+
+// m5b-bridge-native-client (spec, siann-protocol item 14): plan.rollback takes
+// {plan} or {revision}, exactly one. A revision rolls back through the history,
+// so a plan an earlier engine process applied (the plan store is in memory and
+// starts empty on open) can still be rolled back once the bundle is reopened.
+TEST_CASE("plan.rollback {revision} rolls back a plan applied before the bundle was reopened",
+          "[protocol][plans][rollback]") {
+    TempDir dir;
+    std::string planRevision;
+    std::string beforePlan;
+    {
+        session::Session first = session::Session::create(dir.bundle(), model::Document::create("Song", 48'000),
+                                                          "tester", "2026-11-04T00:00:00Z");
+        Harness h(first, manualOptions());
+        const ConnectionId c = h.authed();
+        h.commit(c, Array{trackAdd("trk_a")});
+        beforePlan = hash::formatHash(first.history().head().envelope.documentHash);
+        const std::string plan = at(h.ok(c, "plan.submit", stepsParams(Array{trackGain("trk_a", -600),
+                                                                               trackAdd("trk_b")})),
+                                    "hash")
+                                     .asString();
+        h.ok(c, "plan.approve", planParams(plan));
+        planRevision = at(at(h.ok(c, "plan.apply", planParams(plan)), "revision"), "id").asString();
+    }
+
+    session::Session reopened = session::Session::open(dir.bundle());
+    Harness h(reopened, manualOptions());
+    const ConnectionId c = h.authed();
+    REQUIRE(reopened.plans().size() == 0);
+
+    SECTION("the revision rolls back to the document before the plan") {
+        const Value rolled = h.ok(c, "plan.rollback", Value(Object{{"revision", Value(planRevision)}}));
+        CHECK(at(at(rolled, "revision"), "cause").asString() == "rollback");
+        CHECK(at(at(rolled, "revision"), "target").asString() == planRevision);
+        CHECK(at(at(rolled, "revision"), "documentHash").asString() == beforePlan);
+        CHECK(hash::formatHash(reopened.history().head().envelope.documentHash) == beforePlan);
+        // The rollback is journaled: a second reopen sees it.
+        const std::string head = reopened.history().head().envelope.id;
+        CHECK(at(h.ok(c, "session.inspect"), "revision").asString() == head);
+    }
+    SECTION("both or neither param is invalid_params and changes nothing") {
+        const std::size_t revisions = reopened.history().revisions().size();
+        CHECK(errorCode(h.call(c, "plan.rollback", Value(Object{}))) == "invalid_params");
+        CHECK(errorCode(h.call(c, "plan.rollback",
+                               Value(Object{{"plan", Value("sha256:" + std::string(64, '0'))},
+                                            {"revision", Value(planRevision)}}))) == "invalid_params");
+        CHECK(errorCode(h.call(c, "plan.rollback", Value(Object{{"revision", Value(7)}}))) == "invalid_params");
+        CHECK(reopened.history().revisions().size() == revisions);
+    }
+    SECTION("a command revision is not_a_plan, an unknown one not_found") {
+        CHECK(errorCode(h.call(c, "plan.rollback", Value(Object{{"revision", Value("r2")}}))) == "not_a_plan");
+        CHECK(errorCode(h.call(c, "plan.rollback", Value(Object{{"revision", Value("r99")}}))) == "not_found");
+    }
+    SECTION("a changed entity is rollback_conflict, as with {plan}") {
+        h.commit(c, Array{trackGain("trk_b", -300)});
+        const Value& error = errorOf(h.call(c, "plan.rollback", Value(Object{{"revision", Value(planRevision)}})));
+        CHECK(at(error, "code").asString() == "rollback_conflict");
+        CHECK(at(at(error, "data"), "entities").asArray().at(0).asString() == "track:trk_b");
+    }
+}
+
+TEST_CASE("plan.rollback {revision} marks the stored plan applied at it rolled_back and publishes plan.changed",
+          "[protocol][plans][rollback]") {
+    Fixture f;
+    const ConnectionId c = f.authed();
+    const ConnectionId watcher = f.authed(true);
+    f.commit(c, Array{trackAdd("trk_a")});
+    const std::string plan = submitted(f, c, Array{trackGain("trk_a", -600)});
+    f.ok(c, "plan.approve", planParams(plan));
+    const std::string revision = at(at(f.ok(c, "plan.apply", planParams(plan)), "revision"), "id").asString();
+    const std::size_t seen = f.events(watcher).size();
+
+    f.ok(c, "plan.rollback", Value(Object{{"revision", Value(revision)}}));
+
+    CHECK(at(f.ok(c, "plan.status", planParams(plan)), "state").asString() == "rolled_back");
+    std::vector<Value> events = f.events(watcher);
+    events.erase(events.begin(), events.begin() + static_cast<std::ptrdiff_t>(seen));
+    CHECK(types(events) == std::vector<std::string>{"session.changed", "plan.changed"});
+    CHECK(at(events.back(), "state").asString() == "rolled_back");
+    // Rolled back once: the plan cannot be rolled back again by its hash.
+    CHECK(errorCode(f.call(c, "plan.rollback", planParams(plan))) == "plan_not_applied");
+}
+
+TEST_CASE("plan.rollback {revision} refuses a plan revision that is not on main", "[protocol][plans][rollback]") {
+    Fixture f;
+    const ConnectionId c = f.authed();
+    f.commit(c, Array{trackAdd("trk_a")});
+    const std::string plan = submitted(f, c, Array{trackGain("trk_a", -600)});
+    f.ok(c, "plan.approve", planParams(plan));
+    const Value proposed = f.ok(c, "plan.propose", planParams(plan));
+    const std::string branchRevision = at(at(proposed, "revision"), "id").asString();
+    CHECK(errorCode(f.call(c, "plan.rollback", Value(Object{{"revision", Value(branchRevision)}}))) == "not_found");
+}
+
+// ---- m5b-engine-clip-fades: clip.set_fade through the protocol --------------
+
+namespace {
+
+Value clipFade(const std::string& clipId, std::optional<std::pair<std::string, std::string>> in,
+               std::optional<std::pair<std::string, std::string>> out) {
+    Object step{{"op", Value("clip.set_fade")}, {"clipId", Value(clipId)}};
+    if (in) {
+        step.emplace_back("fadeIn", Value(Object{{"length", Value(in->first)}, {"curve", Value(in->second)}}));
+    }
+    if (out) {
+        step.emplace_back("fadeOut", Value(Object{{"length", Value(out->first)}, {"curve", Value(out->second)}}));
+    }
+    return Value(std::move(step));
+}
+
+}  // namespace
+
+TEST_CASE("engine.capabilities lists clip.set_fade and features.clipFades; command.list lists it",
+          "[protocol][fades]") {
+    Fixture f;
+    const ConnectionId c = f.authed();
+    const Value capabilities = f.ok(c, "engine.capabilities");
+    const Value* clipFades = at(capabilities, "features").find("clipFades");
+    REQUIRE(clipFades != nullptr);
+    CHECK(clipFades->asBool());
+    const auto lists = [](const Value& names) {
+        bool found = false;
+        for (const Value& name : names.asArray()) {
+            found = found || name.asString() == "clip.set_fade";
+        }
+        return found;
+    };
+    CHECK(lists(at(capabilities, "commands")));
+    CHECK(lists(at(f.ok(c, "command.list"), "commands")));
+}
+
+TEST_CASE("plan.preview of a clip.set_fade step shows the clip without fades before and with them after",
+          "[protocol][fades][plans]") {
+    Fixture f;
+    const ConnectionId c = f.authed();
+    f.commit(c, Array{trackAdd("trk_a"), mediaAdd("med_a"), clipPlace("clp_a", "trk_a", "med_a", 0)});
+    const Value plan = f.ok(c, "plan.submit",
+                            stepsParams(Array{clipFade("clp_a", std::pair<std::string, std::string>{"480", "linear"},
+                                                       std::pair<std::string, std::string>{"960", "equal_power"})}));
+    const std::string hash = at(plan, "hash").asString();
+    const Value row = entityRow(f.ok(c, "plan.preview", planParams(hash)), "clip:clp_a");
+    CHECK(at(row, "before").find("fadeIn") == nullptr);
+    CHECK(at(row, "before").find("fadeOut") == nullptr);
+    CHECK(canonical(at(at(row, "after"), "fadeIn")) == R"({"curve":"linear","length":"480"})");
+    CHECK(canonical(at(at(row, "after"), "fadeOut")) == R"({"curve":"equal_power","length":"960"})");
+
+    const std::size_t revisions = f.session.history().revisions().size();
+    f.ok(c, "plan.approve", planParams(hash));
+    f.ok(c, "plan.apply", planParams(hash));
+    CHECK(f.session.history().revisions().size() == revisions + 1);
+    CHECK(f.head().document.clip("clp_a")->fadeIn.length == 480);
+    CHECK(f.head().document.clip("clp_a")->fadeOut.length == 960);
+
+    // Removing the fade in: the preview's after has no fadeIn.
+    const Value removal = f.ok(c, "plan.submit",
+                               stepsParams(Array{clipFade("clp_a", std::pair<std::string, std::string>{"0", "linear"},
+                                                          std::nullopt)}));
+    const Value row2 = entityRow(f.ok(c, "plan.preview", planParams(at(removal, "hash").asString())), "clip:clp_a");
+    CHECK(at(at(row2, "before"), "fadeIn").kind() == Value::Kind::object);
+    CHECK(at(row2, "after").find("fadeIn") == nullptr);
+    CHECK(at(at(row2, "after"), "fadeOut").kind() == Value::Kind::object);
+}
+
+TEST_CASE("command.execute of an over-long fade answers invalid_fade and commits nothing", "[protocol][fades]") {
+    Fixture f;
+    const ConnectionId c = f.authed();
+    f.commit(c, Array{trackAdd("trk_a"), mediaAdd("med_a"), clipPlace("clp_a", "trk_a", "med_a", 0)});
+    const std::string head = f.head().envelope.id;
+    const auto execute = [&](Value command) {
+        return f.call(c, "command.execute", Value(Object{{"commands", Value(Array{std::move(command)})}}));
+    };
+    CHECK(errorCode(execute(clipFade("clp_a", std::pair<std::string, std::string>{"30000", "linear"},
+                                     std::pair<std::string, std::string>{"18001", "linear"}))) == "invalid_fade");
+    CHECK(errorCode(execute(clipFade("clp_a", std::pair<std::string, std::string>{"480", "cubic"}, std::nullopt))) ==
+          "invalid_params");
+    CHECK(errorCode(execute(clipFade("clp_x", std::pair<std::string, std::string>{"480", "linear"}, std::nullopt))) ==
+          "not_found");
+    CHECK(f.head().envelope.id == head);
+    execute(clipFade("clp_a", std::pair<std::string, std::string>{"30000", "linear"},
+                     std::pair<std::string, std::string>{"18000", "linear"}));
+    CHECK(f.head().envelope.id != head);
+}
+
+// m5b-engine-agent-requests ("Plans", decisions of 2026-11-15; Protocol v0 item
+// 32): the request link is not part of the plan, so it is not hashed.
+TEST_CASE("a plan submitted with a request has the hash of the same plan without it", "[protocol][plans][metadata]") {
+    const Array steps{trackGain("trk_a", -600)};
+    std::string without;
+    {
+        Fixture f;
+        const ConnectionId c = f.authed();
+        f.commit(c, Array{trackAdd("trk_a")});
+        without = submitted(f, c, steps);
+    }
+    Fixture f;
+    const ConnectionId c = f.authed();
+    const ConnectionId watcher = f.authed(true);
+    f.commit(c, Array{trackAdd("trk_a")});
+    McpAgent agent(f);
+    agent.initialize("mix-assistant");
+    f.server.pump();
+    std::string agentId;
+    for (const Value& event : f.events(watcher)) {
+        if (at(event, "type").asString() == "agent.changed") {
+            agentId = at(at(event, "agent"), "id").asString();
+        }
+    }
+    REQUIRE_FALSE(agentId.empty());
+    const Value request =
+        at(f.ok(c, "agent.request", Value(Object{{"agentId", Value(agentId)}, {"text", Value("Lower it")}})), "request");
+    const Value plan = agent.ok("submit_plan", Value(Object{{"steps", Value(steps)}, {"request", at(request, "id")}}));
+    CHECK(at(plan, "hash").asString() == without);
+    CHECK(hash::formatHash(command::planHash(command::Plan::fromJson(plan))) == without);
+    CHECK(plan.find("request") == nullptr);
 }

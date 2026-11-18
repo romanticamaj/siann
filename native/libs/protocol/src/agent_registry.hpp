@@ -28,7 +28,8 @@ namespace siann::protocol::detail {
 
 // The names a client gives itself (MCP clientInfo.name, the UI's auth frame
 // client.name), as the actor of its plans and an agent's name: control
-// characters (C0, DEL, C1) removed, leading and trailing white space trimmed,
+// characters (C0, DEL, C1), bidi formatting and line separators
+// (command::withoutUnsafeCharacters) and bytes that are not UTF-8 removed, leading and trailing white space trimmed,
 // cut to kClientNameMaxBytes UTF-8 bytes at a character boundary. `fallback`
 // when the name is absent, not a string or empty after that.
 inline constexpr std::size_t kClientNameMaxBytes = 64;
@@ -76,6 +77,9 @@ public:
 
     // Command thread.
     void acted(const std::string& agentId, std::string tool, std::string time);
+    // A parked next_request (Protocol v0 item 32) keeps its agent connected: the
+    // agent counts as seen now. Does nothing for an ended or unknown session.
+    void touch(const std::string& agentId);
     // Disconnects every connected agent not seen for `idle` or longer.
     void expire(std::chrono::milliseconds idle);
     // In the order the agents initialized.

@@ -7,6 +7,7 @@
 // that the actual diff is a subset of the declared effects.
 
 #include <cstddef>
+#include <map>
 #include <set>
 #include <stdexcept>
 #include <string>
@@ -68,5 +69,10 @@ void checkDeclaredEffects(const model::Document& before, const model::Document& 
 
 // Names of all registered commands, sorted.
 std::vector<std::string> commandNames();
+
+// The commands with cascades (m5b-engine-buses-sends, command.list): each maps to
+// the sorted entity type names it may remove or change besides its target. A
+// command without cascades is absent.
+std::map<std::string, std::vector<std::string>> commandCascades();
 
 }  // namespace siann::command

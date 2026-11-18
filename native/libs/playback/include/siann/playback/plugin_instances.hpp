@@ -67,7 +67,8 @@ struct PluginProblem {
 
 struct PluginInstanceStatus {
     std::string slotId;
-    std::string trackId;
+    std::string trackId;  // empty for a bus's slot
+    std::string busId;    // empty for a track's slot (m5b-engine-buses-sends)
     std::string format;
     std::string uid;
     bool running = false;  // false: missing

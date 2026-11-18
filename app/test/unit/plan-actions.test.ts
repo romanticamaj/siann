@@ -13,6 +13,7 @@ import { ProtocolError } from '../../src/renderer/model/session-client';
 import type { PlanEntry } from '../../src/renderer/model/plan-store';
 import { translator } from '../../src/renderer/i18n/t';
 import {
+  actionCells,
   actionLabel,
   actionSet,
   landedLabel,
@@ -118,7 +119,11 @@ test('the primary carries the ticked subset and reads "Approve N of M"; all tick
   const t = translator('en');
   const whole = actionSet(entry('validated'), 'main', ALL);
   assert.equal(whole.primary!.steps, undefined, 'the whole plan: no steps sent');
-  assert.equal(actionLabel(whole.primary!, 5, t), 'Approve and apply');
+  // Every step ticked reads "Approve N of M" too (UI redesign 4.5 C4, P1-13).
+  assert.equal(actionLabel(whole.primary!, 5, t), 'Approve 5 of 5');
+  assert.equal(actionLabel(actionSet(entry('validated', { steps: 6 }), 'main', selection(null, 6)).primary!, 6, t), 'Approve 6 of 6');
+  assert.equal(actionLabel(whole.primary!, 6, translator('zh-Hant')), '核准 6 / 6');
+  assert.equal(actionLabel(whole.primary!, 6, translator('zh-Hans')), '核准 6 / 6');
   const part = actionSet(entry('validated'), 'main', SUBSET);
   assert.deepEqual(part.primary!.steps, [0, 1, 3]);
   assert.equal(actionLabel(part.primary!, 5, t), 'Approve 3 of 5');
@@ -129,6 +134,21 @@ test('the primary carries the ticked subset and reads "Approve N of M"; all tick
     const label = actionLabel(part.primary!, 5, translator(locale));
     assert.ok(label.includes('3') && label.includes('5') && /\p{Script=Han}/u.test(label), `${locale}: ${label}`);
   }
+});
+
+test("the three cells of .acts per state: the secondary action, the primary, the danger button", () => {
+  // The mockup's .acts is a three-column grid (Audition, Approve, Reject); a
+  // state with fewer actions leaves its cell empty (UI redesign 10.10, P1-13).
+  const cells = (set: ActionSet) => actionCells(set).map((cell) => cell?.id ?? null);
+  assert.deepEqual(cells(actionSet(entry('validated'), 'main', ALL)), ['audition', 'approveApply', 'reject']);
+  assert.deepEqual(cells(actionSet(entry('validated'), null, ALL)), [null, 'approveApply', 'reject']);
+  assert.deepEqual(cells(actionSet(entry('approved'), 'main', ALL)), ['audition', 'apply', 'reject']);
+  assert.deepEqual(cells(actionSet(entry('approved', { proposalBranch: 'p1' }), 'p1', ALL)), ['hearMain', 'merge', 'discard']);
+  assert.deepEqual(cells(actionSet(entry('approved', { proposalBranch: 'p1' }), 'main', ALL)), ['hearProposal', 'merge', 'discard']);
+  assert.deepEqual(cells(actionSet(entry('approved', { proposalBranch: 'p1' }), null, ALL)), [null, 'merge', 'discard']);
+  assert.deepEqual(cells(actionSet(entry('rejected'), 'main', ALL)), [null, null, null]);
+  // The subset travels with the cell.
+  assert.deepEqual(actionCells(actionSet(entry('validated'), 'main', SUBSET))[0]!.steps, [0, 1, 3]);
 });
 
 const refusal = (code = 'invalid_state') => new ProtocolError(code, `refused: ${code}`);

@@ -31,6 +31,7 @@
 #include <vector>
 
 #include "siann/graph/graph.hpp"
+#include "siann/graph/nodes.hpp"
 #include "siann/host/interfaces.hpp"
 #include "siann/rt/spsc_queue.hpp"
 
@@ -71,6 +72,7 @@ struct StreamClip {
     std::int64_t length = 0;         // frames
     float gain = 1.0f;
     std::shared_ptr<host::MediaReader> reader;  // used by the butler thread only
+    graph::ClipFade fade{};                     // m5b-engine-clip-fades
 };
 
 class Butler;

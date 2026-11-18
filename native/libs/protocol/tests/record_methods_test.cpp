@@ -492,7 +492,7 @@ TEST_CASE("engine.capabilities lists the record methods, track.set_input and fea
     CHECK(at(at(capabilities, "features"), "recording").asBool());
 }
 
-// m5b-engine-monitoring (Protocol v0 item 30).
+// m5b-engine-monitoring (Protocol v0 item 33).
 TEST_CASE("engine.capabilities lists track.set_monitor and features.monitoring", "[protocol][record][monitor]") {
     {
         RecordFixture f;

@@ -12,7 +12,10 @@
 // engine's answer and leaves the model to session.changed.
 //
 // After each auth it asks engine.capabilities once (UI redesign spec 3.0) and
-// keeps the last answer across reconnects.
+// keeps the last answer across reconnects. Under SIANN_SHELL_TEST=1 alone a
+// test may hand it the answer to use instead (`capabilities`, from
+// SIANN_TEST_CAPABILITIES; m5-ui-loop-click), to run the app against an
+// engine that lacks methods.
 //
 // Framework-free: the socket factory, the endpoint source (the shell's
 // preload bridge, read in index.tsx) and the reconnect scheduler are injected.
@@ -80,6 +83,55 @@ export interface SessionClientOptions {
   syncRetryMs?: number;
   // The status before the first connect (the renderer shows connecting).
   initialStatus?: ConnectionStatus;
+  // Test only (index.tsx passes it under SIANN_SHELL_TEST=1 alone): the
+  // engine.capabilities answer to use in place of the engine's.
+  capabilities?: Capabilities;
+  // Test only, the same way (the fidelity run's SIANN_FIDELITY_ENVIRONMENT;
+  // UI redesign 10.2): the device of engine.status and the about's name,
+  // version, licence and commit, answered in place of the engine's, field by
+  // field. The source URL stays the engine's.
+  environment?: TestEnvironment;
+}
+
+export interface TestEnvironment {
+  readonly device?: Record<string, unknown>;
+  readonly engineAbout?: AboutInfo;
+}
+
+// The about with the environment's fields over the engine's.
+function aboutWith(about: AboutInfo | null, environment: TestEnvironment | undefined): AboutInfo | null {
+  const over = environment?.engineAbout;
+  if (!over) return about;
+  const base = about ?? {};
+  const source = { ...(base.source ?? {}), ...(over.source ?? {}) };
+  if (base.source?.url !== undefined) source.url = base.source.url;
+  else delete (source as { url?: string }).url;
+  return { ...base, ...over, source };
+}
+
+// A request from the user to a connected agent (m5b-engine-agent-requests,
+// protocol-engine-v0.md "Agent requests"): engine state, never a revision.
+export type AgentRequestState = 'pending' | 'taken' | 'answered' | 'declined' | 'cancelled' | 'expired';
+
+export interface AgentRequestSelection {
+  readonly tracks: readonly string[];
+  readonly clips: readonly string[];
+}
+
+export interface AgentRequest {
+  readonly id: string;
+  readonly agentId: string;
+  readonly text: string;
+  readonly context: {
+    readonly selection: AgentRequestSelection;
+    readonly locators: unknown;
+    readonly cursor: string | null;
+    readonly headRevision: string;
+  };
+  readonly state: AgentRequestState;
+  readonly plan?: string;
+  readonly message?: string;
+  readonly createdAt: string;
 }
 
 export class ProtocolError extends Error {
@@ -108,9 +160,15 @@ export interface SentRequest {
   readonly params: Readonly<Record<string, unknown>>;
 }
 
+// A request the engine answered: null for ok, else the error's code.
+export interface AnsweredRequest extends SentRequest {
+  readonly code: string | null;
+}
+
 interface Pending {
   resolve: (result: unknown) => void;
   reject: (error: Error) => void;
+  readonly sent: SentRequest;
   // The session the request named.
   sessionId: string | null;
 }
@@ -179,6 +237,7 @@ export class SessionClient {
   #lastSeq: bigint | null = null;
   readonly #refused: Array<{ readonly method: string }> = [];
   readonly #sent: Array<SentRequest> = [];
+  readonly #answered: Array<AnsweredRequest> = [];
   // The session the model's snapshot belongs to.
   #modelSessionId: string | null = null;
 
@@ -305,6 +364,14 @@ export class SessionClient {
       this.#refused.push(Object.freeze({ method }));
       return Promise.reject(new ProtocolError('disconnected', 'not connected to an engine'));
     }
+    const device = this.#options.environment?.device;
+    if (method === 'engine.status' && device) {
+      return this.#send(connection, method, params, expectedRevision).then((result) =>
+        result !== null && typeof result === 'object' && (result as { device?: unknown }).device !== null
+          ? { ...(result as Record<string, unknown>), device: { ...device } }
+          : result,
+      );
+    }
     return this.#send(connection, method, params, expectedRevision);
   }
 
@@ -321,10 +388,40 @@ export class SessionClient {
     return [...this.#sent];
   }
 
+  // The requests the engine answered, oldest first (the last SENT_KEPT), each
+  // with its error code (null: ok): what the locator e2e reads to prove that
+  // no session.set_locators was answered invalid_locators (m5-ui-loop-click).
+  answered(): ReadonlyArray<AnsweredRequest> {
+    return [...this.#answered];
+  }
+
   // command.execute. The model changes only when the session.changed of the
   // commit arrives.
   execute(commands: readonly unknown[], expectedRevision?: string): Promise<unknown> {
     return this.request('command.execute', { commands }, expectedRevision);
+  }
+
+  // agent.request: queues `text` for a connected agent with the selected track
+  // and clip ids (the engine stamps the rest of the context); rejects with
+  // agent_busy, agent_not_connected or invalid_request_text. The request's later
+  // states arrive as agent.request_changed events (onEvent).
+  async agentRequest(agentId: string, text: string, selection?: AgentRequestSelection): Promise<AgentRequest> {
+    const params: Record<string, unknown> = { agentId, text };
+    if (selection) params.selection = { tracks: [...selection.tracks], clips: [...selection.clips] };
+    const result = (await this.request('agent.request', params)) as { request: AgentRequest };
+    return result.request;
+  }
+
+  // agent.cancel_request: the user withdraws an open request.
+  async cancelAgentRequest(request: string): Promise<AgentRequest> {
+    const result = (await this.request('agent.cancel_request', { request })) as { request: AgentRequest };
+    return result.request;
+  }
+
+  // agent.requests: the open requests, then the last closed ones.
+  async agentRequests(): Promise<readonly AgentRequest[]> {
+    const result = (await this.request('agent.requests', {})) as { requests: AgentRequest[] };
+    return result.requests;
   }
 
   #send(connection: Connection, method: string, params: Record<string, unknown>, expectedRevision?: string): Promise<unknown> {
@@ -333,10 +430,11 @@ export class SessionClient {
     const requestId = `req_${this.#prefix}_${this.#nextId}`;
     const envelope: Record<string, unknown> = { requestId, sessionId: connection.sessionId, method, params };
     if (expectedRevision !== undefined) envelope.expectedRevision = expectedRevision;
+    const sent: SentRequest = Object.freeze({ method, params });
     if (this.#sent.length >= SENT_KEPT) this.#sent.shift();
-    this.#sent.push(Object.freeze({ method, params }));
+    this.#sent.push(sent);
     return new Promise((resolve, reject) => {
-      connection.pending.set(requestId, { resolve, reject, sessionId: connection.sessionId });
+      connection.pending.set(requestId, { resolve, reject, sessionId: connection.sessionId, sent });
       connection.socket.send(JSON.stringify(envelope));
     });
   }
@@ -350,6 +448,9 @@ export class SessionClient {
       const pending = connection.pending.get(message.requestId);
       if (!pending) return;
       connection.pending.delete(message.requestId);
+      const answer = message.ok === true ? null : String((message.error as { code?: unknown } | undefined)?.code ?? 'internal_error');
+      if (this.#answered.length >= SENT_KEPT) this.#answered.shift();
+      this.#answered.push(Object.freeze({ ...pending.sent, code: answer }));
       if (message.ok === true) {
         pending.resolve(message.result);
       } else {
@@ -380,13 +481,14 @@ export class SessionClient {
       status: 'connected',
       sessionId: reply.sessionId,
       revision: typeof reply.revision === 'string' ? reply.revision : null,
-      about: (reply.about as AboutInfo | undefined) ?? null,
+      about: aboutWith((reply.about as AboutInfo | undefined) ?? null, this.#options.environment),
       legend: isMeterLegend(reply.meters) ? reply.meters : null,
     });
     // What this engine can do, once per connection; a failure keeps the last answer.
     this.#send(connection, 'engine.capabilities', {}).then(
       (result) => {
-        if (this.#connection === connection && !connection.closed && isCapabilities(result)) this.#update({ capabilities: result });
+        const answer = this.#options.capabilities ?? result;
+        if (this.#connection === connection && !connection.closed && isCapabilities(answer)) this.#update({ capabilities: answer });
       },
       () => undefined,
     );

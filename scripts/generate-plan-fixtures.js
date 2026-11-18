@@ -95,6 +95,17 @@ function buildFixture() {
       readSet: [],
       writeSet: [entry('master', 'master', null)],
     }],
+    // m5b-engine-buses-sends: bus and send refs in the read and write sets.
+    ['bus_and_send_sets', {
+      schema: 'siann.plan.v1',
+      baseRevision: 'r9',
+      steps: [
+        { op: 'bus.set_gain', busId: 'bus_1', gainMilliDb: -6000 },
+        { op: 'send.add', sendId: 'snd_1', trackId: 'trk_1', busId: 'bus_1' },
+      ],
+      readSet: [],
+      writeSet: [entry('bus', 'bus_1'), entry('send', 'snd_1', null), entry('track', 'trk_1')],
+    }],
     // m5b-engine-record: a track's input set and cleared (null is hashed as null).
     ['track_input_steps', {
       ...minimal,
@@ -113,6 +124,19 @@ function buildFixture() {
         { op: 'track.set_monitor', trackId: 'trk_1', monitor: 'off' },
       ],
       writeSet: [entry('track', 'trk_1')],
+    }],
+    // m5b-engine-clip-fades: a step that sets both fades of a clip.
+    ['clip_set_fade_step', {
+      schema: 'siann.plan.v1',
+      baseRevision: 'r5',
+      steps: [{
+        op: 'clip.set_fade',
+        clipId: 'clp_1',
+        fadeIn: { length: '480', curve: 'linear' },
+        fadeOut: { length: '960', curve: 'equal_power' },
+      }],
+      readSet: [],
+      writeSet: [entry('clip', 'clp_1')],
     }],
     // m5b-engine-project-media: the media entity's optional name, set by media.add
     // and by media.rename (null removes it).
@@ -177,7 +201,7 @@ function buildFixture() {
       'invalid_entity_set'],
     ['duplicate_write_set_entry', text({ ...minimal, writeSet: [entry('track', 'trk_1'), entry('track', 'trk_1')] }),
       'invalid_entity_set'],
-    ['unknown_entity_type', text({ ...minimal, readSet: [entry('send', 'snd_1')] }), 'invalid_entity_set'],
+    ['unknown_entity_type', text({ ...minimal, readSet: [entry('vca', 'vca_1')] }), 'invalid_entity_set'],
     ['invalid_entity_id', text({ ...minimal, readSet: [entry('track', 'trk 1')] }), 'invalid_entity_set'],
     ['locators_with_another_id', text({ ...minimal, readSet: [entry('locators', 'loc_1')] }), 'invalid_entity_set'],
     ['master_with_another_id', text({ ...minimal, writeSet: [entry('master', 'main')] }), 'invalid_entity_set'],

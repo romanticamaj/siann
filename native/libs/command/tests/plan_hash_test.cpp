@@ -206,3 +206,24 @@ TEST_CASE("A plan with and without title, intent and actor has the same planHash
     CHECK(bare.find("intent") == nullptr);
     CHECK(bare.find("actor") == nullptr);
 }
+
+// m5b-engine-clip-fades: a plan step may set a fade. The fixture's step hashes as
+// Node says and prepares against the v2 model fixture, touching clip:clp_1 only.
+TEST_CASE("A clip.set_fade step hashes as the fixture says and prepares against the document",
+          "[plan][fixtures][fades]") {
+    const Value* c = &validCase("clip_set_fade_step");  // a pointer: GCC's -Wdangling-reference
+    const Plan plan = Plan::fromJson(*c->find("plan"));
+    REQUIRE(plan.steps.size() == 1);
+    CHECK(plan.steps[0].op() == "clip.set_fade");
+    CHECK(formatHash(planHash(plan)) == c->find("planHash")->asString());
+    const auto doc = siann::model::Document::fromJson(
+        *siann::test::readFixture("model/session-document-v2.json").find("document"));
+    const auto prepared = siann::command::prepare(doc, plan.steps[0]);
+    CHECK(prepared.effects ==
+          siann::command::DeclaredEffects{siann::model::EntityRef{siann::model::EntityType::clip, "clp_1"}});
+    const auto* clip = prepared.result.clip("clp_1");
+    REQUIRE(clip != nullptr);
+    CHECK(clip->fadeIn.length == 480);
+    CHECK(clip->fadeOut.length == 960);
+    CHECK(clip->fadeOut.curve == siann::model::FadeCurve::equal_power);
+}

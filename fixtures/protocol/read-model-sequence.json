@@ -2233,5 +2233,1118 @@
         }
       }
     ]
+  },
+  "buses": {
+    "steps": [
+      {
+        "event": {
+          "schema": "siann.event.v1",
+          "seq": "17",
+          "sessionId": "ses_00c0ffee00c0ffee",
+          "revision": "r13",
+          "type": "session.changed",
+          "parents": [
+            "r12"
+          ],
+          "cause": "command",
+          "actor": "protocol",
+          "time": "2026-11-09T00:00:013Z",
+          "documentHash": "sha256:e9f156b93fba82acd37b547ee05922fc057901933d7265a5e70233613039b6db",
+          "changedIds": [
+            {
+              "ref": "root:root",
+              "change": "modified"
+            },
+            {
+              "ref": "track:trk_1",
+              "change": "modified"
+            },
+            {
+              "ref": "bus:b1",
+              "change": "added"
+            },
+            {
+              "ref": "send:s1",
+              "change": "added"
+            }
+          ]
+        },
+        "fetch": {
+          "params": {
+            "refs": [
+              "root:root",
+              "track:trk_1",
+              "bus:b1",
+              "send:s1"
+            ],
+            "revision": "r13"
+          },
+          "result": {
+            "revision": "r13",
+            "documentHash": "sha256:e9f156b93fba82acd37b547ee05922fc057901933d7265a5e70233613039b6db",
+            "entities": [
+              {
+                "ref": "root:root",
+                "entity": {
+                  "schema": "siann.entity.root.v1",
+                  "id": "root",
+                  "name": "Read Model Song",
+                  "sampleRate": 48000,
+                  "tempo": [
+                    {
+                      "ticks": "0",
+                      "milliBpm": 120000
+                    }
+                  ],
+                  "trackOrder": [
+                    "trk_2",
+                    "trk_1"
+                  ],
+                  "busOrder": [
+                    "b1"
+                  ]
+                }
+              },
+              {
+                "ref": "track:trk_1",
+                "entity": {
+                  "schema": "siann.entity.track.v1",
+                  "id": "trk_1",
+                  "name": "Drums",
+                  "kind": "audio",
+                  "channels": 2,
+                  "gainMilliDb": 0,
+                  "pan": 0,
+                  "mute": false,
+                  "solo": false,
+                  "sends": [
+                    "s1"
+                  ]
+                }
+              },
+              {
+                "ref": "bus:b1",
+                "entity": {
+                  "schema": "siann.entity.bus.v1",
+                  "id": "b1",
+                  "name": "Bus b1",
+                  "channels": 2,
+                  "gainMilliDb": 0,
+                  "pan": 0,
+                  "mute": false,
+                  "solo": false
+                }
+              },
+              {
+                "ref": "send:s1",
+                "entity": {
+                  "schema": "siann.entity.send.v1",
+                  "id": "s1",
+                  "trackId": "trk_1",
+                  "busId": "b1",
+                  "levelMilliDb": 0,
+                  "pre": false,
+                  "enabled": true
+                }
+              }
+            ]
+          }
+        },
+        "document": {
+          "schemaVersion": "siann.session_document.v3",
+          "root": {
+            "schema": "siann.entity.root.v1",
+            "id": "root",
+            "name": "Read Model Song",
+            "sampleRate": 48000,
+            "tempo": [
+              {
+                "ticks": "0",
+                "milliBpm": 120000
+              }
+            ],
+            "trackOrder": [
+              "trk_2",
+              "trk_1"
+            ],
+            "busOrder": [
+              "b1"
+            ]
+          },
+          "media": [
+            {
+              "schema": "siann.entity.media.v1",
+              "id": "med_1",
+              "contentHash": "sha256:b2fbb166c6de43e5d9d93681cff364f042a133e450c4231cf7a20348447c5e0c",
+              "format": "wav",
+              "channels": 2,
+              "sampleRate": 48000,
+              "frames": "96000"
+            }
+          ],
+          "tracks": [
+            {
+              "schema": "siann.entity.track.v1",
+              "id": "trk_1",
+              "name": "Drums",
+              "kind": "audio",
+              "channels": 2,
+              "gainMilliDb": 0,
+              "pan": 0,
+              "mute": false,
+              "solo": false,
+              "sends": [
+                "s1"
+              ]
+            },
+            {
+              "schema": "siann.entity.track.v1",
+              "id": "trk_2",
+              "name": "Bass",
+              "kind": "audio",
+              "channels": 2,
+              "gainMilliDb": -3000,
+              "pan": 0,
+              "mute": false,
+              "solo": false,
+              "inserts": [
+                "slt_1"
+              ]
+            }
+          ],
+          "clips": [
+            {
+              "schema": "siann.entity.clip.v1",
+              "id": "clp_1",
+              "trackId": "trk_1",
+              "mediaId": "med_1",
+              "position": {
+                "domain": "audio",
+                "value": "0"
+              },
+              "sourceStart": "0",
+              "length": "48000",
+              "gainMilliDb": -6000
+            },
+            {
+              "schema": "siann.entity.clip.v1",
+              "id": "clp_2",
+              "trackId": "trk_2",
+              "mediaId": "med_1",
+              "position": {
+                "domain": "music",
+                "value": "3840"
+              },
+              "sourceStart": "24000",
+              "length": "24000",
+              "gainMilliDb": 0
+            }
+          ],
+          "pluginSlots": [
+            {
+              "schema": "siann.entity.plugin_slot.v1",
+              "id": "slt_1",
+              "trackId": "trk_2",
+              "format": "clap",
+              "uid": "com.siann.test-plugin",
+              "name": "SIANN Test Plugin",
+              "path": "/plugins/siann_test_plugin.clap",
+              "bypass": false
+            }
+          ],
+          "buses": [
+            {
+              "schema": "siann.entity.bus.v1",
+              "id": "b1",
+              "name": "Bus b1",
+              "channels": 2,
+              "gainMilliDb": 0,
+              "pan": 0,
+              "mute": false,
+              "solo": false
+            }
+          ],
+          "sends": [
+            {
+              "schema": "siann.entity.send.v1",
+              "id": "s1",
+              "trackId": "trk_1",
+              "busId": "b1",
+              "levelMilliDb": 0,
+              "pre": false,
+              "enabled": true
+            }
+          ]
+        },
+        "documentHash": "sha256:e9f156b93fba82acd37b547ee05922fc057901933d7265a5e70233613039b6db"
+      },
+      {
+        "event": {
+          "schema": "siann.event.v1",
+          "seq": "18",
+          "sessionId": "ses_00c0ffee00c0ffee",
+          "revision": "r14",
+          "type": "session.changed",
+          "parents": [
+            "r13"
+          ],
+          "cause": "command",
+          "actor": "protocol",
+          "time": "2026-11-09T00:00:014Z",
+          "documentHash": "sha256:0c7efa479ae9e8e7ea8edd25b8449eb4536543498ceaf8e2c4bb3ac8b4b8285f",
+          "changedIds": [
+            {
+              "ref": "bus:b1",
+              "change": "modified"
+            }
+          ]
+        },
+        "fetch": {
+          "params": {
+            "refs": [
+              "bus:b1"
+            ],
+            "revision": "r14"
+          },
+          "result": {
+            "revision": "r14",
+            "documentHash": "sha256:0c7efa479ae9e8e7ea8edd25b8449eb4536543498ceaf8e2c4bb3ac8b4b8285f",
+            "entities": [
+              {
+                "ref": "bus:b1",
+                "entity": {
+                  "schema": "siann.entity.bus.v1",
+                  "id": "b1",
+                  "name": "Bus b1",
+                  "channels": 2,
+                  "gainMilliDb": -6000,
+                  "pan": 0,
+                  "mute": false,
+                  "solo": false
+                }
+              }
+            ]
+          }
+        },
+        "document": {
+          "schemaVersion": "siann.session_document.v3",
+          "root": {
+            "schema": "siann.entity.root.v1",
+            "id": "root",
+            "name": "Read Model Song",
+            "sampleRate": 48000,
+            "tempo": [
+              {
+                "ticks": "0",
+                "milliBpm": 120000
+              }
+            ],
+            "trackOrder": [
+              "trk_2",
+              "trk_1"
+            ],
+            "busOrder": [
+              "b1"
+            ]
+          },
+          "media": [
+            {
+              "schema": "siann.entity.media.v1",
+              "id": "med_1",
+              "contentHash": "sha256:b2fbb166c6de43e5d9d93681cff364f042a133e450c4231cf7a20348447c5e0c",
+              "format": "wav",
+              "channels": 2,
+              "sampleRate": 48000,
+              "frames": "96000"
+            }
+          ],
+          "tracks": [
+            {
+              "schema": "siann.entity.track.v1",
+              "id": "trk_1",
+              "name": "Drums",
+              "kind": "audio",
+              "channels": 2,
+              "gainMilliDb": 0,
+              "pan": 0,
+              "mute": false,
+              "solo": false,
+              "sends": [
+                "s1"
+              ]
+            },
+            {
+              "schema": "siann.entity.track.v1",
+              "id": "trk_2",
+              "name": "Bass",
+              "kind": "audio",
+              "channels": 2,
+              "gainMilliDb": -3000,
+              "pan": 0,
+              "mute": false,
+              "solo": false,
+              "inserts": [
+                "slt_1"
+              ]
+            }
+          ],
+          "clips": [
+            {
+              "schema": "siann.entity.clip.v1",
+              "id": "clp_1",
+              "trackId": "trk_1",
+              "mediaId": "med_1",
+              "position": {
+                "domain": "audio",
+                "value": "0"
+              },
+              "sourceStart": "0",
+              "length": "48000",
+              "gainMilliDb": -6000
+            },
+            {
+              "schema": "siann.entity.clip.v1",
+              "id": "clp_2",
+              "trackId": "trk_2",
+              "mediaId": "med_1",
+              "position": {
+                "domain": "music",
+                "value": "3840"
+              },
+              "sourceStart": "24000",
+              "length": "24000",
+              "gainMilliDb": 0
+            }
+          ],
+          "pluginSlots": [
+            {
+              "schema": "siann.entity.plugin_slot.v1",
+              "id": "slt_1",
+              "trackId": "trk_2",
+              "format": "clap",
+              "uid": "com.siann.test-plugin",
+              "name": "SIANN Test Plugin",
+              "path": "/plugins/siann_test_plugin.clap",
+              "bypass": false
+            }
+          ],
+          "buses": [
+            {
+              "schema": "siann.entity.bus.v1",
+              "id": "b1",
+              "name": "Bus b1",
+              "channels": 2,
+              "gainMilliDb": -6000,
+              "pan": 0,
+              "mute": false,
+              "solo": false
+            }
+          ],
+          "sends": [
+            {
+              "schema": "siann.entity.send.v1",
+              "id": "s1",
+              "trackId": "trk_1",
+              "busId": "b1",
+              "levelMilliDb": 0,
+              "pre": false,
+              "enabled": true
+            }
+          ]
+        },
+        "documentHash": "sha256:0c7efa479ae9e8e7ea8edd25b8449eb4536543498ceaf8e2c4bb3ac8b4b8285f"
+      },
+      {
+        "event": {
+          "schema": "siann.event.v1",
+          "seq": "19",
+          "sessionId": "ses_00c0ffee00c0ffee",
+          "revision": "r15",
+          "type": "session.changed",
+          "parents": [
+            "r14"
+          ],
+          "cause": "command",
+          "actor": "protocol",
+          "time": "2026-11-09T00:00:015Z",
+          "documentHash": "sha256:90539256468ed62ea033f9747d2e562f768b07faae25df7d907bec42c7377aa0",
+          "changedIds": [
+            {
+              "ref": "root:root",
+              "change": "modified"
+            },
+            {
+              "ref": "track:trk_1",
+              "change": "modified"
+            },
+            {
+              "ref": "bus:b1",
+              "change": "removed"
+            },
+            {
+              "ref": "send:s1",
+              "change": "removed"
+            }
+          ]
+        },
+        "fetch": {
+          "params": {
+            "refs": [
+              "root:root",
+              "track:trk_1"
+            ],
+            "revision": "r15"
+          },
+          "result": {
+            "revision": "r15",
+            "documentHash": "sha256:90539256468ed62ea033f9747d2e562f768b07faae25df7d907bec42c7377aa0",
+            "entities": [
+              {
+                "ref": "root:root",
+                "entity": {
+                  "schema": "siann.entity.root.v1",
+                  "id": "root",
+                  "name": "Read Model Song",
+                  "sampleRate": 48000,
+                  "tempo": [
+                    {
+                      "ticks": "0",
+                      "milliBpm": 120000
+                    }
+                  ],
+                  "trackOrder": [
+                    "trk_2",
+                    "trk_1"
+                  ]
+                }
+              },
+              {
+                "ref": "track:trk_1",
+                "entity": {
+                  "schema": "siann.entity.track.v1",
+                  "id": "trk_1",
+                  "name": "Drums",
+                  "kind": "audio",
+                  "channels": 2,
+                  "gainMilliDb": 0,
+                  "pan": 0,
+                  "mute": false,
+                  "solo": false
+                }
+              }
+            ]
+          }
+        },
+        "document": {
+          "schemaVersion": "siann.session_document.v3",
+          "root": {
+            "schema": "siann.entity.root.v1",
+            "id": "root",
+            "name": "Read Model Song",
+            "sampleRate": 48000,
+            "tempo": [
+              {
+                "ticks": "0",
+                "milliBpm": 120000
+              }
+            ],
+            "trackOrder": [
+              "trk_2",
+              "trk_1"
+            ]
+          },
+          "media": [
+            {
+              "schema": "siann.entity.media.v1",
+              "id": "med_1",
+              "contentHash": "sha256:b2fbb166c6de43e5d9d93681cff364f042a133e450c4231cf7a20348447c5e0c",
+              "format": "wav",
+              "channels": 2,
+              "sampleRate": 48000,
+              "frames": "96000"
+            }
+          ],
+          "tracks": [
+            {
+              "schema": "siann.entity.track.v1",
+              "id": "trk_1",
+              "name": "Drums",
+              "kind": "audio",
+              "channels": 2,
+              "gainMilliDb": 0,
+              "pan": 0,
+              "mute": false,
+              "solo": false
+            },
+            {
+              "schema": "siann.entity.track.v1",
+              "id": "trk_2",
+              "name": "Bass",
+              "kind": "audio",
+              "channels": 2,
+              "gainMilliDb": -3000,
+              "pan": 0,
+              "mute": false,
+              "solo": false,
+              "inserts": [
+                "slt_1"
+              ]
+            }
+          ],
+          "clips": [
+            {
+              "schema": "siann.entity.clip.v1",
+              "id": "clp_1",
+              "trackId": "trk_1",
+              "mediaId": "med_1",
+              "position": {
+                "domain": "audio",
+                "value": "0"
+              },
+              "sourceStart": "0",
+              "length": "48000",
+              "gainMilliDb": -6000
+            },
+            {
+              "schema": "siann.entity.clip.v1",
+              "id": "clp_2",
+              "trackId": "trk_2",
+              "mediaId": "med_1",
+              "position": {
+                "domain": "music",
+                "value": "3840"
+              },
+              "sourceStart": "24000",
+              "length": "24000",
+              "gainMilliDb": 0
+            }
+          ],
+          "pluginSlots": [
+            {
+              "schema": "siann.entity.plugin_slot.v1",
+              "id": "slt_1",
+              "trackId": "trk_2",
+              "format": "clap",
+              "uid": "com.siann.test-plugin",
+              "name": "SIANN Test Plugin",
+              "path": "/plugins/siann_test_plugin.clap",
+              "bypass": false
+            }
+          ]
+        },
+        "documentHash": "sha256:90539256468ed62ea033f9747d2e562f768b07faae25df7d907bec42c7377aa0"
+      }
+    ],
+    "sync": [
+      {
+        "revision": "r13",
+        "seq": "17",
+        "meters": null,
+        "documentHash": "sha256:e9f156b93fba82acd37b547ee05922fc057901933d7265a5e70233613039b6db",
+        "entities": 9,
+        "chunk": {
+          "root": {
+            "schema": "siann.entity.root.v1",
+            "id": "root",
+            "name": "Read Model Song",
+            "sampleRate": 48000,
+            "tempo": [
+              {
+                "ticks": "0",
+                "milliBpm": 120000
+              }
+            ],
+            "trackOrder": [
+              "trk_2",
+              "trk_1"
+            ],
+            "busOrder": [
+              "b1"
+            ]
+          },
+          "media": [
+            {
+              "schema": "siann.entity.media.v1",
+              "id": "med_1",
+              "contentHash": "sha256:b2fbb166c6de43e5d9d93681cff364f042a133e450c4231cf7a20348447c5e0c",
+              "format": "wav",
+              "channels": 2,
+              "sampleRate": 48000,
+              "frames": "96000"
+            }
+          ],
+          "tracks": [],
+          "clips": []
+        },
+        "next": "sync_1:2"
+      },
+      {
+        "revision": "r13",
+        "seq": "17",
+        "meters": null,
+        "documentHash": "sha256:e9f156b93fba82acd37b547ee05922fc057901933d7265a5e70233613039b6db",
+        "entities": 9,
+        "chunk": {
+          "media": [],
+          "tracks": [
+            {
+              "schema": "siann.entity.track.v1",
+              "id": "trk_1",
+              "name": "Drums",
+              "kind": "audio",
+              "channels": 2,
+              "gainMilliDb": 0,
+              "pan": 0,
+              "mute": false,
+              "solo": false,
+              "sends": [
+                "s1"
+              ]
+            },
+            {
+              "schema": "siann.entity.track.v1",
+              "id": "trk_2",
+              "name": "Bass",
+              "kind": "audio",
+              "channels": 2,
+              "gainMilliDb": -3000,
+              "pan": 0,
+              "mute": false,
+              "solo": false,
+              "inserts": [
+                "slt_1"
+              ]
+            }
+          ],
+          "clips": []
+        },
+        "next": "sync_1:4"
+      },
+      {
+        "revision": "r13",
+        "seq": "17",
+        "meters": null,
+        "documentHash": "sha256:e9f156b93fba82acd37b547ee05922fc057901933d7265a5e70233613039b6db",
+        "entities": 9,
+        "chunk": {
+          "media": [],
+          "tracks": [],
+          "clips": [
+            {
+              "schema": "siann.entity.clip.v1",
+              "id": "clp_1",
+              "trackId": "trk_1",
+              "mediaId": "med_1",
+              "position": {
+                "domain": "audio",
+                "value": "0"
+              },
+              "sourceStart": "0",
+              "length": "48000",
+              "gainMilliDb": -6000
+            },
+            {
+              "schema": "siann.entity.clip.v1",
+              "id": "clp_2",
+              "trackId": "trk_2",
+              "mediaId": "med_1",
+              "position": {
+                "domain": "music",
+                "value": "3840"
+              },
+              "sourceStart": "24000",
+              "length": "24000",
+              "gainMilliDb": 0
+            }
+          ]
+        },
+        "next": "sync_1:6"
+      },
+      {
+        "revision": "r13",
+        "seq": "17",
+        "meters": null,
+        "documentHash": "sha256:e9f156b93fba82acd37b547ee05922fc057901933d7265a5e70233613039b6db",
+        "entities": 9,
+        "chunk": {
+          "media": [],
+          "tracks": [],
+          "clips": [],
+          "pluginSlots": [
+            {
+              "schema": "siann.entity.plugin_slot.v1",
+              "id": "slt_1",
+              "trackId": "trk_2",
+              "format": "clap",
+              "uid": "com.siann.test-plugin",
+              "name": "SIANN Test Plugin",
+              "path": "/plugins/siann_test_plugin.clap",
+              "bypass": false
+            }
+          ],
+          "buses": [
+            {
+              "schema": "siann.entity.bus.v1",
+              "id": "b1",
+              "name": "Bus b1",
+              "channels": 2,
+              "gainMilliDb": 0,
+              "pan": 0,
+              "mute": false,
+              "solo": false
+            }
+          ]
+        },
+        "next": "sync_1:8"
+      },
+      {
+        "revision": "r13",
+        "seq": "17",
+        "meters": null,
+        "documentHash": "sha256:e9f156b93fba82acd37b547ee05922fc057901933d7265a5e70233613039b6db",
+        "entities": 9,
+        "chunk": {
+          "media": [],
+          "tracks": [],
+          "clips": [],
+          "sends": [
+            {
+              "schema": "siann.entity.send.v1",
+              "id": "s1",
+              "trackId": "trk_1",
+              "busId": "b1",
+              "levelMilliDb": 0,
+              "pre": false,
+              "enabled": true
+            }
+          ]
+        },
+        "next": null
+      }
+    ]
+  },
+  "fades": {
+    "before": {
+      "revision": "r12",
+      "documentHash": "sha256:90539256468ed62ea033f9747d2e562f768b07faae25df7d907bec42c7377aa0"
+    },
+    "steps": [
+      {
+        "event": {
+          "schema": "siann.event.v1",
+          "seq": "17",
+          "sessionId": "ses_00c0ffee00c0ffee",
+          "revision": "r13",
+          "type": "session.changed",
+          "parents": [
+            "r12"
+          ],
+          "cause": "command",
+          "actor": "protocol",
+          "time": "2026-11-09T00:00:013Z",
+          "documentHash": "sha256:ef7dbff646c0e8295b4b9f83a463b154015ec135e44835e47c92fbaccf62aabb",
+          "changedIds": [
+            {
+              "ref": "clip:clp_1",
+              "change": "modified"
+            }
+          ]
+        },
+        "fetch": {
+          "params": {
+            "refs": [
+              "clip:clp_1"
+            ],
+            "revision": "r13"
+          },
+          "result": {
+            "revision": "r13",
+            "documentHash": "sha256:ef7dbff646c0e8295b4b9f83a463b154015ec135e44835e47c92fbaccf62aabb",
+            "entities": [
+              {
+                "ref": "clip:clp_1",
+                "entity": {
+                  "schema": "siann.entity.clip.v1",
+                  "id": "clp_1",
+                  "trackId": "trk_1",
+                  "mediaId": "med_1",
+                  "position": {
+                    "domain": "audio",
+                    "value": "0"
+                  },
+                  "sourceStart": "0",
+                  "length": "48000",
+                  "gainMilliDb": -6000,
+                  "fadeIn": {
+                    "length": "480",
+                    "curve": "linear"
+                  },
+                  "fadeOut": {
+                    "length": "960",
+                    "curve": "equal_power"
+                  }
+                }
+              }
+            ]
+          }
+        },
+        "document": {
+          "schemaVersion": "siann.session_document.v2",
+          "root": {
+            "schema": "siann.entity.root.v1",
+            "id": "root",
+            "name": "Read Model Song",
+            "sampleRate": 48000,
+            "tempo": [
+              {
+                "ticks": "0",
+                "milliBpm": 120000
+              }
+            ],
+            "trackOrder": [
+              "trk_2",
+              "trk_1"
+            ]
+          },
+          "media": [
+            {
+              "schema": "siann.entity.media.v1",
+              "id": "med_1",
+              "contentHash": "sha256:b2fbb166c6de43e5d9d93681cff364f042a133e450c4231cf7a20348447c5e0c",
+              "format": "wav",
+              "channels": 2,
+              "sampleRate": 48000,
+              "frames": "96000"
+            }
+          ],
+          "tracks": [
+            {
+              "schema": "siann.entity.track.v1",
+              "id": "trk_1",
+              "name": "Drums",
+              "kind": "audio",
+              "channels": 2,
+              "gainMilliDb": 0,
+              "pan": 0,
+              "mute": false,
+              "solo": false
+            },
+            {
+              "schema": "siann.entity.track.v1",
+              "id": "trk_2",
+              "name": "Bass",
+              "kind": "audio",
+              "channels": 2,
+              "gainMilliDb": -3000,
+              "pan": 0,
+              "mute": false,
+              "solo": false,
+              "inserts": [
+                "slt_1"
+              ]
+            }
+          ],
+          "clips": [
+            {
+              "schema": "siann.entity.clip.v1",
+              "id": "clp_1",
+              "trackId": "trk_1",
+              "mediaId": "med_1",
+              "position": {
+                "domain": "audio",
+                "value": "0"
+              },
+              "sourceStart": "0",
+              "length": "48000",
+              "gainMilliDb": -6000,
+              "fadeIn": {
+                "length": "480",
+                "curve": "linear"
+              },
+              "fadeOut": {
+                "length": "960",
+                "curve": "equal_power"
+              }
+            },
+            {
+              "schema": "siann.entity.clip.v1",
+              "id": "clp_2",
+              "trackId": "trk_2",
+              "mediaId": "med_1",
+              "position": {
+                "domain": "music",
+                "value": "3840"
+              },
+              "sourceStart": "24000",
+              "length": "24000",
+              "gainMilliDb": 0
+            }
+          ],
+          "pluginSlots": [
+            {
+              "schema": "siann.entity.plugin_slot.v1",
+              "id": "slt_1",
+              "trackId": "trk_2",
+              "format": "clap",
+              "uid": "com.siann.test-plugin",
+              "name": "SIANN Test Plugin",
+              "path": "/plugins/siann_test_plugin.clap",
+              "bypass": false
+            }
+          ]
+        },
+        "documentHash": "sha256:ef7dbff646c0e8295b4b9f83a463b154015ec135e44835e47c92fbaccf62aabb"
+      },
+      {
+        "event": {
+          "schema": "siann.event.v1",
+          "seq": "18",
+          "sessionId": "ses_00c0ffee00c0ffee",
+          "revision": "r14",
+          "type": "session.changed",
+          "parents": [
+            "r13"
+          ],
+          "cause": "command",
+          "actor": "protocol",
+          "time": "2026-11-09T00:00:014Z",
+          "documentHash": "sha256:90539256468ed62ea033f9747d2e562f768b07faae25df7d907bec42c7377aa0",
+          "changedIds": [
+            {
+              "ref": "clip:clp_1",
+              "change": "modified"
+            }
+          ]
+        },
+        "fetch": {
+          "params": {
+            "refs": [
+              "clip:clp_1"
+            ],
+            "revision": "r14"
+          },
+          "result": {
+            "revision": "r14",
+            "documentHash": "sha256:90539256468ed62ea033f9747d2e562f768b07faae25df7d907bec42c7377aa0",
+            "entities": [
+              {
+                "ref": "clip:clp_1",
+                "entity": {
+                  "schema": "siann.entity.clip.v1",
+                  "id": "clp_1",
+                  "trackId": "trk_1",
+                  "mediaId": "med_1",
+                  "position": {
+                    "domain": "audio",
+                    "value": "0"
+                  },
+                  "sourceStart": "0",
+                  "length": "48000",
+                  "gainMilliDb": -6000
+                }
+              }
+            ]
+          }
+        },
+        "document": {
+          "schemaVersion": "siann.session_document.v2",
+          "root": {
+            "schema": "siann.entity.root.v1",
+            "id": "root",
+            "name": "Read Model Song",
+            "sampleRate": 48000,
+            "tempo": [
+              {
+                "ticks": "0",
+                "milliBpm": 120000
+              }
+            ],
+            "trackOrder": [
+              "trk_2",
+              "trk_1"
+            ]
+          },
+          "media": [
+            {
+              "schema": "siann.entity.media.v1",
+              "id": "med_1",
+              "contentHash": "sha256:b2fbb166c6de43e5d9d93681cff364f042a133e450c4231cf7a20348447c5e0c",
+              "format": "wav",
+              "channels": 2,
+              "sampleRate": 48000,
+              "frames": "96000"
+            }
+          ],
+          "tracks": [
+            {
+              "schema": "siann.entity.track.v1",
+              "id": "trk_1",
+              "name": "Drums",
+              "kind": "audio",
+              "channels": 2,
+              "gainMilliDb": 0,
+              "pan": 0,
+              "mute": false,
+              "solo": false
+            },
+            {
+              "schema": "siann.entity.track.v1",
+              "id": "trk_2",
+              "name": "Bass",
+              "kind": "audio",
+              "channels": 2,
+              "gainMilliDb": -3000,
+              "pan": 0,
+              "mute": false,
+              "solo": false,
+              "inserts": [
+                "slt_1"
+              ]
+            }
+          ],
+          "clips": [
+            {
+              "schema": "siann.entity.clip.v1",
+              "id": "clp_1",
+              "trackId": "trk_1",
+              "mediaId": "med_1",
+              "position": {
+                "domain": "audio",
+                "value": "0"
+              },
+              "sourceStart": "0",
+              "length": "48000",
+              "gainMilliDb": -6000
+            },
+            {
+              "schema": "siann.entity.clip.v1",
+              "id": "clp_2",
+              "trackId": "trk_2",
+              "mediaId": "med_1",
+              "position": {
+                "domain": "music",
+                "value": "3840"
+              },
+              "sourceStart": "24000",
+              "length": "24000",
+              "gainMilliDb": 0
+            }
+          ],
+          "pluginSlots": [
+            {
+              "schema": "siann.entity.plugin_slot.v1",
+              "id": "slt_1",
+              "trackId": "trk_2",
+              "format": "clap",
+              "uid": "com.siann.test-plugin",
+              "name": "SIANN Test Plugin",
+              "path": "/plugins/siann_test_plugin.clap",
+              "bypass": false
+            }
+          ]
+        },
+        "documentHash": "sha256:90539256468ed62ea033f9747d2e562f768b07faae25df7d907bec42c7377aa0"
+      }
+    ]
   }
 }

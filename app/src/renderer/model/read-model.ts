@@ -19,6 +19,7 @@ import {
   TABLES,
   parseRef,
   type ClipEntity,
+  type BusEntity,
   type Entity,
   type FetchedEntity,
   type LocatorsEntity,
@@ -26,6 +27,7 @@ import {
   type MediaEntity,
   type PluginSlotEntity,
   type RootEntity,
+  type SendEntity,
   type SessionChanged,
   type SyncChunk,
   type TrackEntity,
@@ -59,6 +61,11 @@ export interface Snapshot {
   readonly locators: LocatorsEntity | null;
   // The singleton master entity, null while the master gain is 0 dB.
   readonly master: MasterEntity | null;
+  // Buses and sends in id order (m5b-engine-buses-sends), and the mixer's bus
+  // order (root.busOrder, empty while there are no buses).
+  readonly buses: readonly BusEntity[];
+  readonly sends: readonly SendEntity[];
+  readonly busOrder: readonly string[];
   // The user-visible track order (root.trackOrder).
   readonly trackOrder: readonly string[];
 }
@@ -126,7 +133,7 @@ function buildSnapshot(
   entities: Record<string, Entity>,
   hashes: Record<string, string>,
 ): Snapshot {
-  const tables: Record<string, Entity[]> = { media: [], track: [], clip: [], plugin_slot: [] };
+  const tables: Record<string, Entity[]> = { media: [], track: [], clip: [], plugin_slot: [], bus: [], send: [] };
   let root: RootEntity | null = null;
   let locators: LocatorsEntity | null = null;
   let master: MasterEntity | null = null;
@@ -151,6 +158,9 @@ function buildSnapshot(
     pluginSlots: Object.freeze(tables.plugin_slot as PluginSlotEntity[]),
     locators,
     master,
+    buses: Object.freeze(tables.bus as BusEntity[]),
+    sends: Object.freeze(tables.send as SendEntity[]),
+    busOrder: root?.busOrder ?? Object.freeze([]),
     trackOrder: root ? root.trackOrder : Object.freeze([]),
   });
 }

@@ -17,6 +17,7 @@ import { LOCALES, type Locale } from '../../src/renderer/i18n/locale';
 import { planArrivedMessage, reconnectedMessage } from '../../src/renderer/i18n/messages';
 import { plural, relativeTime, translator } from '../../src/renderer/i18n/t';
 import { describePlan, describeStep, type StepNames } from '../../src/renderer/plans/describe';
+import { isolateName as n } from '../../src/renderer/plans/isolate';
 
 const NAMES: StepNames = {
   track: (id) => ({ trk_a: 'Lead', trk_v: 'Vox BG 主唱', trk_k: 'Keys' } as Record<string, string>)[id],
@@ -88,42 +89,42 @@ const describe = (locale: Locale, step: StepName) => describeStep(STEPS[step], t
 
 test('English wording for every op the engine accepts, and a generic line for an unknown one', () => {
   const expected: Record<StepName, string> = {
-    add: 'Add track Bass',
-    remove: 'Remove Lead',
+    add: `Add track ${n('Bass')}`,
+    remove: `Remove ${n('Lead')}`,
     removeUnknown: 'Remove a track',
-    rename: 'Rename Lead to FX Riser',
-    gain: `Set Vox BG 主唱 volume to ${formatMilliDb(-6000)}`,
+    rename: `Rename ${n('Lead')} to ${n('FX Riser')}`,
+    gain: `Set ${n('Vox BG 主唱')} volume to ${formatMilliDb(-6000)}`,
     gainUnknown: `Set a track volume to ${formatMilliDb(-600)}`,
-    pan: 'Pan Lead to L25',
-    panCentre: 'Pan Lead to C',
-    panRight: 'Pan Lead to R40',
-    mute: 'Mute Lead',
-    unmute: 'Unmute Lead',
-    solo: 'Solo Lead',
-    unsolo: 'Unsolo Lead',
-    inputMono: 'Record Lead from input 4',
-    inputStereo: 'Record Lead from inputs 3-4',
-    inputClear: 'Clear the input of Lead',
-    monitorOff: 'Turn monitoring off on Lead',
-    monitorAuto: 'Set Lead to auto monitoring',
-    monitorInput: 'Monitor the input of Lead',
-    explode: 'Split Keys into one track per channel',
-    place: 'Place a clip on Keys at 2.1.000',
-    move: 'Move a clip on Keys to 1.1.960',
-    moveTrack: 'Move a clip on Keys to Lead at 1.2.000',
-    trim: 'Trim a clip on Keys to 2.5 s',
-    clipRemove: 'Remove a clip on Keys at 1.4.000',
+    pan: `Pan ${n('Lead')} to L25`,
+    panCentre: `Pan ${n('Lead')} to C`,
+    panRight: `Pan ${n('Lead')} to R40`,
+    mute: `Mute ${n('Lead')}`,
+    unmute: `Unmute ${n('Lead')}`,
+    solo: `Solo ${n('Lead')}`,
+    unsolo: `Unsolo ${n('Lead')}`,
+    inputMono: `Record ${n('Lead')} from input 4`,
+    inputStereo: `Record ${n('Lead')} from inputs 3-4`,
+    inputClear: `Clear the input of ${n('Lead')}`,
+    monitorOff: `Turn monitoring off on ${n('Lead')}`,
+    monitorAuto: `Set ${n('Lead')} to auto monitoring`,
+    monitorInput: `Monitor the input of ${n('Lead')}`,
+    explode: `Split ${n('Keys')} into one track per channel`,
+    place: `Place a clip on ${n('Keys')} at 2.1.000`,
+    move: `Move a clip on ${n('Keys')} to 1.1.960`,
+    moveTrack: `Move a clip on ${n('Keys')} to ${n('Lead')} at 1.2.000`,
+    trim: `Trim a clip on ${n('Keys')} to 2.5 s`,
+    clipRemove: `Remove a clip on ${n('Keys')} at 1.4.000`,
     clipRemoveUnknown: 'Remove a clip',
-    clipGain: `Set the volume of a clip on Keys to ${formatMilliDb(-3000)}`,
+    clipGain: `Set the volume of a clip on ${n('Keys')} to ${formatMilliDb(-3000)}`,
     mediaAdd: 'Add an audio file to the pool',
     mediaRemove: 'Remove an audio file from the pool',
-    mediaRename: 'Rename an audio file in the pool to Kick Loop.wav',
+    mediaRename: `Rename an audio file in the pool to ${n('Kick Loop.wav')}`,
     mediaUnname: 'Clear the name of an audio file in the pool',
-    insert: 'Insert Fine EQ on Keys',
-    pluginRemove: 'Remove Pro-Q 3 on Keys',
-    bypass: 'Bypass Pro-Q 3 on Keys',
-    unbypass: 'Turn Pro-Q 3 on Keys back on',
-    sessionRename: 'Rename the session to Night Drive',
+    insert: `Insert ${n('Fine EQ')} on ${n('Keys')}`,
+    pluginRemove: `Remove ${n('Pro-Q 3')} on ${n('Keys')}`,
+    bypass: `Bypass ${n('Pro-Q 3')} on ${n('Keys')}`,
+    unbypass: `Turn ${n('Pro-Q 3')} on ${n('Keys')} back on`,
+    sessionRename: `Rename the session to ${n('Night Drive')}`,
     tempo: 'Set the tempo to 128 BPM',
     tempoMap: 'Set a tempo map with 2 changes',
     unknown: 'Change (details below)',
@@ -142,16 +143,16 @@ test('a track, clip or plugin made by an earlier step of the plan is named from 
     { op: 'plugin.set_bypass', slotId: 'slt_p', bypass: true },
   ];
   assert.deepEqual(describePlan(plan, t, NAMES), [
-    'Add track Pad',
-    `Set Pad volume to ${formatMilliDb(-9000)}`,
-    'Place a clip on Pad at 1.1.000',
-    'Move a clip on Pad to 1.3.000',
-    'Insert Verb on Pad',
-    'Bypass Verb on Pad',
+    `Add track ${n('Pad')}`,
+    `Set ${n('Pad')} volume to ${formatMilliDb(-9000)}`,
+    `Place a clip on ${n('Pad')} at 1.1.000`,
+    `Move a clip on ${n('Pad')} to 1.3.000`,
+    `Insert ${n('Verb')} on ${n('Pad')}`,
+    `Bypass ${n('Verb')} on ${n('Pad')}`,
   ]);
   // Without a sample rate a position is not invented.
   const noRate: StepNames = { ...NAMES, sampleRate: undefined };
-  assert.equal(describeStep(STEPS.move, t, noRate), 'Move a clip on Keys to a new position');
+  assert.equal(describeStep(STEPS.move, t, noRate), `Move a clip on ${n('Keys')} to a new position`);
 });
 
 // UI redesign spec 7, P1-5: positions in plan wording follow the position
@@ -160,14 +161,14 @@ test('a track, clip or plugin made by an earlier step of the plan is named from 
 test('positions follow the primary display format and the tempo map', () => {
   const t = translator('en');
   const seconds: StepNames = { ...NAMES, timeFormat: 'seconds' };
-  assert.equal(describeStep(STEPS.place, t, seconds), 'Place a clip on Keys at 0:02.000');
-  assert.equal(describeStep(STEPS.move, t, seconds), 'Move a clip on Keys to 0:00.250');
-  assert.equal(describeStep(STEPS.clipRemove, t, seconds), 'Remove a clip on Keys at 0:01.500');
-  assert.equal(describeStep(STEPS.trim, t, seconds), 'Trim a clip on Keys to 2.5 s');
+  assert.equal(describeStep(STEPS.place, t, seconds), `Place a clip on ${n('Keys')} at 00:00:02.000`);
+  assert.equal(describeStep(STEPS.move, t, seconds), `Move a clip on ${n('Keys')} to 00:00:00.250`);
+  assert.equal(describeStep(STEPS.clipRemove, t, seconds), `Remove a clip on ${n('Keys')} at 00:00:01.500`);
+  assert.equal(describeStep(STEPS.trim, t, seconds), `Trim a clip on ${n('Keys')} to 2.5 s`);
   // At 60 BPM a quarter is a second: 2 s is beat 3 of bar 1.
   const slow: StepNames = { ...NAMES, tempo: [{ ticks: '0', milliBpm: 60_000 }] };
-  assert.equal(describeStep(STEPS.place, t, slow), 'Place a clip on Keys at 1.3.000');
-  assert.equal(describeStep(STEPS.place, t, { ...slow, timeFormat: 'bars' }), 'Place a clip on Keys at 1.3.000');
+  assert.equal(describeStep(STEPS.place, t, slow), `Place a clip on ${n('Keys')} at 1.3.000`);
+  assert.equal(describeStep(STEPS.place, t, { ...slow, timeFormat: 'bars' }), `Place a clip on ${n('Keys')} at 1.3.000`);
 });
 
 test('no step description shows an entity id, a raw pan value or a milli-dB integer', () => {
@@ -240,6 +241,7 @@ const CODES = [
   'gesture_open',
   'queue_full',
   'lease_expired',
+  'invalid_name',
 ];
 
 test('engine error codes: catalog text in Chinese, the engine\'s own message in English', () => {

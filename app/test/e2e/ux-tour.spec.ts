@@ -29,9 +29,11 @@ import * as path from 'node:path';
 import type { Locale } from '../../src/renderer/i18n/locale';
 import { formatMilliDb } from '../../src/renderer/format';
 import { translator } from '../../src/renderer/i18n/t';
+import { RULER_UPPER } from '../../src/renderer/timeline/geometry';
 import { snappedMoveDelta, snapperFor } from '../../src/renderer/timeline/snap';
 import { engineClient, type EngineClient } from './support/engine-client';
 import { launchElectron } from './support/launch';
+import { selectPlan } from './support/seed';
 
 const APP_DIR = path.resolve(__dirname, '..', '..');
 const MAIN = path.join(APP_DIR, 'dist', 'src', 'main', 'main.js');
@@ -348,7 +350,7 @@ async function stopLatch(p: Page): Promise<void> {
 
 type Rect = { clipId: string; trackId: string; position: string; x: number; y: number; width: number; height: number };
 
-async function timeline<T>(name: 'clips' | 'peakColumns' | 'view' | 'cursorX', arg?: string): Promise<T> {
+async function timeline<T>(name: 'clips' | 'peakColumns' | 'view' | 'cursorX' | 'locatorBand', arg?: string): Promise<T> {
   return page.evaluate(
     ({ name: called, arg: value }) => {
       const hooks = (window as unknown as { __siannTimeline?: Record<string, (a?: string) => unknown> }).__siannTimeline;
@@ -447,8 +449,8 @@ function hash8(hash: string): string {
 async function submit(client: Agent, steps: ReadonlyArray<Record<string, unknown>>): Promise<string> {
   const plan = await client.tool('submit_plan', { steps });
   const hash = plan.hash as string;
-  await page.getByTestId(`plan-${hash8(hash)}`).click();
-  await expect(page.getByTestId('plan-detail')).toBeVisible();
+  // The card by the default selection, or a click on its history row (m5-ui-port-plans).
+  await selectPlan(page, hash);
   return hash;
 }
 
@@ -510,7 +512,7 @@ test('UX screenshot tour', async () => {
   await launch(path.join(scratch, 'empty-sessions'));
   await resize(WIDE);
   await expect(page.getByTestId('status')).toHaveAttribute('data-status', 'connected');
-  await expect(page.getByTestId('track-count')).toHaveText('0');
+  await expect(page.getByTestId('about-track-count')).toHaveText('0');
   await shoot(page, 'Empty session', 'First launch on an empty session directory: the engine created a new session with no tracks, clips or plans.');
   await app!.close();
   app = undefined;
@@ -520,7 +522,7 @@ test('UX screenshot tour', async () => {
   await launch(path.dirname(bundle), { SIANN_SHELL_BACKOFF_MS: String(RESTART_MS) });
   await resize(WIDE);
   await expect(page.getByTestId('status')).toHaveAttribute('data-status', 'connected');
-  await expect(page.getByTestId('track-count')).toHaveText(String(TRACKS.length));
+  await expect(page.getByTestId('about-track-count')).toHaveText(String(TRACKS.length));
   await expect(page.getByTestId('clip-count')).toHaveText('10');
   await waveformsDrawn();
   watcher = await engineClient(page, { events: true });
@@ -578,7 +580,7 @@ test('UX screenshot tour', async () => {
   // The smaller window.
   await resize(SMALL);
   await waveformsDrawn();
-  await shoot(page, 'Session loaded small window', 'The loaded session at 1024x700.');
+  await shoot(page, 'Session loaded small window', 'The loaded session at 1024x700; the MixConsole keeps the strip width of the mockup and scrolls sideways, the master strip at the end.');
   await resize(WIDE);
   await waveformsDrawn();
 
@@ -620,7 +622,7 @@ test('UX screenshot tour', async () => {
   await scrollTo('mixer');
   // The fader is vertical (UI redesign spec 3.4): the drag starts on its cap
   // and moves up, toward 0 dB at three quarters of the travel.
-  const capBox = (await fader.locator('.fader-cap').boundingBox())!;
+  const capBox = (await fader.locator('.cap').boundingBox())!;
   const grabCap = { x: capBox.x + capBox.width / 2, y: capBox.y + capBox.height / 2 };
   const startValue = (await fader.getAttribute('aria-valuetext')) ?? '';
   await page.mouse.move(grabCap.x, grabCap.y);
@@ -630,10 +632,10 @@ test('UX screenshot tour', async () => {
   }
   await gestureSettled();
   const held = (await fader.getAttribute('aria-valuetext')) ?? '';
-  await shoot(page, 'Fader drag held', `Bass fader held mid-drag (pointer down) at ${held} from ${startValue}: the cap, the level value and the tooltip show the gesture's value; no revision is committed until release.`);
+  await shoot(page, 'Fader drag held', `Bass fader held mid-drag (pointer down) at ${held} from ${startValue}: the cap, the level value and the tooltip show the gesture's value; no revision is committed until release. The MixConsole is the mockup's strip() (m5-ui-port-mixer-strip): pan knob, M and S, the dB scale, the fader with its unity line, two meter channels, the level and peak readout and the name tag; the insert and automation rows are empty boxes.`);
   await page.mouse.up();
   await expect(page.getByTestId('fader-value-trk_bass')).toHaveText(held);
-  await shoot(page, 'Fader released', `Bass fader released: one revision committed at ${held}.`);
+  await shoot(page, 'Fader released', `Bass fader released: one revision committed at ${held}; the strip's cap and readout show it, the master strip shows its meter, peak value and name only.`);
   await scrollTop();
 
   // ---- 5. A clip selected, mid-move, and moved.
@@ -642,7 +644,7 @@ test('UX screenshot tour', async () => {
   const grab = { x: cbox.x + target.x + target.width / 2, y: cbox.y + target.y + target.height / 2 };
   await page.mouse.click(grab.x, grab.y);
   await expect(page.getByTestId('info-line')).toHaveAttribute('data-clip', 'clp_06_keys');
-  await shoot(page, 'Clip selected', 'The Keys clip clicked: a 2 px outline on the overlay with its handles (the resize squares in the lower corners and the volume control just inside the lower-left one); the info line shows its start, end, length, offset and gain, and the Delete clip button is enabled.');
+  await shoot(page, 'Clip selected', `The Keys clip clicked: a 2 px outline on the overlay with its handles (the resize squares in the lower corners and the volume control just inside the lower-left one); the info line (the mockup's, m5-ui-port-toolbar) shows its name in its track's colour (${await page.getByTestId('info-name').textContent()}), then its start ${await page.getByTestId('info-start').textContent()} and end ${await page.getByTestId('info-end').textContent()} in bar.beat.sixteenth.tick, its length and offset counted from zero and its volume (${await page.getByTestId('info-volume').textContent()}). Delete and Backspace remove it; the toolbar has no Delete clip button.`);
   await page.mouse.move(grab.x, grab.y);
   await page.mouse.down();
   await page.mouse.move(grab.x + 60, grab.y, { steps: 5 });
@@ -672,13 +674,13 @@ test('UX screenshot tour', async () => {
     { op: 'track.rename', trackId: 'trk_fx', name: 'FX Riser' },
   ];
   const mixHash = await submit(client, mixPass);
-  await expect(page.getByTestId('plan-diff')).toBeVisible();
+  await expect(page.getByTestId('plan-card')).toBeVisible();
   await expect(page.getByTestId('toast')).toBeVisible();
   await scrollTo('plan-review');
   await shoot(
     page,
     'Plan submitted with diff',
-    `An MCP agent submitted a 5-step mix plan (${hash8(mixHash)}): a toast says a plan arrived and the Plans button counts it; the card leads with its first step, the step count, when it arrived, a Needs review badge and the short hash; the steps are numbered from 1, all ticked, in user wording (dB, L/C/R pan, names, no ids); one filled primary (Approve and apply) beside Audition and Reject with its reason field; the diff in user units, raw JSON behind each row's disclosure.`,
+    `An MCP agent submitted a 5-step mix plan (${hash8(mixHash)}): a toast says a plan arrived and the Plans button counts it. The Plans tab is the mockup's (m5-ui-port-plans): the tab row with the hearing switch, the plan as its card (a Needs review badge, when it arrived, its base revision and short hash; the count chips +1 track, 3 mix, 1 edit; the boxes of the title, intent, agent row and composer left empty until M5b), the steps numbered from 1 and all ticked under "Steps · 5 of 5 selected" and its Select none link, each in the mockup's wording with the old value struck and the new one emphasised (dB, L/C/R pan, names, no ids), and the three actions: Audition, the violet primary "Approve 5 of 5" and the icon-only Reject. Each step's raw JSON and entity diff are behind a click on its text.`,
   );
   await shoot(page, 'Plan submitted full page', 'The same state as the whole page (the window: the page never scrolls).', { fullPage: true });
 
@@ -686,7 +688,7 @@ test('UX screenshot tour', async () => {
   for (const step of [2, 4]) await page.getByTestId(`step-${step}`).getByRole('checkbox').uncheck();
   await expect(page.getByTestId('plan-approve-apply')).toBeEnabled();
   await scrollTo('plan-review');
-  await shoot(page, 'Partial approval steps checked', 'Steps 3 and 5 unticked (pan Keys, rename FX): the primary now reads "Approve 3 of 5"; Select all and Select none sit above the steps.');
+  await shoot(page, 'Partial approval steps checked', 'Steps 3 and 5 unticked (pan Keys, rename FX): their boxes empty, the head reads "Steps · 3 of 5 selected" with its link now Select all, and the primary "Approve 3 of 5".');
   await page.getByTestId('plan-approve-apply').click();
   await expect(page.getByTestId(`plan-state-${hash8(mixHash)}`)).toHaveAttribute('data-state', 'rejected');
   const listed = (await watcher.call('plan.list')).plans as Array<Record<string, unknown>>;
@@ -697,7 +699,7 @@ test('UX screenshot tour', async () => {
   await shoot(
     page,
     'Partial approval sub-plan approved',
-    `"Approve 3 of 5" approved a 3-step sub-plan (${hash8(subHash)}, part of ${hash8(mixHash)}) and applied it as one revision (Pad added, Vox BG volume, FX unmuted); the original card reads "Split, 3 of 5 approved".`,
+    `"Approve 3 of 5" approved a 3-step sub-plan (${hash8(subHash)}, part of ${hash8(mixHash)}) and applied it as one revision (Pad added, Vox BG volume, FX unmuted): the card follows the sub-plan, its badge "Applied · <revision>" and "(part of ${hash8(mixHash)})" under it, its steps without boxes; the original plan is a history row under "Earlier" reading "Split, 3 of 5 approved".`,
   );
 
   // Audition: a plan approved, proposed and heard in one action.
@@ -714,7 +716,7 @@ test('UX screenshot tour', async () => {
   await shoot(
     page,
     'Audition active',
-    `Audition on a validated 3-step plan (${hash8(liftHash)}): approved, proposed and heard in one action; the card reads "Approved for audition", the banner under the top bar names the plan with Hear main, Merge and Discard, the hearing switch at the top of the Plans tab and the status bar show Proposal; main is unchanged.`,
+    `Audition on a validated 3-step plan (${hash8(liftHash)}): approved, proposed and heard in one action; the card (selected from its history row) reads "Approved for audition" with Hear main, the primary Merge and the icon-only Discard; the banner under the top bar names the plan with Hear main, Merge and Discard; the hearing switch in the tab row and the status bar show Proposal; main is unchanged.`,
   );
   await page.getByTestId('banner-hear-main').click();
   await expect(page.getByTestId('hear-main')).toHaveAttribute('aria-pressed', 'true');
@@ -727,15 +729,17 @@ test('UX screenshot tour', async () => {
     { op: 'track.set_gain', trackId: 'trk_kick', gainMilliDb: 3000 },
   ];
   const tidyHash = await submit(client, tidy);
+  // The reason row opens with the first press of Reject (UI redesign 10.10, P1-13).
+  await page.getByTestId('plan-reject').click();
   await page.getByTestId('plan-note').fill('Keep the FX riser; kick is loud enough');
   await scrollTo('plan-review');
-  await shoot(page, 'Reject note typed', `A second plan (${hash8(tidyHash)}: remove FX, kick +3 dB) selected with a reason typed in "Reason (sent to agent)".`);
+  await shoot(page, 'Reject note typed', `A second plan (${hash8(tidyHash)}: remove FX, kick +3 dB) selected; the first press of Reject opened the reason row above the actions, and a reason is typed in "Reason (sent to agent)" (Enter or Reject again sends it, Escape closes it).`);
   await page.getByTestId('plan-reject').click();
   await expect(page.getByTestId(`plan-state-${hash8(tidyHash)}`)).toHaveAttribute('data-state', 'rejected');
   await expect(page.getByTestId(`plan-reason-${hash8(tidyHash)}`)).toBeVisible();
   const rejected = await watcher.call('plan.status', { plan: tidyHash });
   await scrollTo('plan-review');
-  await shoot(page, 'Plan rejected with note', `Rejected; the card shows the reason the engine recorded ("${String(rejected.rejectionNote)}"). The reason field is cleared after Reject.`);
+  await shoot(page, 'Plan rejected with note', `Rejected; the card's badge reads Rejected and a row under it shows the reason the engine recorded ("${String(rejected.rejectionNote)}" · sent to agent), with no actions left. The reason row is closed and cleared after Reject.`);
 
   // A stale plan: another client commits to an entity of the plan.
   const vox = [{ op: 'track.set_gain', trackId: 'trk_voxlead', gainMilliDb: -1000 }, { op: 'track.set_solo', trackId: 'trk_voxlead', solo: false }];
@@ -748,7 +752,7 @@ test('UX screenshot tour', async () => {
   await shoot(
     page,
     'Plan stale error',
-    `A third plan (${hash8(voxHash)}) went stale when another client set the Vox Lead volume: the card carries a Stale badge, the reason reads in dB ("Vox Lead: volume was ${formatMilliDb(1500)}, now ${formatMilliDb(500)}"), and Approve and apply is disabled with the reason as its tooltip; Reject stays.`,
+    `A third plan (${hash8(voxHash)}) went stale when another client set the Vox Lead volume: the card carries a Stale badge beside Needs review, a row between the steps and the actions gives the reason in dB ("Vox Lead: volume was ${formatMilliDb(1500)}, now ${formatMilliDb(500)}"), and "Approve 2 of 2" is disabled with the reason as its tooltip; Reject stays.`,
   );
 
   // ---- 7. The engine dies: the window while the shell waits to restart it.
@@ -770,7 +774,7 @@ test('UX screenshot tour', async () => {
   // The toast is shot while it shows (it dismisses itself after a few seconds).
   const toast = page.getByTestId('toast');
   await expect(toast).toBeVisible();
-  await expect(page.getByTestId('track-count')).not.toHaveText('');
+  await expect(page.getByTestId('about-track-count')).not.toHaveText('');
   await expect(page.getByTestId('connection-banner')).toHaveCount(0);
   const toastText = await toast.locator('.toast-text').textContent();
   await painted(page);
@@ -818,6 +822,53 @@ test('UX screenshot tour', async () => {
     'The Keys clip split at the project cursor with Alt+X (its two pieces play the same audio as before: the right one continues in the file where the left one ends), then both pieces selected (click, Shift-click) and duplicated with Ctrl+D: the copies land directly after them on the same lane, as one unit. Each edit was one revision. Zoomed full (Shift+F) to show the whole session.',
     { number: 25 },
   );
+
+  // ---- 23 and 24 (m5-ui-loop-click; numbered explicitly, written after 25).
+  // 23: a locator range drawn in the ruler's upper half over bars 2 to 4 of
+  // the zoomed-full view and cycle turned on with the cycle button.
+  const loopView = await timeline<{ framesPerPixel: number; scrollFrames: string }>('view');
+  const loopBox = await canvasBox();
+  const barX = (bar: number) => (2 * (bar - 1) * RATE - Number(loopView.scrollFrames)) / loopView.framesPerPixel;
+  await page.mouse.move(loopBox.x + barX(2), loopBox.y + RULER_UPPER / 2);
+  await page.mouse.down();
+  await page.mouse.move(loopBox.x + barX(4), loopBox.y + RULER_UPPER / 2, { steps: 5 });
+  await page.mouse.up();
+  await expect(page.getByTestId('display-locators')).toBeVisible();
+  await page.getByTestId('transport-cycle').click();
+  await expect(page.getByTestId('transport-cycle')).toHaveAttribute('aria-pressed', 'true');
+  await expect.poll(async () => (await timeline<{ cycle: boolean } | null>('locatorBand'))?.cycle).toBe(true);
+  const locatorText = await page.getByTestId('display-locators-value').textContent();
+  await shoot(
+    page,
+    'Locators set, cycle on',
+    `A locator range drawn by dragging in the ruler's upper half (one session.set_locators on release, snapped to the grid), then cycle turned on with the cycle button between go to start and stop. The band is light with its L and R flags, the lanes under the range are tinted, the cycle button is lit, and the locator display in the top bar reads ${locatorText}.`,
+    { number: 23 },
+  );
+  // 24: the metronome on (its button after the displays).
+  await page.getByTestId('transport-metronome').click();
+  await expect(page.getByTestId('transport-metronome')).toHaveAttribute('aria-pressed', 'true');
+  await shoot(
+    page,
+    'Metronome on',
+    'The metronome turned on with its button (transport.set_click; C does the same, a right-click on it gives its level): the button is lit. The click is generated from the tempo map and added to the device output after the master meter; nothing else in the window changes.',
+    { number: 24 },
+  );
+
+  // ---- 26 (m5-ui-port-toolbar): the Pool, opened with Ctrl+P (Cmd+P on
+  // macOS) over the project zone: the session's media by name, a click arms
+  // placing. The mockup has no Pool, so the review reads this state alone.
+  await page.keyboard.press('Escape');
+  await page.keyboard.press('ControlOrMeta+KeyP');
+  await expect(page.getByTestId('media-pool')).toBeVisible();
+  const poolItems = await page.locator('[data-testid^="pool-"]').count();
+  await shoot(
+    page,
+    'Pool open',
+    `The Pool (Cubase's, UI redesign 10.8), opened with Ctrl+P (Cmd+P on macOS; the event display's context menu has Open Pool too): an app-only window over the project zone listing the session's ${poolItems} media by name (the media id when there is none); a click on one arms placing and the next click in the event display places it. Escape closes it; the resting window does not show it.`,
+    { number: 26 },
+  );
+  await page.keyboard.press('Escape');
+  await expect(page.getByTestId('media-pool')).toHaveCount(0);
 
   // ---- What the window has no surface for (unnumbered).
   shots.push({

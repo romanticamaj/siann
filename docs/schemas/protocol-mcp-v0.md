@@ -39,7 +39,8 @@ Every session is an agent (spec, Protocol v0 item 29): `engine.status` lists it
 in `agents` and `agent.changed` announces it ([Protocol events v1](protocol-events-v1.md)).
 
 - `initialize` reads `params.clientInfo.name` as the agent's name, sanitised:
-  control characters removed, leading and trailing spaces trimmed, cut to 64
+  control and display-unsafe characters ([Plan v1](plan-v1.md), "Metadata")
+  removed, leading and trailing spaces trimmed, cut to 64
   UTF-8 bytes at a character boundary. Without `clientInfo`, or with a name that
   is not a string or is empty after that, the name is `"MCP client"`. The name is
   the `actor` of every plan the session submits: `{kind: "mcp", name}`
@@ -125,12 +126,12 @@ same JSON-RPC `id` runs against the session served now.
 | `list_commands` | `command.list` | propose | `{}` |
 | `describe_capabilities` | `engine.capabilities` | propose | `{}` |
 | `inspect_session` | `session.inspect` | propose | `{}` |
-| `submit_plan` | `plan.submit` | propose | `{steps: [command], readSet?: ["<type>:<id>"], baseRevision?, title?, intent?}` |
+| `submit_plan` | `plan.submit` | propose | `{steps: [command], readSet?: ["<type>:<id>"], baseRevision?, title?, intent?, request?}` |
 | `plan_status` | `plan.status` | propose | `{plan: "sha256:..."}` |
 | `approve_plan` | `plan.approve` | trusted | `{plan, steps?: [index]}` |
 | `reject_plan` | `plan.reject` | propose | `{plan, note?}` |
 | `apply_plan` | `plan.apply` | trusted | `{plan}` |
-| `rollback_plan` | `plan.rollback` | trusted | `{plan}` |
+| `rollback_plan` | `plan.rollback` | trusted | `{plan}` or `{revision}` (exactly one; a revision for a plan an earlier engine process applied) |
 | `propose_plan` | `plan.propose` | propose | `{plan}` |
 | `audition` | `audition.hear` | propose | `{side: "main" \| "<branch>"}` |
 | `merge_proposal` | `proposal.merge` | trusted | `{branch}` |
@@ -152,6 +153,45 @@ same JSON-RPC `id` runs against the session served now.
 | `record` | `transport.record` | trusted | `{enabled}` |
 | `create_session` | `session.create` | trusted | `{path, name?}` |
 | `import_media` | `media.import` | trusted | `{path, clientImportId}` |
+| `next_request` | `agent.next_request` | propose | `{waitMs?}` |
+| `answer_request` | `agent.answer_request` | propose | `{request, plan}`, `{request, message}` or `{request, decline: true, message?}` |
+
+`next_request` and `answer_request` (m5b-engine-agent-requests, spec Protocol v0
+item 32, human gate `agent-request-shape`) are the agent's side of a request the
+user sent it from the UI (`agent.request`, [Protocol engine v0](protocol-engine-v0.md),
+"Agent requests"). A request executes nothing; the agent answers it with a plan
+the user then reviews, with a message, or declines it, so both tools are propose.
+The UI token calling `agent.next_request` or `agent.answer_request` is
+`scope_denied`, and no tool wraps the user's side (`agent.request`,
+`agent.cancel_request`, `agent.requests`): a `tools/call` naming one is the unknown
+tool `-32602`, under either scope, and the server answers `scope_denied` should an
+MCP credential's request reach one.
+
+- `next_request` is a long poll. It answers `{request}` at once with the agent's
+  oldest `pending` request, now `taken`. With none the command thread parks the
+  call (it never blocks) and answers it when a request is queued for this agent,
+  or with `{request: null}` once `min(waitMs, limits.agentRequestWaitMs)` has
+  passed (`ServerOptions::agentRequestWaitMs`, default 25,000 ms, clamped to at
+  most `mcpRequestTimeout` minus 1 s, so the call is answered before the
+  transport's `request_timeout`). `waitMs` is a non-negative integer; `0` answers
+  at once. A second call from the same agent answers the first one with `{request:
+  null}`. While parked the agent stays connected (no idle expiry); `DELETE
+  /v0/mcp` answers it with `{request: null}`. A retry with the same JSON-RPC `id`
+  returns the same request (the idempotency cache); an empty answer is not cached
+  and is not an action (no `lastAction`, no `agent.changed`).
+- `answer_request` takes exactly one form (`invalid_params` otherwise): `plan`, the
+  hash of a plan this agent submitted in the served session (another client's plan
+  is `invalid_params`, an unknown one `not_found`), answers it with the plan;
+  `message` answers it with text; `decline: true`, with an optional `message`,
+  declines it. `message` is 1 to 4,000 characters (code points) without a control
+  character other than tab, LF and CR and without a bidi formatting character or
+  U+2028/U+2029 (`invalid_request_text`). A request that is closed, or addressed to
+  another agent, is `request_not_open`; an unknown one `not_found`.
+- `submit_plan {..., request}` links the plan to an open request addressed to this
+  agent, which then counts as `answered` with the plan; the link is not part of the
+  plan (the hash is the same without it, [Plan v1](plan-v1.md)). A closed request or
+  another agent's is `request_not_open`, an unknown one `not_found`; nothing is
+  stored then.
 
 The eight from `play` to `select_device` (m5-engine-sessions-devices and m5-ui-engine-loop-click, Protocol v0
 items 18, 22 and 26) wrap the transport and device methods of
@@ -160,7 +200,16 @@ codes (`no_device` included). `select_device` is trusted because it changes the
 device the served session plays on for every client. The locators are set with the
 command `session.set_locators` through `execute` (trusted) or a plan, and the
 master gain (m5b-engine-master) with the command `master.set_gain` the same way; no
-tool is dedicated to either.
+tool is dedicated to either. Buses and sends (m5b-engine-buses-sends) likewise go
+through `execute` or a plan with their commands, and `list_commands` returns
+`command.list`'s `{commands, cascades}` unchanged.
+
+`engine_status` carries `load {average, peak}` (m5b-engine-load-loudness, Protocol
+v0 item 31) like the method it wraps. No tool wraps `meter.reset_loudness`, by
+decision: it restarts the integrated value of the user's loudness meter, a display
+aid, not session state, and nothing a plan needs; an agent reads loudness from a
+render, not from the live meter. The adapter lists the method in its exclusions
+(`mcpExclusions()`), and a tool call naming it is refused like any unknown tool.
 
 `record_arm` and `record` (m5b-engine-record, Protocol v0 item 28) wrap the
 recording methods of [Protocol engine v0](protocol-engine-v0.md) in the trusted

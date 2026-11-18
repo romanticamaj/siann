@@ -39,7 +39,8 @@ struct PluginCapabilityFlags {
 
 struct PluginInstantiateRequest {
     std::string slotId;   // chosen by the server, unused in the head document
-    std::string trackId;  // exists in the head document
+    std::string trackId;  // exists in the head document; empty for a bus's slot
+    std::string busId;    // exists in the head document; empty for a track's slot (m5b-engine-buses-sends)
     std::int64_t index = 0;
     PluginDescriptorInfo descriptor;
     // A blob already in <bundle>/blobs to restore ("sha256:<hex>"); empty: the
@@ -66,7 +67,8 @@ struct PluginEditorState {
 // One plugin slot of the heard document, for engine.status plugins[].
 struct PluginStatus {
     std::string slotId;
-    std::string trackId;
+    std::string trackId;  // empty for a bus's slot
+    std::string busId;    // empty for a track's slot (m5b-engine-buses-sends)
     std::string format;
     std::string uid;
     bool running = false;  // false: "missing"

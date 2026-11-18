@@ -4,22 +4,27 @@
 // lower resize corners, its edges and its volume control (m5-ui-edit-basics),
 // and the clamping a move or trim ends in (the grid is snap.ts's). Lanes have their own
 // heights (UI redesign spec 2.3: 53 px by default, 24-240 px, a view setting
-// kept per session id) and scroll vertically under the fixed ruler
-// (m5-ui-arrange). Coordinates are the event display canvas's, which begins
+// kept per session id) and scroll vertically under the fixed ruler and the
+// marker track row (m5-ui-arrange); a clip is drawn, and hit, as the mockup's
+// draw() draws it (m5-ui-port-arrange-canvas: clipBox). Coordinates are the event display canvas's, which begins
 // right of the track list, so nothing here knows the list's width. Positions are
 // decimal strings, as the document carries them; arithmetic on them is
 // BigInt, so a position beyond 2^53 keeps every frame. Framework-free.
 
 import type { ClipEntity } from '../model/document';
 import type { Snapshot } from '../model/read-model';
+import { TOKENS } from '../tokens';
 
 export interface Viewport {
   // Whole sample frames per CSS pixel (the zoom), at least 1.
   readonly framesPerPixel: number;
   // The frame at x = 0, a decimal string.
   readonly scrollFrames: string;
-  // Pixels above the first lane.
+  // The ruler's height: its two halves' hit zones end here.
   readonly rulerHeight: number;
+  // Pixels above the first lane: the ruler and the marker track row under it
+  // (LANES_TOP; m5-ui-port-arrange-canvas). The ruler's height when absent.
+  readonly lanesTop?: number;
   // The height of a lane the map does not name.
   readonly laneHeight: number;
   // Track id -> lane height in px (clamped to MIN..MAX_LANE_HEIGHT).
@@ -30,7 +35,23 @@ export interface Viewport {
   readonly height?: number;
 }
 
-export const DEFAULT_LANE_HEIGHT = 53;
+// The ruler above the lanes, in two halves (UI redesign spec 3.2): the upper
+// one is the locators' (m5-ui-loop-click), the lower one the cursor's and the
+// zoom's. RULER_UPPER is the one constant the upper half's geometry (the
+// locator band, the hit test, the half boundary of the ruler's gestures) and
+// its tests take its height from. The heights are the tokens.css --ruler-h,
+// --ruler-upper-h and --ruler-lower-h (tokens.ts), as the track list's head.
+export const RULER_HEIGHT = Number.parseFloat(TOKENS['ruler-h']);
+export const RULER_UPPER = Number.parseFloat(TOKENS['ruler-upper-h']);
+export const RULER_LOWER = Number.parseFloat(TOKENS['ruler-lower-h']);
+// The marker track row under the ruler (--marker-h, UI redesign 3.2), empty
+// until m5b-ui-markers (spec 3.0: an absent part keeps its space), and the
+// lanes below it, as the mockup's draw() lays them out (TOP = RULER + MK).
+export const MARKER_HEIGHT = Number.parseFloat(TOKENS['marker-h']);
+export const LANES_TOP = RULER_HEIGHT + MARKER_HEIGHT;
+
+// --track-h, the mockup's lane.
+export const DEFAULT_LANE_HEIGHT = Number.parseFloat(TOKENS['track-h']);
 export const MIN_LANE_HEIGHT = 24;
 export const MAX_LANE_HEIGHT = 240;
 
@@ -44,10 +65,16 @@ export function laneHeightOf(trackId: string, view: Viewport): number {
   return clampLaneHeight(height ?? view.laneHeight);
 }
 
-// The top of each lane in trackOrder, in canvas pixels (the ruler above, the scroll applied).
+// Where the lanes begin: below the ruler and the marker track row.
+export function lanesTopOf(view: Viewport): number {
+  return view.lanesTop ?? view.rulerHeight;
+}
+
+// The top of each lane in trackOrder, in canvas pixels (the ruler and the
+// marker row above, the scroll applied).
 export function laneTops(trackOrder: readonly string[], view: Viewport): number[] {
   const tops: number[] = [];
-  let top = view.rulerHeight - (view.scrollY ?? 0);
+  let top = lanesTopOf(view) - (view.scrollY ?? 0);
   for (const trackId of trackOrder) {
     tops.push(top);
     top += laneHeightOf(trackId, view);
@@ -73,21 +100,67 @@ export interface ClipRect {
   readonly height: number;
 }
 
-// A clip's parts (UI redesign spec 3.2, "Clip handles"): the lower corners
-// resize, the rest of each edge is a narrower resize target as well, the
-// volume control sits just inside the lower-left corner, and the body moves.
+export interface Box {
+  readonly x: number;
+  readonly y: number;
+  readonly width: number;
+  readonly height: number;
+}
+
+// The mockup's draw(), clip(): a clip's box is inset 1 px from its bars and
+// 3 px from its lane's top, 7 px shorter than the lane (46 px of a 53 px
+// lane), with a 4 px radius; its title strip is --clip-title-h high; its
+// lower corners carry 6 px resize squares, reaching 1 px past the box's
+// left and right sides.
+export const CLIP_INSET_X = 1;
+export const CLIP_INSET_TOP = 3;
+export const CLIP_INSET_H = 7;
+export const CLIP_RADIUS = 4;
+export const CLIP_TITLE_HEIGHT = Number.parseFloat(TOKENS['clip-title-h']);
+export const CORNER_HANDLE = 6;
+
+export function clipBox(rect: Box): Box & { readonly radius: number } {
+  return {
+    x: rect.x + CLIP_INSET_X,
+    y: rect.y + CLIP_INSET_TOP,
+    width: Math.max(0, rect.width - 2 * CLIP_INSET_X),
+    height: Math.max(0, rect.height - CLIP_INSET_H),
+    radius: CLIP_RADIUS,
+  };
+}
+
+export function titleStrip(box: Box): Box {
+  return { x: box.x, y: box.y, width: box.width, height: Math.min(CLIP_TITLE_HEIGHT, box.height) };
+}
+
+// fillRect(x-1, y+h-6, 6, 6) and fillRect(x+w-5, y+h-6, 6, 6).
+export function cornerHandles(box: Box): [Box, Box] {
+  const y = box.y + box.height - CORNER_HANDLE;
+  return [
+    { x: box.x - 1, y, width: CORNER_HANDLE, height: CORNER_HANDLE },
+    { x: box.x + box.width - CORNER_HANDLE + 1, y, width: CORNER_HANDLE, height: CORNER_HANDLE },
+  ];
+}
+
+// A clip's parts (UI redesign spec 3.2, "Clip handles"), over its box: the
+// lower corners resize, the rest of each edge is a narrower resize target as
+// well, the volume control is draw()'s box right of the lower-left corner,
+// and the body moves.
 export type HitPart = 'body' | 'left' | 'right' | 'cornerLeft' | 'cornerRight' | 'gain';
 export type TrimEdge = 'left' | 'right';
 
 // The width of the resize target along each edge, in pixels.
 export const HANDLE_PX = 4;
-// The resize squares in the lower corners, in pixels.
+// The resize targets in the lower corners, in pixels.
 export const CORNER_PX = 8;
-// The volume control: its box right of the lower-left corner, and the
-// smallest clip that has one.
-export const GAIN_W = 14;
-export const GAIN_H = 12;
-export const GAIN_MIN_WIDTH = 48;
+// The volume control: draw()'s rr(x+9, y+h-12, 38, 10, 3) in the box, and
+// the smallest box that has one (the control and a corner target beside it).
+export const GAIN_X = 9;
+export const GAIN_BOTTOM = 12;
+export const GAIN_W = 38;
+export const GAIN_H = 10;
+export const GAIN_RADIUS = 3;
+export const GAIN_MIN_WIDTH = GAIN_X + GAIN_W + CORNER_PX + 1;
 export const GAIN_MIN_HEIGHT = 30;
 
 // The edge a resize part changes, or null for the body and the volume control.
@@ -97,15 +170,17 @@ export function trimEdgeOf(part: HitPart): TrimEdge | null {
   return null;
 }
 
-// The size of a clip's corner squares: CORNER_PX, less on a narrow or short clip.
-export function cornerSize(rect: Pick<ClipRect, 'width' | 'height'>): number {
-  return Math.min(CORNER_PX, rect.width / 3, rect.height / 2);
+// The size of a box's corner targets: CORNER_PX, less on a narrow or short clip.
+export function cornerSize(box: Pick<Box, 'width' | 'height'>): number {
+  return Math.min(CORNER_PX, box.width / 3, box.height / 2);
 }
 
-// The volume control's box, or null on a clip too small for one.
-export function gainBox(rect: ClipRect): { x: number; y: number; width: number; height: number } | null {
-  if (rect.width < GAIN_MIN_WIDTH || rect.height < GAIN_MIN_HEIGHT) return null;
-  return { x: rect.x + cornerSize(rect), y: rect.y + rect.height - GAIN_H, width: GAIN_W, height: GAIN_H };
+// The volume control's box (draw()'s, in the clip's box), or null on a clip
+// too small for one.
+export function gainBox(rect: Box): Box | null {
+  const box = clipBox(rect);
+  if (box.width < GAIN_MIN_WIDTH || box.height < GAIN_MIN_HEIGHT) return null;
+  return { x: box.x + GAIN_X, y: box.y + box.height - GAIN_BOTTOM, width: GAIN_W, height: GAIN_H };
 }
 
 function big(value: string | bigint): bigint {
@@ -132,9 +207,10 @@ export function deltaFrames(dx: number, view: Viewport): bigint {
   return BigInt(Math.round(dx * view.framesPerPixel));
 }
 
-// The track whose lane holds y, or null on the ruler or below the lanes.
+// The track whose lane holds y, or null on the ruler, in the marker track
+// row or below the lanes.
 export function trackAt(snapshot: Snapshot, y: number, view: Viewport): string | null {
-  if (y < view.rulerHeight) return null;
+  if (y < lanesTopOf(view)) return null;
   const tops = laneTops(snapshot.trackOrder, view);
   for (let i = 0; i < tops.length; i += 1) {
     const trackId = snapshot.trackOrder[i]!;
@@ -169,23 +245,25 @@ export function clipRects(snapshot: Snapshot, view: Viewport): ClipRect[] {
   return rects;
 }
 
-// The clip under a point, topmost (last drawn) first, and which part of it:
-// the lower corners (cornerSize), then the edges (HANDLE_PX, or a third of a
-// clip narrower than three handles), then the volume control, then the body.
+// The clip under a point, topmost (last drawn) first, and which part of it,
+// over the box draw() draws (clipBox): the lower corners (cornerSize), then
+// the edges (HANDLE_PX, or a third of a clip narrower than three handles),
+// then the volume control, then the body.
 export function hitTest(rects: readonly ClipRect[], x: number, y: number): { rect: ClipRect; part: HitPart } | null {
   for (let i = rects.length - 1; i >= 0; i -= 1) {
     const rect = rects[i]!;
-    if (x < rect.x || x >= rect.x + rect.width || y < rect.y || y >= rect.y + rect.height) continue;
-    const corner = cornerSize(rect);
-    if (y >= rect.y + rect.height - corner) {
-      if (x < rect.x + corner) return { rect, part: 'cornerLeft' };
-      if (x >= rect.x + rect.width - corner) return { rect, part: 'cornerRight' };
+    const box = clipBox(rect);
+    if (x < box.x || x >= box.x + box.width || y < box.y || y >= box.y + box.height) continue;
+    const corner = cornerSize(box);
+    if (y >= box.y + box.height - corner) {
+      if (x < box.x + corner) return { rect, part: 'cornerLeft' };
+      if (x >= box.x + box.width - corner) return { rect, part: 'cornerRight' };
     }
-    const handle = Math.min(HANDLE_PX, rect.width / 3);
-    if (x < rect.x + handle) return { rect, part: 'left' };
-    if (x >= rect.x + rect.width - handle) return { rect, part: 'right' };
+    const handle = Math.min(HANDLE_PX, box.width / 3);
+    if (x < box.x + handle) return { rect, part: 'left' };
+    if (x >= box.x + box.width - handle) return { rect, part: 'right' };
     const gain = gainBox(rect);
-    if (gain && x >= gain.x && x < gain.x + gain.width && y >= gain.y) return { rect, part: 'gain' };
+    if (gain && x >= gain.x && x < gain.x + gain.width && y >= gain.y && y < gain.y + gain.height) return { rect, part: 'gain' };
     return { rect, part: 'body' };
   }
   return null;

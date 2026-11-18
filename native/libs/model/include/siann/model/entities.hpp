@@ -43,6 +43,9 @@ struct Root {
     std::int64_t sampleRate = 48'000;
     std::vector<time::TempoPoint> tempo{time::TempoPoint{}};
     std::vector<std::string> trackOrder;
+    // Bus ids in mixer order (m5b-engine-buses-sends). Omitted from the JSON
+    // when empty, so a root without buses keeps its earlier hash.
+    std::vector<std::string> busOrder;
 
     friend bool operator==(const Root&, const Root&) = default;
 };
@@ -111,15 +114,56 @@ struct Track {
     // Omitted from the JSON while off, so a track that never monitored keeps its
     // earlier hash (m5b-engine-monitoring).
     MonitorMode monitor = MonitorMode::off;
+    // Send ids in order (m5b-engine-buses-sends). Omitted from the JSON when empty.
+    std::vector<std::string> sends;
+    // The bus the track outputs to, or none for the master; JSON {busId},
+    // omitted while the track feeds the master.
+    std::optional<std::string> output;
 
     friend bool operator==(const Track&, const Track&) = default;
 };
 
-// A plugin insert on a track (M4, spec "siann-model", M4 plugin_slot). The
+// A bus (m5b-engine-buses-sends, spec "siann-model", M5b bus and send): sums the
+// tracks and buses that output to it and the sends that target it, runs its
+// inserts and its fader, and outputs to the master or to another bus. Always
+// stereo. Ref bus:<id>.
+struct Bus {
+    std::string id;
+    std::string name;
+    std::int32_t channels = 2;
+    Gain gain;
+    std::int32_t pan = 0;
+    bool mute = false;
+    bool solo = false;
+    // Plugin slot ids in signal order; omitted from the JSON when empty.
+    std::vector<std::string> inserts;
+    // The bus this bus outputs to, or none for the master; omitted while none.
+    std::optional<std::string> output;
+
+    friend bool operator==(const Bus&, const Bus&) = default;
+};
+
+// A send from a track to a bus (m5b-engine-buses-sends). Pre-fader taps the
+// track after its inserts, post-fader after its fader. Ref send:<id>.
+struct Send {
+    std::string id;
+    std::string trackId;
+    std::string busId;
+    Gain level;
+    bool pre = false;
+    bool enabled = true;
+
+    friend bool operator==(const Send&, const Send&) = default;
+};
+
+// A plugin insert on a track or a bus (M4, spec "siann-model", M4 plugin_slot). The
 // document holds the state blob's hash only; the blob lives in <bundle>/blobs.
+// A slot belongs to exactly one track or bus (m5b-engine-buses-sends): one of
+// trackId and busId is set, the other empty and omitted from the JSON.
 struct PluginSlot {
     std::string id;
     std::string trackId;
+    std::string busId;
     std::string format;  // clap, vst3, au or lv2
     std::string uid;
     std::string name;
@@ -149,6 +193,24 @@ struct Master {
     friend bool operator==(const Master&, const Master&) = default;
 };
 
+// A clip fade's gain curve (m5b-engine-clip-fades): x for linear,
+// sin(x * pi / 2) for equal power ("siann-graph and siann-engine").
+enum class FadeCurve { linear, equal_power };
+
+// One side of a clip's fades, in media frames. Length 0 is no fade; the
+// document normalises its curve to linear (withClip), so operator== and the
+// hash agree. Omitted from the JSON at length 0.
+struct Fade {
+    std::int64_t length = 0;
+    FadeCurve curve = FadeCurve::linear;
+
+    friend bool operator==(const Fade&, const Fade&) = default;
+};
+
+// "linear" or "equal_power", the JSON names of the curves.
+std::string_view fadeCurveName(FadeCurve curve) noexcept;
+std::optional<FadeCurve> fadeCurveFromName(std::string_view name) noexcept;
+
 struct Clip {
     std::string id;
     std::string trackId;
@@ -157,6 +219,9 @@ struct Clip {
     std::int64_t sourceStart = 0;  // media frames
     std::int64_t length = 0;       // media frames
     Gain gain;
+    // m5b-engine-clip-fades: fadeIn.length + fadeOut.length <= length.
+    Fade fadeIn;
+    Fade fadeOut;
 
     friend bool operator==(const Clip&, const Clip&) = default;
 };

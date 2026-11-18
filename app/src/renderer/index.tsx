@@ -22,7 +22,13 @@
 // the locale store is window.__siannLocale (which accepts the pseudo-locale),
 // window.siannTest.languages, when the test pinned them, stands in for
 // navigator.languages, window.__siannClient hands the e2e tests the session
-// client's log of requests refused as disconnected and of requests sent, and
+// client's log of requests refused as disconnected, of requests sent and of
+// the engine's answers, window.siannTest.capabilities, when the test gave
+// SIANN_TEST_CAPABILITIES, is the engine.capabilities answer the session
+// client uses instead of the engine's (m5-ui-loop-click),
+// window.siannTest.environment, when the fidelity run gave
+// SIANN_FIDELITY_ENVIRONMENT, is the device and build the session client
+// answers in place of the engine's (m5-ui-alignment-chrome), and
 // a <Profiler> at the
 // root counts React commits in window.__siannCommits, and each <Counted id>
 // (shell/Counted.tsx) those under it in window.__siannCommitsBy[id]. Only the profiling
@@ -45,12 +51,15 @@ import { GestureController } from './model/gesture-controller';
 import { PeaksCache } from './model/peaks-cache';
 import { PlanStore } from './model/plan-store';
 import { RealtimeClient, type RealtimeSocket } from './model/realtime-client';
-import { SessionClient, type EngineEndpoint, type SentRequest, type SocketLike } from './model/session-client';
+import { UndoHistory } from './model/undo-history';
+import { SessionClient, type AnsweredRequest, type EngineEndpoint, type SentRequest, type SocketLike, type TestEnvironment } from './model/session-client';
+import { LoopClickController, TransportStateStore, clientCapabilities } from './model/loop-click';
+import type { Capabilities } from './model/capabilities';
 import { TransportController } from './model/transport';
 import { createLayoutStore } from './shell/layout-store';
 import { announceReconnects, ToastStore } from './shell/toast-store';
 import { setCommitSink } from './shell/Counted';
-import { displayWrites } from './shell/Transport';
+import { displayWrites, transportEnabled } from './shell/Transport';
 import type { MeterTestHooks } from './mixer/MixerMeters';
 import type { TimelineTestHooks } from './timeline/TimelineCanvas';
 
@@ -66,7 +75,7 @@ declare global {
     // The gesture controller, for the e2e tests to wait on (settled).
     __siannGestures?: GestureController;
     // Present only when the shell runs under SIANN_SHELL_TEST=1.
-    siannTest?: { timelineHooks?: boolean; languages?: readonly string[] };
+    siannTest?: { timelineHooks?: boolean; languages?: readonly string[]; capabilities?: Capabilities; environment?: TestEnvironment };
     __siannTimeline?: TimelineTestHooks;
     __siannLocale?: LocaleStore;
     // The toast store, for the fit test to raise a toast per locale.
@@ -74,7 +83,11 @@ declare global {
     // The position display's write count (m5-ui-transport display-rate e2e)
     // and the newest realtime frame's playhead, unextrapolated (null without one).
     __siannTransport?: { displayWrites(): number; playhead(): string | null };
-    __siannClient?: { refused(): ReadonlyArray<{ readonly method: string }>; sent(): ReadonlyArray<SentRequest> };
+    __siannClient?: {
+      refused(): ReadonlyArray<{ readonly method: string }>;
+      sent(): ReadonlyArray<SentRequest>;
+      answered(): ReadonlyArray<AnsweredRequest>;
+    };
     __siannMeters?: MeterTestHooks;
     // React commits counted at the root (profiling bundle only).
     __siannCommits?: number;
@@ -119,6 +132,8 @@ const client = new SessionClient({
   currentEndpoint: () => (bridge ? bridge.engine.current() : Promise.resolve(null)),
   schedule,
   initialStatus: bridge ? 'connecting' : 'disconnected',
+  ...(testHooks?.capabilities ? { capabilities: testHooks.capabilities } : {}),
+  ...(testHooks?.environment ? { environment: testHooks.environment } : {}),
 });
 const realtime = new RealtimeClient({
   session: client,
@@ -129,16 +144,29 @@ window.__siannGestures = gestures;
 const plans = new PlanStore();
 plans.attach(client);
 const engineStatus = new EngineStatusStore({ client, schedule });
-if (testHooks) window.__siannClient = { refused: () => client.refused(), sent: () => client.sent() };
+if (testHooks) window.__siannClient = { refused: () => client.refused(), sent: () => client.sent(), answered: () => client.answered() };
 
 const connection = new ConnectionPhaseStore(client, { schedule });
 const toasts = new ToastStore({ schedule });
 if (testHooks) window.__siannToasts = toasts;
 announceReconnects(connection, toasts, (revision) => reconnectedMessage(locales.getSnapshot(), { revision }));
 if (testHooks) window.__siannTransport = { displayWrites, playhead: () => realtime.latest()?.playheadSamples ?? null };
+// What undo and redo can do now (the top bar dims what cannot).
+const history = new UndoHistory(client);
 const transport = new TransportController({
   client,
   playing: () => realtime.latest()?.playing ?? false,
+  toasts,
+  locale: () => locales.getSnapshot(),
+  onNothingLeft: (method) => history.refused(method),
+});
+const transportState = new TransportStateStore(client);
+const loopClick = new LoopClickController({
+  client,
+  model: client.model,
+  state: transportState,
+  deviceReady: () => transportEnabled(engineStatus.getSnapshot(), client.getState().status === 'connected'),
+  capabilities: clientCapabilities(client),
   toasts,
   locale: () => locales.getSnapshot(),
 });
@@ -200,6 +228,8 @@ const app = (
     connection={connection}
     toasts={toasts}
     transport={transport}
+    loopClick={loopClick}
+    history={history}
     onTimelineHooks={onTimelineHooks}
     onMeterHooks={onMeterHooks}
   />

@@ -3,7 +3,7 @@
 // fake device, and an MCP agent that submits plans (the client of
 // plan-review.spec.ts: JSON-RPC over POST /v0/mcp with the MCP token).
 
-import { expect, type ElectronApplication } from '@playwright/test';
+import { expect, type ElectronApplication, type Page } from '@playwright/test';
 import { spawnSync } from 'node:child_process';
 import * as fs from 'node:fs';
 import * as path from 'node:path';
@@ -174,4 +174,17 @@ export async function agentFor(app: ElectronApplication): Promise<Agent> {
 
 export function hash8(hash: string): string {
   return hash.slice('sha256:'.length, 'sha256:'.length + 8);
+}
+
+// The Plans tab shows one plan as its card (by default the newest plan that
+// awaits a decision) and every other plan as a history row (UI redesign
+// 10.10, P1-13): a plan is selected by clicking its row, unless it is the
+// card already. Waits for the plan to arrive first.
+export async function selectPlan(page: Page, hash: string): Promise<void> {
+  const id = hash8(hash);
+  await expect(page.locator(`[data-plan="${id}"]`)).toHaveCount(1);
+  const card = page.getByTestId('plan-card');
+  const shown = (await card.count()) > 0 ? await card.getAttribute('data-plan') : null;
+  if (shown !== id) await page.getByTestId(`plan-${id}`).click();
+  await expect(card).toHaveAttribute('data-plan', id);
 }

@@ -80,4 +80,25 @@ export const CUBASE_PRESET: readonly Binding[] = [
   { chord: 'M', commandId: 'track.muteSelected', scope: 'project' },
   { chord: 'S', commandId: 'track.soloSelected', scope: 'project' },
   { chord: 'Shift+Delete', commandId: 'track.removeSelected', scope: 'project' },
+  // Locators, cycle and metronome (m5-ui-loop-click; spec 3.1, 3.2, 3.6;
+  // research/cubase.md 7.1): Num / toggles cycle and the slash key is its
+  // laptop fallback; C the metronome; P the locators to the selection and
+  // Alt+P Loop Selection; Num 1 and Num 2 go to the left and right locator,
+  // Shift+1 and Shift+2 their laptop fallback (the number row, so 1 stays
+  // the Object Selection tool); Ctrl+Num 1 and Ctrl+Num 2 (Mod) set them to
+  // the project cursor. Shift+P stays the position field's.
+  { chord: 'NumpadDivide', commandId: 'transport.cycleToggle', scope: 'window' },
+  { chord: 'Slash', commandId: 'transport.cycleToggle', scope: 'window' },
+  { chord: 'C', commandId: 'transport.metronomeToggle', scope: 'window' },
+  { chord: 'P', commandId: 'transport.locatorsToSelection', scope: 'window' },
+  { chord: 'Alt+P', commandId: 'transport.loopSelection', scope: 'window' },
+  { chord: 'Numpad1', commandId: 'transport.toLeftLocator', scope: 'window' },
+  { chord: 'Numpad2', commandId: 'transport.toRightLocator', scope: 'window' },
+  { chord: 'Shift+1', commandId: 'transport.toLeftLocator', scope: 'window' },
+  { chord: 'Shift+2', commandId: 'transport.toRightLocator', scope: 'window' },
+  { chord: 'Mod+Numpad1', commandId: 'transport.setLeftLocator', scope: 'window' },
+  { chord: 'Mod+Numpad2', commandId: 'transport.setRightLocator', scope: 'window' },
+  // The Pool (m5-ui-port-toolbar; spec 10.8, 1; research/cubase.md 7): Ctrl+P
+  // (Cmd+P) is Cubase's Open Pool. P, Alt+P, Shift+P and Mod+Alt+P keep theirs.
+  { chord: 'Mod+P', commandId: 'pool.open', scope: 'window' },
 ];

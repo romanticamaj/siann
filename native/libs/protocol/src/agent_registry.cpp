@@ -4,6 +4,8 @@
 #include <random>
 #include <utility>
 
+#include "siann/command/display_text.hpp"
+
 namespace siann::protocol::detail {
 
 namespace {
@@ -42,27 +44,13 @@ std::string sanitizeClientName(const Value* name, std::string_view fallback) {
     if (name == nullptr || name->kind() != Value::Kind::string) {
         return std::string(fallback);
     }
-    const std::string& given = name->asString();
-    std::string out;
-    out.reserve(given.size());
-    for (std::size_t i = 0; i < given.size(); ++i) {
-        const auto byte = static_cast<unsigned char>(given[i]);
-        if (byte < 0x20 || byte == 0x7F) {
-            continue;  // C0 and DEL
-        }
-        if (byte == 0xC2 && i + 1 < given.size()) {
-            const auto next = static_cast<unsigned char>(given[i + 1]);
-            if (next >= 0x80 && next <= 0x9F) {
-                ++i;  // C1, two bytes in UTF-8
-                continue;
-            }
-        }
-        out.push_back(given[i]);
-    }
+    // Control characters (C0, DEL, C1), bidi formatting and line separators
+    // removed, and any byte that is not well-formed UTF-8 (display_text.hpp).
+    std::string out = command::withoutUnsafeCharacters(name->asString());
     trim(out);
     if (out.size() > kClientNameMaxBytes) {
-        // Back to the start of the character the limit falls in (the parser
-        // only lets valid UTF-8 through, so continuation bytes are 10xxxxxx).
+        // Back to the start of the character the limit falls in (`out` is
+        // well-formed UTF-8 now, so continuation bytes are 10xxxxxx).
         std::size_t cut = kClientNameMaxBytes;
         while (cut > 0 && (static_cast<unsigned char>(out[cut]) & 0xC0) == 0x80) {
             --cut;
@@ -149,6 +137,16 @@ void AgentRegistry::acted(const std::string& agentId, std::string tool, std::str
             entry.view.lastAction = std::move(tool);
             entry.view.lastActionAt = std::move(time);
             ++entry.view.actions;
+            return;
+        }
+    }
+}
+
+void AgentRegistry::touch(const std::string& agentId) {
+    std::lock_guard lock(mutex_);
+    for (Entry& entry : agents_) {
+        if (entry.view.id == agentId && entry.session && entry.view.connected) {
+            entry.lastSeen = clock_();
             return;
         }
     }

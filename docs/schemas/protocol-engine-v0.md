@@ -32,6 +32,17 @@ The master gain is document data, set with the command `master.set_gain {gainMil
 
 The gain applies to the sum of the tracks, before the master meter (meter key `master`), the click and device-side SRC (architecture spec, "Master path"); an offline render applies the same gain, so offline and realtime renders agree. The master gain is also a gesture target, `{ref: "master:master", param: "gain"}` ([Protocol gestures v0](protocol-gestures-v0.md)). `engine.capabilities` lists `master.set_gain` in `commands` and reports `features.masterGain: true`.
 
+### Clip fades (m5b-engine-clip-fades, UI redesign UR-6, Protocol v0 item 30)
+
+Fades are document data, set with the command `clip.set_fade {clipId, fadeIn?, fadeOut?}` through `command.execute`, a plan or MCP `execute`; there is no method and no MCP tool of its own. Each side is `{length, curve}`: `length` in media frames as a decimal string, `"0"` removing the side; `curve` `"linear"` or `"equal_power"`. At least one side is given; an omitted side is unchanged. A missing side, a bad curve, a length that is not a non-negative decimal string, or an extra field is `invalid_params`; `fadeIn.length + fadeOut.length` above the clip's `length` is `invalid_fade`; an unknown clip `not_found`. The command declares exactly `{clip:<id>}` and is one revision.
+
+```json
+{"method": "command.execute", "params": {"command": {"op": "clip.set_fade", "clipId": "clp_1",
+  "fadeIn": {"length": "480", "curve": "linear"}, "fadeOut": {"length": "960", "curve": "equal_power"}}}}
+```
+
+The clip entity carries `fadeIn` and `fadeOut` only while their length is not 0, so a clip without fades hashes as before. `clip.trim` to a length shorter than the two fades shortens them in the same revision (the fade in keeps its length first, the fade out takes the rest; a side shortened to 0 is removed). Offline and realtime renders apply the same gain curve (architecture spec, "siann-graph and siann-engine"). `engine.capabilities` lists `clip.set_fade` in `commands` and reports `features.clipFades: true`.
+
 ## engine.status
 
 Params `{}`. Result:
@@ -40,6 +51,7 @@ Params `{}`. Result:
 {"device": {"id": "fake", "sampleRate": 48000, "bufferFrames": 256, "inputLatencyFrames": 256, "outputLatencyFrames": 256,
             "input": {"id": "fake", "channels": 2, "latencyFrames": 256}},
  "playing": false, "cycle": false, "recording": false, "armed": [], "monitorRoundTripFrames": 512, "click": {"enabled": false, "gainMilliDb": -12000}, "xruns": "0", "maxCallbackMicros": 0.0, "unmeasuredCallbacks": "0", "underruns": "0", "srcUnderruns": "0",
+ "load": {"average": 0.12, "peak": 0.31},
  "plugins": [],
  "agents": [{"id": "agt_3f2a9c1d0b7e6a54", "name": "mix-assistant", "transport": "mcp", "connected": true,
              "lastAction": "submit_plan", "lastActionAt": "2026-11-15T10:00:05Z"}]}
@@ -49,17 +61,66 @@ Params `{}`. Result:
 
 `agents` (m5b-engine-plan-metadata, Protocol v0 item 29) lists the MCP sessions in the order they initialized, each `{id, name, transport: "mcp", connected, lastAction, lastActionAt}`: `id` is `agt_<hex>`, never the `Mcp-Session-Id`; `name` the sanitised `clientInfo.name` (`"MCP client"` without one); `connected` is true from `initialize` until `DELETE /v0/mcp` or `limits.agentIdleMs` without a request (the next request connects it again); `lastAction` is the name of the tool last executed for it and `lastActionAt` the server's ISO time then, both null before its first tool call. Arguments are never recorded. At most `limits.agentsRetained` (32) are kept ([Protocol MCP v0](protocol-mcp-v0.md), Agents). Every change is announced by `agent.changed` ([Protocol events v1](protocol-events-v1.md)). `engine.capabilities` reports `features.agents` true when a transport port is present (the condition of `engine.status`), and `features.planMetadata: true`.
 
+`load` (m5b-engine-load-loudness, Protocol v0 item 31) is `{average, peak}`, JSON numbers: `average` is the fraction of the device period the audio callback used over the last full window of one second of device frames (the sum of the callbacks' durations over the sum of their periods), `peak` the largest single callback's fraction in that window. Both can exceed 1 when callbacks miss their deadline. They are measured on the audio thread with the two steady-clock reads that time `xruns`, restart with the device's start, and are `0` while no device runs and before the first window is full. `engine.capabilities` reports `features.load` true when a transport port is present.
+
+## Loudness (m5b-engine-load-loudness, Protocol v0 item 31)
+
+| Method | Params | Result |
+|---|---|---|
+| `meter.reset_loudness` | `{}` | `{}` |
+
+The engine meters the master output per ITU-R BS.1770-4 (gating as in EBU R128): momentary (400 ms), short-term (3 s) and integrated loudness in LUFS, after the master gain and before the click (architecture spec, "Master path"). The values travel on the realtime socket as the `"SLUD"` frame ([Protocol events v1](protocol-events-v1.md), "Loudness frame"). `meter.reset_loudness` restarts the integrated value; a locate or a stop does not, and the meter keeps its state across a graph swap and `engine.select_device`. It is engine state: no revision, no event, honours `expectedRevision` and the idempotency cache, and runs without a device (it is not `no_device`). Without a transport port it is `not_supported`. It is not an MCP tool ([Protocol MCP v0](protocol-mcp-v0.md)). `engine.capabilities` lists it in `methods` and reports `features.loudness` true when a transport port is present.
+
 ## Plans: title, intent and actor (m5b-engine-plan-metadata)
 
 `plan.submit {steps, readSet?, baseRevision?, title?, intent?}` (spec, Protocol v0 item 14; [Plan v1](plan-v1.md), "Metadata"). Any other param is `invalid_params`, an `actor` too: the engine sets the plan's `actor` `{kind, name}` from the credential (`mcp` for the MCP token, `ui` for the UI token) and the client's name (`clientInfo.name`, or the auth frame's `client.name`, default `"SIANN"`).
 
 | Case | Answer |
 |---|---|
-| `title` not a string, empty, over 200 UTF-8 bytes, or with a control character (LF and CR included) | `invalid_plan_metadata` |
-| `intent` not a string, empty, over 2,000 UTF-8 bytes, or with a control character other than tab, LF and CR | `invalid_plan_metadata` |
+| `title` not a string, empty, over 200 UTF-8 bytes, with a control character (LF and CR included), or with a display-unsafe character ([Plan v1](plan-v1.md), "Metadata": bidi formatting, U+2028, U+2029) | `invalid_plan_metadata` |
+| `intent` not a string, empty, over 2,000 UTF-8 bytes, with a control character other than tab, LF and CR, or with a display-unsafe character | `invalid_plan_metadata` |
 | an `actor`, or any param not listed above | `invalid_params` |
 
 On a refusal nothing is stored and no `plan.changed` goes out. `invalid_plan_metadata` is a new stable code. `plan.status`, `plan.list` and `plan.changed` carry `title`, `intent`, `actor` and `rejectionNote` when the plan has them.
+
+`plan.submit` also takes `request` (m5b-engine-agent-requests, below): the id of an open agent request the plan answers. It is not part of the plan and not hashed. From the UI credential it is `invalid_params`; a closed request, or one addressed to another agent, is `request_not_open`, an unknown one `not_found`; nothing is stored then.
+
+## Agent requests (m5b-engine-agent-requests)
+
+A request from the user to an agent that is connected over MCP (spec, Protocol v0 item 32; human gate `agent-request-shape`, decided by the maintainer 2026-11-15). SIANN has no agent runtime: the engine holds the request until the agent takes it with the MCP tool `next_request` and answers it with `answer_request` or `submit_plan {request}` ([Protocol MCP v0](protocol-mcp-v0.md)). A request executes nothing: its text and context are data for the agent, and the only way its outcome reaches the document is a plan the user approves. Requests are engine state on the command thread: not a revision, not in the bundle or the journal, dropped when the engine restarts.
+
+The request object:
+
+```json
+{"id": "arq_5c1e9a0b3d2f4e67", "agentId": "agt_3f2a9c1d0b7e6a54", "text": "Lower the drums",
+ "context": {"selection": {"tracks": ["trk_1"], "clips": ["clp_4"]},
+             "locators": {"schema": "siann.entity.locators.v1", "id": "locators", "left": "0", "right": "192000"},
+             "cursor": "96000", "headRevision": "r3"},
+ "state": "pending", "createdAt": "2026-11-15T10:01:00Z"}
+```
+
+`state` is `pending` or `taken` (open), or `answered`, `declined`, `cancelled` or `expired` (closed, final). `plan` (a plan hash) and `message` appear once an answer set them. `context` is stamped by the engine when it queues the request: only `selection` comes from the UI; `locators` is the head document's locators entity as `session.fetch` returns it (null when none is set), `cursor` the transport position in session frames as a decimal string (null without a transport port), `headRevision` main's head.
+
+| Method | Credential | Params | Result |
+|---|---|---|---|
+| `agent.request` | UI | `{agentId, text, selection?: {tracks?: [id], clips?: [id]}}` | `{request}`, `pending` |
+| `agent.cancel_request` | UI | `{request}` | `{request}`, `cancelled` |
+| `agent.requests` | UI | `{}` | `{requests}`: the open ones oldest first, then the last `limits.agentRequestsClosedRetained` (16) closed ones in the order they closed |
+| `agent.next_request` | MCP (`next_request`) | `{waitMs?}` | `{request}` (now `taken`) or `{request: null}` |
+| `agent.answer_request` | MCP (`answer_request`) | `{request, plan}`, `{request, message}` or `{request, decline: true, message?}` | `{request}`, `answered` or `declined` |
+
+The other credential is `scope_denied` for each (not cached). The codes:
+
+| Case | Answer |
+|---|---|
+| `text` (or a `message`) empty, over 4,000 characters (Unicode code points, so at most 16,000 UTF-8 bytes; unlike a plan's title and intent, which count bytes), with a control character other than tab, LF and CR, or with a display-unsafe character (bidi formatting, U+2028, U+2029; `siann/model/display_text.hpp`) | `invalid_request_text` |
+| a missing or non-string `agentId`, `text` or `request`; a selection that is not `{tracks?, clips?}`, a list over 256 ids, or an id that is not `[A-Za-z0-9_-]{1,64}`; an unknown param; `answer_request` with no form or two, `decline` other than `true`, or a plan another client submitted | `invalid_params` |
+| `agentId` unknown, or the agent not connected | `agent_not_connected` |
+| the agent already has `limits.agentRequestsPerAgent` (16) open requests, `pending` or `taken` | `agent_busy` (nothing is queued) |
+| an unknown request id, or an unknown plan hash | `not_found` |
+| cancelling or answering a closed request, or answering one addressed to another agent | `request_not_open` |
+
+Open requests expire when their agent disconnects (`DELETE /v0/mcp`, or idle past `limits.agentIdleMs`; a later reconnect does not revive them), when the agent is forgotten (`limits.agentsRetained`), and when `session.open` or `session.create` serves another session. Every state change publishes `agent.request_changed` ([Protocol events v1](protocol-events-v1.md)). `engine.capabilities` lists the five methods, `features.agentRequests` (true when `features.agents` is) and `limits.agentRequestsPerAgent` (16), `agentRequestTextChars` (4000), `agentRequestWaitMs` (25,000 by default, at most `mcpRequestTimeout` minus 1 s) and `agentRequestsClosedRetained` (16). New stable codes: `agent_not_connected`, `agent_busy`, `invalid_request_text`, `request_not_open`.
 
 ## engine.devices
 
@@ -141,7 +202,7 @@ MCP: `record_arm` and `record` wrap `record.arm` and `transport.record` in the t
 
 ## Monitoring
 
-m5b-engine-monitoring, Protocol v0 item 30 (architecture spec, "Recording" and "Latency model"). A track's monitoring mode is document data, set with the command `track.set_monitor {trackId, monitor: "off" | "auto" | "input"}` through `command.execute`, a plan or MCP `execute` (no tool of its own). The entity's JSON has `monitor` only while it is not `off`. Another value, a missing or an extra field is `invalid_params`; an unknown track `not_found`. Recording does not guard it: the mode of a track being recorded can change.
+m5b-engine-monitoring, Protocol v0 item 33 (architecture spec, "Recording" and "Latency model"). A track's monitoring mode is document data, set with the command `track.set_monitor {trackId, monitor: "off" | "auto" | "input"}` through `command.execute`, a plan or MCP `execute` (no tool of its own). The entity's JSON has `monitor` only while it is not `off`. Another value, a missing or an extra field is `invalid_params`; an unknown track `not_found`. Recording does not guard it: the mode of a track being recorded can change.
 
 - `input` passes the track's input (`Track.input`, through the open input) through the track's strip, its inserts, fader and meter, to the master, whether the transport plays or not. `auto` passes it while the transport is stopped on an armed track and while the track records, and plays the track's clips otherwise. `off` never passes it. A track without an input, or whose input the open input does not cover, monitors silence.
 - Monitored input takes the low-latency path: it skips the delay that lines the track up with latent inserts on other tracks. `engine.status`' `monitorRoundTripFrames` is the device's input and output latencies, through device-side SRC the output SRC latency and the FIFO that carries the resampled input to the graph's blocks, and the largest monitored path's own latency (its inserts and the master path), in session frames.
@@ -160,7 +221,7 @@ m5b-engine-monitoring, Protocol v0 item 30 (architecture spec, "Recording" and "
 | Field | Rule |
 |---|---|
 | `path` | UTF-8, absolute, must not exist. A relative path or a UNC path (`\\server\share\x`, `\\?\UNC\server\share\x`) is `invalid_params`; an existing file, directory (empty or not) or bundle is `already_exists`; a missing parent directory is `not_found`. Nothing is created on any refusal. |
-| `name` | optional string; `root.name`. Default: the path's stem (`Song` for `.../Song.siann`). |
+| `name` | optional string; `root.name`. Default: the path's stem (`Song` for `.../Song.siann`). A name given with a control or display-unsafe character ("Names" below) is `invalid_name` and nothing is created; the stem is stripped of them instead (`Untitled` when nothing is left). |
 
 The session's sample rate is the rate the output device runs at (`engine.status` `device.sampleRate`), 48000 when no device runs or the server has no transport port. Queued and running `media.import` jobs are cancelled first (they end `failed` with `cancelled`). The result is `{sessionId, revision, documentHash}` (revision `r1`); subscribed connections receive `session.opened`, requests naming the old `sessionId` get `session_mismatch`, as after `session.open`.
 
@@ -173,7 +234,7 @@ The session's sample rate is the rate the output device runs at (`engine.status`
 | `path` | UTF-8, absolute, not UNC (`invalid_params` otherwise, and no job). A WAV (PCM 8 to 32 bit, float 32 or 64 bit, RIFF or RF64) or FLAC file. |
 | `clientImportId` | string, 1 to 128 bytes, chosen by the client (`invalid_params` when missing or not a string). A repeated value for the served session answers the first job's `{jobId, kind, state}` and starts nothing. |
 
-The worker decodes the file, converts it to the session rate when it differs (32-bit float WAV), writes `media/<sha256>.<ext>` and its peak pyramid `peaks/<sha256>.peaks` ([Protocol peaks v0](protocol-peaks-v0.md)), then the command thread commits `media.add` with a server-chosen `mediaId` (`med_<n>`, above every `med_<n>` in the history) and `name` (the file's base name, at most 255 UTF-8 bytes) as one revision, published as `session.changed`. The job is `done` only after that commit.
+The worker decodes the file, converts it to the session rate when it differs (32-bit float WAV), writes `media/<sha256>.<ext>` and its peak pyramid `peaks/<sha256>.peaks` ([Protocol peaks v0](protocol-peaks-v0.md)), then the command thread commits `media.add` with a server-chosen `mediaId` (`med_<n>`, above every `med_<n>` in the history) and `name` (the file's base name without its control and display-unsafe characters, "Names" below, at most 255 UTF-8 bytes; `audio` when nothing is left) as one revision, published as `session.changed`. The job is `done` only after that commit.
 
 `job.status {jobId}` for an import:
 
@@ -188,6 +249,19 @@ Content the head document already holds (same `contentHash`) ends `done` with th
 
 `engine.capabilities` reports `features.mediaImport: {formats: ["wav", "flac"]}`, lists `session.create` and `media.import` in `methods` and `media.rename` in `commands`. MCP: `create_session` and `import_media`, trusted scope only ([Protocol MCP v0](protocol-mcp-v0.md)).
 
+## Names
+
+Every name the document stores, `root.name`, a track's, a bus's, a media's and a plugin slot's `name` (and a marker's when markers land), is well-formed UTF-8 without a control character (U+0000 to U+001F, U+007F to U+009F) and without a display-unsafe character: the bidi formatting characters U+061C, U+200E, U+200F, U+202A to U+202E and U+2066 to U+2069, and U+2028 and U+2029 (the set [Plan v1](plan-v1.md), "Metadata", refuses in plan titles; architecture spec, "siann-model", names). An RLO or an isolate in a track name could otherwise make a plan step read as other text.
+
+| Where | Answer |
+|---|---|
+| `track.add`, `track.rename`, `bus.add`, `bus.rename`, `media.add`, `media.rename`, `session.rename` `name`; `plugin.insert` `descriptor.name` (through `command.execute`, a plan or MCP `execute`) | `invalid_name`; nothing is applied, and in a transaction or plan the error carries the step |
+| `session.create` `name` | `invalid_name`; nothing is created |
+| a name the engine derives: `media.import` (the file name), `session.create` without `name` (the folder name), `plugin.instantiate` (the name the plugin reports) | stripped of those characters, never refused |
+| a bundle whose checkpoint or journal holds such a name | `session.open` fails with `invalid_document` (`invalid_name: ...`); the document is not repaired, since stripping would change the hashes the journal is checked against |
+
+`invalid_name` is a new stable code. A media name's length (1 to 255 bytes) stays `invalid_params`. The Studio UI also isolates each name it interpolates into a sentence (U+2068 FSI ... U+2069 PDI).
+
 ## The bundle lock
 
 `<bundle>/lock` holds `{"pid": <n>, "startedAt": "<ISO 8601 UTC>"}` while a `Session` is open on the bundle. `Session::create` and `Session::open` create it exclusively (`O_CREAT | O_EXCL`, `CREATE_NEW`) and the `Session`'s destructor removes it, so a second `Session` on the bundle, in any process, throws `SessionError` `session_locked`. A lock file that is empty, unparseable, or names a pid that is not a live process is taken over: removed, and the exclusive create tried once more. Consequences:
@@ -195,3 +269,24 @@ Content the head document already holds (same `contentHash`) ends `done` with th
 - `siann-engine --session <bundle>` on a bundle another engine serves exits 1 with `{ok: false, error: {code: "session_locked", ...}}` as the last stderr line and nothing on stdout (item 17).
 - `siann-cli info`, `verify` and every other command that opens a bundle answer `session_locked` while an engine serves it.
 - A crashed engine leaves the file; the next open takes it over because its pid is dead.
+
+### Buses and sends (m5b-engine-buses-sends, UR-10)
+
+Buses and sends are document data, changed with commands through `command.execute`, a plan or MCP `execute`; no method or port is dedicated to them. The entities (architecture spec, "siann-model", M5b bus and send) are `{schema: "siann.entity.bus.v1", id, name, channels: 2, gainMilliDb, pan, mute, solo, inserts?, output?}` (ref `bus:<id>`) and `{schema: "siann.entity.send.v1", id, trackId, busId, levelMilliDb, pre, enabled}` (ref `send:<id>`); the root gains `busOrder` and a track `sends` and `output`, all omitted while empty, so the document format is `siann.session_document.v3` and every earlier bundle reads unchanged.
+
+| Command | Params | Declares |
+|---|---|---|
+| `bus.add` | `{busId, name, index?}` | `root`, the bus |
+| `bus.remove` | `{busId}` | `root`, the bus, its sends and slots, the tracks losing a send, the tracks and buses rerouted to the master |
+| `bus.rename`, `bus.set_gain`, `bus.set_pan`, `bus.set_mute`, `bus.set_solo` | `{busId, name \| gainMilliDb \| pan \| mute \| solo}` | the bus |
+| `bus.set_output` | `{busId, output: {busId} \| null}` | the bus |
+| `send.add` | `{sendId, trackId, busId, levelMilliDb?, pre?, enabled?, index?}` | the send, its track |
+| `send.remove` | `{sendId}` | the send, its track |
+| `send.set_level`, `send.set_pre`, `send.set_enabled` | `{sendId, levelMilliDb \| pre \| enabled}` | the send |
+| `track.set_output` | `{trackId, output: {busId} \| null}` | the track |
+
+An unknown track, bus or send is `not_found`, a used id `already_exists`, another field `invalid_params`, a gain or level out of range `invalid_gain` and a pan `invalid_pan`. A `bus.set_output` that would make a bus reach itself, directly or through a chain of buses, is `routing_cycle` and changes nothing. `plugin.insert` and `plugin.instantiate` take exactly one of `trackId` or `busId` ([Protocol plugins v0](protocol-plugins-v0.md)).
+
+`command.list {}` answers `{commands, cascades}`: `commands` is the sorted string array of `command::commandNames()`, as before, and `cascades` maps a command to the sorted entity types it may remove or change besides its target, `{"bus.remove": ["bus", "plugin_slot", "root", "send", "track"], "track.remove": ["clip", "plugin_slot", "root", "send"]}`; a command without cascades is absent. `engine.capabilities` lists the fourteen commands in `commands` and reports `features.buses: true` and `features.sends: true`.
+
+A bus meters under the key `bus:<id>` ([Protocol events v1](protocol-events-v1.md), `meters.legend`). Bus gain and send level are gesture targets ([Protocol gestures v0](protocol-gestures-v0.md)).

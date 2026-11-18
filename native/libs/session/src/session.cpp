@@ -322,6 +322,20 @@ const Revision& Session::rollbackPlan(std::string_view planHashText, std::string
                                       -> const Revision& { return rollback(planRevisionId, std::move(a), std::move(t)); });
 }
 
+const Revision& Session::rollbackRevision(std::string_view revisionId, std::string actor, std::string time) {
+    const command::History& mainHistory = state_->history;
+    const Revision* revision = &mainHistory.head();
+    while (revision->envelope.id != revisionId) {
+        revision = revision->envelope.parents.empty() ? nullptr : mainHistory.find(revision->envelope.parents.front());
+        if (revision == nullptr) {
+            throw command::CommandError("not_found", "no revision " + std::string(revisionId) + " on main");
+        }
+    }
+    const Revision& inverse = rollback(revisionId, std::move(actor), std::move(time));
+    state_->plans.markRolledBack(revisionId);
+    return inverse;
+}
+
 void Session::checkpoint() {
     state_->writeCheckpoint();
 }

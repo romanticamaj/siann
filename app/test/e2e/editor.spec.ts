@@ -128,7 +128,7 @@ for (const { name, variable } of CASES) {
       },
     });
     const page = await app.firstWindow();
-    await expect(page.getByTestId('status')).toHaveText('connected');
+    await expect(page.getByTestId('status')).toHaveAttribute('data-status', 'connected');
 
     const shellWindow = await app.evaluate(({ BrowserWindow }) =>
       BrowserWindow.getAllWindows()[0]!.getNativeWindowHandle().readBigUInt64LE(0).toString(),

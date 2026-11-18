@@ -23,6 +23,8 @@ function hashDocument(document) {
   }
   if (document.locators) entities.push({ type: 'locators', id: 'locators', entityHash: sha256Jcs(document.locators) });
   if (document.master) entities.push({ type: 'master', id: 'master', entityHash: sha256Jcs(document.master) });
+  for (const entity of document.buses || []) entities.push({ type: 'bus', id: entity.id, entityHash: sha256Jcs(entity) });
+  for (const entity of document.sends || []) entities.push({ type: 'send', id: entity.id, entityHash: sha256Jcs(entity) });
   return documentHash(entities);
 }
 
@@ -138,6 +140,33 @@ test('the master steps add, modify and remove master:master and hash with src/ha
   for (const chunk of both.sync) assert.equal(chunk.documentHash, both.documentHash);
 });
 
+// m5b-engine-clip-fades: the fade part continues the master steps; removing the
+// fades returns the clip and the document to their earlier hashes.
+test('the fade steps set and remove the fades of clp_1 and hash with src/hash', () => {
+  const { steps, before } = fixture.fades;
+  const masterEnd = fixture.master.steps[fixture.master.steps.length - 1];
+  assert.equal(before.documentHash, masterEnd.documentHash);
+  assert.deepEqual(steps.map((s) => s.event.changedIds), [
+    [{ ref: 'clip:clp_1', change: 'modified' }],
+    [{ ref: 'clip:clp_1', change: 'modified' }],
+  ]);
+  const clp1 = (step) => step.document.clips.find((c) => c.id === 'clp_1');
+  assert.deepEqual(clp1(steps[0]).fadeIn, { length: '480', curve: 'linear' });
+  assert.deepEqual(clp1(steps[0]).fadeOut, { length: '960', curve: 'equal_power' });
+  assert.equal('fadeIn' in clp1(steps[1]) || 'fadeOut' in clp1(steps[1]), false);
+  let seq = Number(masterEnd.event.seq);
+  for (const step of steps) {
+    seq += 1;
+    assert.equal(step.event.seq, String(seq));
+    assert.equal(hashDocument(step.document), step.documentHash);
+    assert.equal(step.event.documentHash, step.documentHash);
+    assert.deepEqual(step.fetch.result.entities, [{ ref: 'clip:clp_1', entity: clp1(step) }]);
+  }
+  assert.notEqual(steps[0].documentHash, before.documentHash);
+  assert.equal(steps[1].documentHash, before.documentHash);
+  assert.equal(sha256Jcs(clp1(steps[1])), sha256Jcs(masterEnd.document.clips.find((c) => c.id === 'clp_1')));
+});
+
 // m5b-engine-plan-metadata: a plan.changed with the plan metadata and the
 // rejection note, and an agent.changed, right after the base sync. The read model
 // does not model either: it advances lastSeq past them (app/test/unit/
@@ -163,4 +192,31 @@ test('the unmodelled events follow the base sync and carry the documented payloa
   assert.match(agent.agent.id, /^agt_[0-9a-f]+$/);
   assert.equal(agent.agent.transport, 'mcp');
   assert.equal(agent.agent.lastAction, 'submit_plan');
+});
+
+// m5b-engine-buses-sends: the buses part continues the master steps in format v3.
+test('the bus steps add, modify and remove bus:b1 and send:s1 and hash with src/hash', () => {
+  const { steps, sync } = fixture.buses;
+  assert.deepEqual(steps.map((s) => s.event.changedIds.map((c) => `${c.ref}/${c.change}`)), [
+    ['root:root/modified', 'track:trk_1/modified', 'bus:b1/added', 'send:s1/added'],
+    ['bus:b1/modified'],
+    ['root:root/modified', 'track:trk_1/modified', 'bus:b1/removed', 'send:s1/removed'],
+  ]);
+  for (const step of steps) {
+    assert.equal(step.document.schemaVersion, 'siann.session_document.v3');
+    assert.equal(hashDocument(step.document), step.documentHash);
+  }
+  // Removed again, the document hashes as before the bus.
+  const master = fixture.master.steps;
+  assert.equal(steps[2].documentHash, master[master.length - 1].documentHash);
+  assert.equal(steps[1].document.buses[0].gainMilliDb, -6000);
+  // The sync: each table once, buses before sends, after every other entity.
+  const buses = sync.filter((chunk) => 'buses' in chunk.chunk);
+  const sends = sync.filter((chunk) => 'sends' in chunk.chunk);
+  assert.equal(buses.length, 1);
+  assert.equal(sends.length, 1);
+  assert.equal(sends[0], sync[sync.length - 1]);
+  assert.deepEqual(buses[0].chunk.buses, steps[0].document.buses);
+  assert.deepEqual(sends[0].chunk.sends, steps[0].document.sends);
+  for (const chunk of sync) assert.equal(chunk.documentHash, steps[0].documentHash);
 });

@@ -10,17 +10,20 @@
 #include <deque>
 #include <exception>
 #include <filesystem>
+#include <initializer_list>
 #include <map>
 #include <mutex>
 #include <optional>
 #include <string_view>
 #include <random>
+#include <set>
 #include <thread>
 #include <unordered_map>
 #include <utility>
 #include <vector>
 
 #include "agent_registry.hpp"
+#include "agent_requests.hpp"
 #include "jobs.hpp"
 #include "mcp_adapter.hpp"
 #include "request_inbox.hpp"
@@ -30,10 +33,12 @@
 #include "siann/command/plan.hpp"
 #include "siann/hash/jcs.hpp"
 #include "siann/hash/json.hpp"
+#include "siann/hash/merkle.hpp"
 #include "siann/hash/sha256.hpp"
 #include "siann/io/durable_file.hpp"
 #include "siann/media/audio.hpp"
 #include "siann/media/peaks.hpp"
+#include "siann/model/display_text.hpp"
 #include "siann/session/journal.hpp"
 #include "siann/session/media_import.hpp"
 #include "siann/session/takes.hpp"
@@ -246,8 +251,10 @@ Value targetJson(const GestureTarget& target) {
     return Value(Object{{"ref", Value(target.ref())}, {"param", Value(target.param)}});
 }
 
-// {target: {ref: "track:<id>", param}} or {target: {ref: "master:master",
-// param: "gain"}} (m5b-engine-master). Throws ProtocolError invalid_params.
+// {target: {ref: "track:<id>", param}}, {target: {ref: "master:master",
+// param: "gain"}} (m5b-engine-master), {target: {ref: "bus:<id>", param:
+// "gain"}} or {target: {ref: "send:<id>", param: "level"}}
+// (m5b-engine-buses-sends). Throws ProtocolError invalid_params.
 GestureTarget requireTarget(const Value& params, std::string_view method) {
     const Value* target = params.find("target");
     if (target == nullptr || target->kind() != Value::Kind::object) {
@@ -256,9 +263,12 @@ GestureTarget requireTarget(const Value& params, std::string_view method) {
     const Value* ref = stringMember(*target, "ref");
     const std::optional<model::EntityRef> parsed = ref != nullptr ? parseRef(ref->asString()) : std::nullopt;
     const bool isMaster = parsed && parsed->type == model::EntityType::master && parsed->id == model::kMasterId;
-    if (!parsed || (parsed->type != model::EntityType::track && !isMaster)) {
-        throw ProtocolError("invalid_params",
-                            std::string(method) + ": target.ref must be \"track:<id>\" or \"master:master\"");
+    const bool isMix = parsed && (parsed->type == model::EntityType::bus || parsed->type == model::EntityType::send) &&
+                       hash::isValidEntityId(parsed->id);
+    if (!parsed || (parsed->type != model::EntityType::track && !isMaster && !isMix)) {
+        throw ProtocolError("invalid_params", std::string(method) +
+                                                  ": target.ref must be \"track:<id>\", \"master:master\", "
+                                                  "\"bus:<id>\" or \"send:<id>\"");
     }
     const Value* param = stringMember(*target, "param");
     if (isMaster) {
@@ -267,11 +277,23 @@ GestureTarget requireTarget(const Value& params, std::string_view method) {
         }
         return GestureTarget::masterGain();
     }
+    if (parsed->type == model::EntityType::bus) {
+        if (param == nullptr || param->asString() != "gain") {
+            throw ProtocolError("invalid_params", std::string(method) + ": a bus target's param is gain");
+        }
+        return GestureTarget::busGain(parsed->id);
+    }
+    if (parsed->type == model::EntityType::send) {
+        if (param == nullptr || param->asString() != "level") {
+            throw ProtocolError("invalid_params", std::string(method) + ": a send target's param is level");
+        }
+        return GestureTarget::sendLevel(parsed->id);
+    }
     if (param == nullptr ||
         (param->asString() != "gain" && param->asString() != "pan" && param->asString() != "mute")) {
         throw ProtocolError("invalid_params", std::string(method) + ": target.param must be gain, pan or mute");
     }
-    return GestureTarget{parsed->id, param->asString(), false};
+    return GestureTarget::track(parsed->id, param->asString());
 }
 
 // The value in the entity's units: a number, and 0 or 1 for mute.
@@ -303,8 +325,56 @@ struct Connection {
 };
 
 // plan.submit's params (spec, "Plans", decisions of 2026-11-15): anything else,
-// an actor above all, is invalid_params.
-constexpr std::string_view kPlanSubmitParams[] = {"steps", "readSet", "baseRevision", "title", "intent"};
+// an actor above all, is invalid_params. `request` links the plan to an agent
+// request (m5b-engine-agent-requests); it is not part of the plan.
+constexpr std::string_view kPlanSubmitParams[] = {"steps", "readSet", "baseRevision", "title", "intent", "request"};
+
+// Protocol v0 item 32 (Scopes v0, credential-bound methods): the user's side of
+// an agent request is the UI credential's, the agent's side the MCP credential's.
+bool uiOnlyMethod(std::string_view method) noexcept {
+    return method == "agent.request" || method == "agent.cancel_request" || method == "agent.requests";
+}
+
+bool mcpOnlyMethod(std::string_view method) noexcept {
+    return method == "agent.next_request" || method == "agent.answer_request";
+}
+
+// Refuses any param not in `allowed` (invalid_params).
+void onlyParams(const Value& params, std::initializer_list<std::string_view> allowed, std::string_view method) {
+    for (const auto& member : params.asObject()) {
+        if (std::find(allowed.begin(), allowed.end(), member.first) == allowed.end()) {
+            throw ProtocolError("invalid_params", std::string(method) + ": unknown param " + member.first);
+        }
+    }
+}
+
+// agent.request's selection: {tracks?: [id], clips?: [id]}, each id of the ID
+// shape, at most detail::kSelectionMaxIds per list; both lists, empty when absent.
+Value selectionJson(const Value& params, std::string_view method) {
+    Array tracks;
+    Array clips;
+    if (const Value* given = params.find("selection")) {
+        if (given->kind() != Value::Kind::object) {
+            throw ProtocolError("invalid_params", std::string(method) + ": selection must be {tracks?, clips?}");
+        }
+        for (const auto& [key, list] : given->asObject()) {
+            if (key != "tracks" && key != "clips") {
+                throw ProtocolError("invalid_params", std::string(method) + ": unknown selection member " + key);
+            }
+            if (list.kind() != Value::Kind::array || list.asArray().size() > detail::kSelectionMaxIds) {
+                throw ProtocolError("invalid_params",
+                                    std::string(method) + ": selection." + key + " is an array of at most 256 ids");
+            }
+            for (const Value& id : list.asArray()) {
+                if (id.kind() != Value::Kind::string || !hash::isValidEntityId(id.asString())) {
+                    throw ProtocolError("invalid_params", std::string(method) + ": selection ids are [A-Za-z0-9_-]{1,64}");
+                }
+            }
+            (key == "tracks" ? tracks : clips) = list.asArray();
+        }
+    }
+    return Value(Object{{"tracks", Value(std::move(tracks))}, {"clips", Value(std::move(clips))}});
+}
 
 // The title or intent param: absent, or a string (invalid_plan_metadata otherwise;
 // the limits are command::checkPlanMetadata's).
@@ -331,7 +401,8 @@ const std::vector<std::string_view> kMethods = {
     "gesture.begin",   "gesture.update",  "gesture.hold",    "gesture.end",       "gesture.cancel",
     "plan.list",       "plan.preview",    "transport.set_cycle", "transport.set_click",
     "record.arm",      "transport.record", "record.recover_take",
-    "session.create",  "media.import",
+    "session.create",  "media.import",    "meter.reset_loudness",
+    "agent.request",   "agent.cancel_request", "agent.requests", "agent.next_request", "agent.answer_request",
 };
 
 // PluginHost's capability flags, in the order engine.capabilities lists them.
@@ -367,6 +438,16 @@ Value stringArray(const std::vector<std::string>& items) {
 
 Value commandNamesJson() {
     return stringArray(command::commandNames());
+}
+
+// command.list's cascades (m5b-engine-buses-sends): command name -> the sorted
+// entity types it may remove or change besides its target.
+Value commandCascadesJson() {
+    Object out;
+    for (const auto& [name, types] : command::commandCascades()) {
+        out.emplace_back(name, stringArray(types));
+    }
+    return Value(std::move(out));
 }
 
 // Params. Each throws ProtocolError invalid_params.
@@ -514,7 +595,9 @@ Value engineStatusJson(const EngineStatus& status) {
                {"srcUnderruns", decimal(status.srcUnderruns)},
                {"monitorRoundTripFrames", status.monitorRoundTripFrames
                                               ? Value(static_cast<double>(*status.monitorRoundTripFrames))
-                                              : Value(nullptr)}};
+                                              : Value(nullptr)},
+               // Protocol v0 item 31: fractions of the device period, JSON numbers.
+               {"load", Value(Object{{"average", Value(status.load.average)}, {"peak", Value(status.load.peak)}})}};
     if (status.deviceError) {
         out.emplace_back("deviceError", errorValue(status.deviceError->code, status.deviceError->message));
     }
@@ -537,7 +620,6 @@ Value decimalOrNull(const std::optional<T>& value) {
 
 Value pluginStatusJson(const PluginStatus& plugin) {
     Object out{{"slotId", Value(plugin.slotId)},
-               {"trackId", Value(plugin.trackId)},
                {"format", Value(plugin.format)},
                {"uid", Value(plugin.uid)},
                {"state", Value(plugin.running ? "running" : "missing")},
@@ -550,6 +632,12 @@ Value pluginStatusJson(const PluginStatus& plugin) {
                {"unmeasuredCallbacks", decimalOrNull(plugin.unmeasuredCallbacks)},
                {"midiOutputOverflows", decimalOrNull(plugin.midiOutputOverflows)},
                {"midiOutputSysex", decimalOrNull(plugin.midiOutputSysex)}};
+    // The owner: trackId for a track's slot, busId for a bus's (m5b-engine-buses-sends).
+    if (!plugin.busId.empty()) {
+        out.emplace_back("busId", Value(plugin.busId));
+    } else {
+        out.emplace_back("trackId", Value(plugin.trackId));
+    }
     if (plugin.error) {
         out.emplace_back("error", errorValue(plugin.error->first, plugin.error->second));
     }
@@ -673,7 +761,8 @@ struct ProtocolServer::Impl {
                   return submitMcp(std::move(requestId), std::move(method), std::move(params), std::move(caller),
                                    std::move(done));
               },
-              agents) {
+              agents),
+          agentRequests(options.agentRequestsPerAgent) {
         if (!options.clock) {
             options.clock = nowUtc;
         }
@@ -693,6 +782,9 @@ struct ProtocolServer::Impl {
     detail::JobRunner jobs;
     detail::AgentRegistry agents;  // Protocol v0 item 29; its own mutex
     detail::McpAdapter mcp;
+    // Protocol v0 item 32: the requests from the user to the agents. Command
+    // thread only, under pumpMutex.
+    detail::AgentRequestStore agentRequests;
 
     std::mutex mutex;                              // guards connections and sessionId
     std::map<ConnectionId, Connection> connections;
@@ -1347,7 +1439,14 @@ struct ProtocolServer::Impl {
         const std::string kind(method);
         PluginPort& plugins = requirePluginPort();
         PluginInstantiateRequest wanted;
-        wanted.trackId = requireString(request.params, "trackId", method);
+        // Exactly one owner, a track or a bus (m5b-engine-buses-sends).
+        const std::optional<std::string> trackId = optionalString(request.params, "trackId", method);
+        const std::optional<std::string> busId = optionalString(request.params, "busId", method);
+        if (trackId.has_value() == busId.has_value()) {
+            throw ProtocolError("invalid_params", "plugin.instantiate takes exactly one of trackId or busId");
+        }
+        wanted.trackId = trackId.value_or("");
+        wanted.busId = busId.value_or("");
         const Value* index = request.params.find("index");
         if (index == nullptr || index->kind() != Value::Kind::number || index->asNumber() < 0 ||
             index->asNumber() > 1e9 || index->asNumber() != static_cast<double>(static_cast<std::int64_t>(index->asNumber()))) {
@@ -1385,8 +1484,11 @@ struct ProtocolServer::Impl {
             throw ProtocolError("invalid_params", "plugin.instantiate: stateBlob must be sha256:<64 lowercase hex>");
         }
         const model::Document& head = session->history().head().document;
-        if (head.track(wanted.trackId) == nullptr) {
+        if (trackId && head.track(wanted.trackId) == nullptr) {
             throw command::CommandError("not_found", "no track with id " + wanted.trackId);
+        }
+        if (busId && head.bus(wanted.busId) == nullptr) {
+            throw command::CommandError("not_found", "no bus with id " + wanted.busId);
         }
         wanted.slotId = nextSlotId(session->history());
 
@@ -1411,9 +1513,12 @@ struct ProtocolServer::Impl {
             io::createDirectoriesDurable(directory);
             io::writeFileAtomic(directory / blob->substr(7), bytes);
         }
-        const PluginDescriptorInfo& probed = loaded.descriptor;
+        // The name the plugin reports is the plugin's text, not the agent's:
+        // stripped of control and display-unsafe characters, never refused.
+        PluginDescriptorInfo probed = loaded.descriptor;
+        probed.name = model::withoutUnsafeCharacters(probed.name);
         const Value insert(Object{{"op", Value("plugin.insert")},
-                                  {"trackId", Value(wanted.trackId)},
+                                  {busId ? "busId" : "trackId", Value(busId ? wanted.busId : wanted.trackId)},
                                   {"index", Value(static_cast<double>(wanted.index))},
                                   {"slotId", Value(wanted.slotId)},
                                   {"descriptor", descriptorJson(probed)},
@@ -1421,6 +1526,7 @@ struct ProtocolServer::Impl {
         model::PluginSlot slot;
         slot.id = wanted.slotId;
         slot.trackId = wanted.trackId;
+        slot.busId = wanted.busId;
         slot.format = probed.format;
         slot.uid = probed.uid;
         slot.name = probed.name;
@@ -1725,14 +1831,26 @@ struct ProtocolServer::Impl {
                                       {"monitoring", Value(options.recordPort != nullptr &&
                                                            options.recordPort->monitoringAvailable())},
                                       {"masterGain", Value(true)},
+                                      {"buses", Value(true)},
+                                      {"sends", Value(true)},
+                                      {"clipFades", Value(true)},
                                       {"mediaImport", Value(Object{{"formats", Value(Array{Value("wav"), Value("flac")})}})},
                                       {"planMetadata", Value(true)},
-                                      {"agents", Value(options.transportPort != nullptr)}})},
+                                      {"agents", Value(options.transportPort != nullptr)},
+                                      // Protocol v0 item 31: engine.status load, the SLUD frame and its reset.
+                                      {"load", Value(options.transportPort != nullptr)},
+                                      {"loudness", Value(options.transportPort != nullptr)},
+                                      {"agentRequests", Value(options.transportPort != nullptr)}})},
             {"limits", Value(Object{{"syncChunkEntities", Value(static_cast<double>(options.syncChunkEntities))},
                                     {"inboxCapacity", Value(static_cast<double>(options.inboxCapacity))},
                                     {"idempotencyCapacity", Value(static_cast<double>(options.idempotencyCapacity))},
                                     {"agentIdleMs", Value(static_cast<double>(options.agentIdleMs.count()))},
-                                    {"agentsRetained", Value(static_cast<double>(options.agentsRetained))}})},
+                                    {"agentsRetained", Value(static_cast<double>(options.agentsRetained))},
+                                    {"agentRequestsPerAgent", Value(static_cast<double>(agentRequests.perAgent()))},
+                                    {"agentRequestTextChars", Value(static_cast<double>(detail::kRequestTextMaxChars))},
+                                    {"agentRequestWaitMs", Value(static_cast<double>(requestWaitLimit().count()))},
+                                    {"agentRequestsClosedRetained",
+                                     Value(static_cast<double>(detail::kRequestsClosedRetained))}})},
         });
     }
 
@@ -1778,8 +1896,290 @@ struct ProtocolServer::Impl {
         }
         const std::string base =
             optionalString(request.params, "baseRevision", method).value_or(session->history().head().envelope.id);
+        // Protocol v0 item 32: the request this plan answers, checked before
+        // anything is stored. Only its addressee links a plan to it.
+        std::optional<std::string> linked;
+        if (const Value* given = request.params.find("request")) {
+            if (given->kind() != Value::Kind::string) {
+                throw ProtocolError("invalid_params", "plan.submit: request must be a request id");
+            }
+            if (!fromMcp) {
+                throw ProtocolError("invalid_params", "plan.submit: only the agent a request is addressed to answers it");
+            }
+            const detail::AgentRequest* found = agentRequests.find(given->asString());
+            if (found == nullptr) {
+                throw ProtocolError("not_found", "no request " + given->asString());
+            }
+            if (!found->open() || found->agentId != request.agentId) {
+                throw ProtocolError("request_not_open", "request " + given->asString() + " is not open for this agent");
+            }
+            linked = given->asString();
+        }
         const command::Plan& plan = session->submitPlan(std::move(steps), std::move(readSet), base, std::move(metadata));
+        if (fromMcp && !request.agentId.empty()) {
+            planSubmitters_.emplace(*plan.hashText, request.agentId);
+        }
+        if (linked) {
+            requestChanged(agentRequests.close(*linked, detail::RequestState::answered, *plan.hashText));
+        }
         return success(request.requestId, plan.toJson());
+    }
+
+    // Protocol v0 item 32, agent requests. Command thread.
+
+    // A parked agent.next_request and when its wait ends (on steadyClock).
+    struct Waiter {
+        Pending request;
+        std::chrono::steady_clock::time_point deadline{};
+    };
+    std::map<std::string, Waiter, std::less<>> waiters_;  // by agent id: one per agent
+    // (plan hash, agent id) for every plan an agent submitted in this session:
+    // the plans agent.answer_request accepts from it.
+    std::set<std::pair<std::string, std::string>> planSubmitters_;
+    // The request states changed since the last publishRequestChanges().
+    std::vector<detail::AgentRequest> requestChanges_;
+
+    // ServerOptions::agentRequestWaitMs, clamped to at most mcpRequestTimeout
+    // minus 1 s and at least 0, so a parked call is answered before the
+    // transport answers request_timeout (item 15).
+    std::chrono::milliseconds requestWaitLimit() const {
+        using std::chrono::milliseconds;
+        const milliseconds ceiling = std::max(options.mcpRequestTimeout - milliseconds(1'000), milliseconds(0));
+        return std::max(std::min(options.agentRequestWaitMs, ceiling), milliseconds(0));
+    }
+
+    void requestChanged(detail::AgentRequest request) { requestChanges_.push_back(std::move(request)); }
+
+    // agent.request_changed for each change, in order; after the request's
+    // plan.changed and before the pump's agent.changed.
+    void publishRequestChanges() {
+        for (const detail::AgentRequest& request : requestChanges_) {
+            events.publish("agent.request_changed", Object{{"request", detail::requestJson(request)}});
+        }
+        requestChanges_.clear();
+    }
+
+    bool agentConnected(const std::string& agentId) const {
+        for (const detail::AgentView& agent : agents.snapshot()) {
+            if (agent.id == agentId) {
+                return agent.connected;
+            }
+        }
+        return false;
+    }
+
+    // The context the engine stamps on a request: the UI's selection, and the
+    // engine state the client cannot forge.
+    Value requestContext(Value selection) const {
+        const command::Revision& head = session->history().head();
+        std::optional<Value> locators =
+            entityJson(head.document, model::EntityRef{model::EntityType::locators, std::string(model::kLocatorsId)});
+        return Value(Object{{"selection", std::move(selection)},
+                            {"locators", locators ? std::move(*locators) : Value(nullptr)},
+                            {"cursor", options.transportPort != nullptr
+                                           ? decimal(options.transportPort->status().position)
+                                           : Value(nullptr)},
+                            {"headRevision", Value(head.envelope.id)}});
+    }
+
+    static Value requestResult(const detail::AgentRequest& request) {
+        return Value(Object{{"request", detail::requestJson(request)}});
+    }
+
+    // agent.request {agentId, text, selection?} (the UI credential).
+    std::string agentRequest(const Pending& request) {
+        const std::string_view method = "agent.request";
+        onlyParams(request.params, {"agentId", "text", "selection"}, method);
+        const std::string& agentId = requireString(request.params, "agentId", method);
+        const std::string& text = requireString(request.params, "text", method);
+        Value selection = selectionJson(request.params, method);
+        detail::checkRequestText(text, "agent.request: text");
+        if (!agentConnected(agentId)) {
+            throw ProtocolError("agent_not_connected", "no connected agent " + agentId);
+        }
+        const detail::AgentRequest queued =
+            agentRequests.queue(agentId, text, requestContext(std::move(selection)), options.clock());
+        requestChanged(queued);
+        return success(request.requestId, requestResult(queued));
+    }
+
+    // agent.cancel_request {request} (the UI credential).
+    std::string agentCancelRequest(const Pending& request) {
+        const std::string_view method = "agent.cancel_request";
+        onlyParams(request.params, {"request"}, method);
+        const std::string& id = requireString(request.params, "request", method);
+        const detail::AgentRequest* found = agentRequests.find(id);
+        if (found == nullptr) {
+            throw ProtocolError("not_found", "no request " + id);
+        }
+        if (!found->open()) {
+            throw ProtocolError("request_not_open", "request " + id + " is closed");
+        }
+        detail::AgentRequest closed = agentRequests.close(id, detail::RequestState::cancelled);
+        requestChanged(closed);
+        return success(request.requestId, requestResult(closed));
+    }
+
+    // agent.requests {} (the UI credential).
+    std::string agentRequestList(const Pending& request) const {
+        onlyParams(request.params, {}, "agent.requests");
+        Array out;
+        for (const detail::AgentRequest& entry : agentRequests.list()) {
+            out.push_back(detail::requestJson(entry));
+        }
+        return success(request.requestId, Value(Object{{"requests", Value(std::move(out))}}));
+    }
+
+    // agent.answer_request {request, plan} | {request, message} | {request,
+    // decline: true, message?} (the MCP credential).
+    std::string agentAnswerRequest(const Pending& request) {
+        const std::string_view method = "agent.answer_request";
+        onlyParams(request.params, {"request", "plan", "message", "decline"}, method);
+        const std::string& id = requireString(request.params, "request", method);
+        const Value* plan = request.params.find("plan");
+        const Value* message = request.params.find("message");
+        const Value* decline = request.params.find("decline");
+        if (decline != nullptr && (decline->kind() != Value::Kind::boolean || !decline->asBool())) {
+            throw ProtocolError("invalid_params", "agent.answer_request: decline must be true");
+        }
+        const int forms = (plan != nullptr ? 1 : 0) + (decline != nullptr ? 1 : 0) +
+                          (message != nullptr && decline == nullptr ? 1 : 0);
+        if (forms != 1) {
+            throw ProtocolError("invalid_params",
+                                "agent.answer_request takes exactly one of plan, message or decline (with a message)");
+        }
+        if ((plan != nullptr && plan->kind() != Value::Kind::string) ||
+            (message != nullptr && message->kind() != Value::Kind::string)) {
+            throw ProtocolError("invalid_params", "agent.answer_request: plan and message are strings");
+        }
+        std::optional<std::string> text;
+        if (message != nullptr) {
+            detail::checkRequestText(message->asString(), "agent.answer_request: message");
+            text = message->asString();
+        }
+        const detail::AgentRequest* found = agentRequests.find(id);
+        if (found == nullptr) {
+            throw ProtocolError("not_found", "no request " + id);
+        }
+        if (!found->open() || found->agentId != request.agentId) {
+            throw ProtocolError("request_not_open", "request " + id + " is not open for this agent");
+        }
+        detail::AgentRequest closed;
+        if (plan != nullptr) {
+            const std::string& hashText = plan->asString();
+            requirePlan(hashText);
+            if (planSubmitters_.count({hashText, request.agentId}) == 0) {
+                throw ProtocolError("invalid_params", "agent.answer_request: plan " + hashText +
+                                                          " was not submitted by this agent");
+            }
+            closed = agentRequests.close(id, detail::RequestState::answered, hashText);
+        } else {
+            closed = agentRequests.close(id, decline != nullptr ? detail::RequestState::declined
+                                                                : detail::RequestState::answered,
+                                         std::nullopt, std::move(text));
+        }
+        requestChanged(closed);
+        return success(request.requestId, requestResult(closed));
+    }
+
+    static std::string emptyNext(const Pending& request) {
+        return success(request.requestId, Value(Object{{"request", Value(nullptr)}}));
+    }
+
+    // A delivering next_request: an action of the agent, and cached under its id.
+    void answerTaken(const Pending& request, const detail::AgentRequest& taken) {
+        std::string response = success(request.requestId, requestResult(taken));
+        requestChanged(taken);
+        agents.acted(request.agentId, request.tool, options.clock());
+        remember(request.requestId, response);
+        deliver(request, response);
+    }
+
+    // Answers the agent's parked call with {request: null}, never cached.
+    void releaseWaiter(const std::string& agentId) {
+        const auto it = waiters_.find(agentId);
+        if (it == waiters_.end()) {
+            return;
+        }
+        const Pending held = std::move(it->second.request);
+        waiters_.erase(it);
+        deliver(held, emptyNext(held));
+    }
+
+    void releaseAllWaiters() {
+        while (!waiters_.empty()) {
+            releaseWaiter(waiters_.begin()->first);
+        }
+    }
+
+    // agent.next_request {waitMs?} (the MCP credential): delivered at once,
+    // empty at once (waitMs 0), or parked until serveWaiters() answers it.
+    void nextRequest(const Pending& request) {
+        const std::string_view method = "agent.next_request";
+        std::chrono::milliseconds wait = requestWaitLimit();
+        try {
+            onlyParams(request.params, {"waitMs"}, method);
+            if (const Value* given = request.params.find("waitMs")) {
+                const bool integer = given->kind() == Value::Kind::number && given->asNumber() >= 0 &&
+                                     given->asNumber() <= 1e9 && std::floor(given->asNumber()) == given->asNumber();
+                if (!integer) {
+                    throw ProtocolError("invalid_params", "agent.next_request: waitMs is a non-negative integer");
+                }
+                wait = std::min(wait, std::chrono::milliseconds(static_cast<std::int64_t>(given->asNumber())));
+            }
+        } catch (const ProtocolError& e) {
+            const std::string response = failure(Value(request.requestId), e.code(), e.what());
+            remember(request.requestId, response);
+            deliver(request, response);
+            return;
+        }
+        releaseWaiter(request.agentId);
+        if (std::optional<detail::AgentRequest> taken = agentRequests.take(request.agentId)) {
+            answerTaken(request, *taken);
+            publishRequestChanges();
+            return;
+        }
+        if (wait.count() == 0) {
+            deliver(request, emptyNext(request));
+            return;
+        }
+        waiters_.insert_or_assign(request.agentId, Waiter{request, steadyNow() + wait});
+    }
+
+    // After the requests: a parked call whose agent has a pending request now
+    // gets it; one whose wait ended, or whose agent disconnected, gets null.
+    void serveWaiters() {
+        const auto now = steadyNow();
+        for (auto it = waiters_.begin(); it != waiters_.end();) {
+            if (std::optional<detail::AgentRequest> taken = agentRequests.take(it->first)) {
+                const Pending held = std::move(it->second.request);
+                it = waiters_.erase(it);
+                answerTaken(held, *taken);
+                continue;
+            }
+            if (now >= it->second.deadline || !agentConnected(it->first)) {
+                const Pending held = std::move(it->second.request);
+                it = waiters_.erase(it);
+                deliver(held, emptyNext(held));
+                continue;
+            }
+            ++it;
+        }
+    }
+
+    // The open requests of an agent that disconnected (DELETE or idle) or was
+    // forgotten expire; a later reconnect does not revive them.
+    void expireRequestsOfGoneAgents() {
+        const std::vector<detail::AgentView> snapshot = agents.snapshot();
+        for (const std::string& agentId : agentRequests.agentsWithOpen()) {
+            const auto it = std::find_if(snapshot.begin(), snapshot.end(),
+                                         [&](const detail::AgentView& agent) { return agent.id == agentId; });
+            if (it == snapshot.end() || !it->connected) {
+                for (detail::AgentRequest& expired : agentRequests.expireAgent(agentId)) {
+                    requestChanged(std::move(expired));
+                }
+            }
+        }
     }
 
     // The stale entities of a stored plan at the head, as plan.status reports them.
@@ -1990,6 +2390,14 @@ struct ProtocolServer::Impl {
         if (given && given->empty()) {
             throw ProtocolError("invalid_params", "session.create: name must not be empty");
         }
+        // A name given is refused when it holds a control or display-unsafe
+        // character, as session.rename's (spec "siann-model", names); one taken
+        // from the folder is stripped of them instead.
+        if (given && !model::isDisplaySafeName(*given)) {
+            throw ProtocolError("invalid_name",
+                                "session.create: name must not hold control characters, bidi formatting "
+                                "characters or line separators");
+        }
         std::error_code ec;
         if (std::filesystem::exists(std::filesystem::symlink_status(path, ec))) {
             throw ProtocolError("already_exists", "something already exists at this path");
@@ -1997,7 +2405,7 @@ struct ProtocolServer::Impl {
         if (!std::filesystem::is_directory(path.parent_path(), ec)) {
             throw ProtocolError("not_found", "the parent directory of this path does not exist");
         }
-        std::string rootName = given.value_or(utf8(path.stem()));
+        std::string rootName = given.value_or(model::withoutUnsafeCharacters(utf8(path.stem())));
         if (rootName.empty()) {
             rootName = "Untitled";
         }
@@ -2031,6 +2439,12 @@ struct ProtocolServer::Impl {
         readModel.forgetAll();
         cache.clear();
         cacheOrder.clear();
+        // Protocol v0 item 32: a request's context names the old session's
+        // entities, so every open one expires; its plans are gone too.
+        for (detail::AgentRequest& expired : agentRequests.expireAll()) {
+            requestChanged(std::move(expired));
+        }
+        planSubmitters_.clear();
         return success(request.requestId,
                        Value(Object{{"sessionId", Value(nextId)},
                                     {"revision", Value(head.envelope.id)},
@@ -2171,7 +2585,8 @@ struct ProtocolServer::Impl {
             return success(request.requestId, aboutJson());
         }
         if (method == "command.list") {
-            return success(request.requestId, Value(Object{{"commands", commandNamesJson()}}));
+            return success(request.requestId,
+                           Value(Object{{"commands", commandNamesJson()}, {"cascades", commandCascadesJson()}}));
         }
         if (method == "engine.capabilities") {
             return success(request.requestId, capabilitiesJson());
@@ -2202,8 +2617,17 @@ struct ProtocolServer::Impl {
                                                          options.clock()));
         }
         if (method == "plan.rollback") {
-            return published(request, session->rollbackPlan(requireString(request.params, "plan", method),
-                                                            options.actor, options.clock()));
+            // {plan} or {revision}, exactly one (item 14; m5b-bridge-native-client).
+            const bool byPlan = request.params.find("plan") != nullptr;
+            if (byPlan == (request.params.find("revision") != nullptr)) {
+                throw ProtocolError("invalid_params", "plan.rollback: give exactly one of plan and revision");
+            }
+            if (byPlan) {
+                return published(request, session->rollbackPlan(requireString(request.params, "plan", method),
+                                                                options.actor, options.clock()));
+            }
+            return published(request, session->rollbackRevision(requireString(request.params, "revision", method),
+                                                                options.actor, options.clock()));
         }
         if (method == "plan.propose") {
             return planPropose(request);
@@ -2259,6 +2683,11 @@ struct ProtocolServer::Impl {
         }
         if (method == "engine.status") {
             return success(request.requestId, engineStatus());
+        }
+        if (method == "meter.reset_loudness") {
+            // Protocol v0 item 31: engine state, no revision, no event, no device needed.
+            requireTransport().resetLoudness();
+            return success(request.requestId, Value(Object{}));
         }
         if (method == "engine.devices") {
             return success(request.requestId, devicesJson(requireTransport().devices()));
@@ -2319,6 +2748,18 @@ struct ProtocolServer::Impl {
         }
         if (method == "gesture.cancel") {
             return gestureCancel(request);
+        }
+        if (method == "agent.request") {
+            return agentRequest(request);
+        }
+        if (method == "agent.cancel_request") {
+            return agentCancelRequest(request);
+        }
+        if (method == "agent.requests") {
+            return agentRequestList(request);
+        }
+        if (method == "agent.answer_request") {
+            return agentAnswerRequest(request);
         }
         return failure(Value(request.requestId), "unknown_method", "unknown method " + request.method);
     }
@@ -2431,6 +2872,7 @@ struct ProtocolServer::Impl {
         const std::optional<TransportFlags> flagsBefore = watchFlags ? transportFlags() : std::nullopt;
         std::string response = run(request);
         publishLifecycle(servedBefore, heardBefore);
+        publishRequestChanges();
         if (touchesRecording(request.method) && session == servedBefore) {
             publishHeadIfMoved();
         }
@@ -2524,10 +2966,22 @@ struct ProtocolServer::Impl {
     // credential (Pending::scope), so the check holds whatever the adapter
     // sent; a method no tool maps is denied too.
     std::optional<std::string> scopeDenied(const Pending& request) const {
-        if (!request.scope || *request.scope == McpScope::trusted) {
+        const Value id(request.requestId);
+        // Protocol v0 item 32 (Scopes v0, credential-bound methods), whatever
+        // the scope: the agent's side is the MCP credential's, the user's side
+        // the UI credential's.
+        if (!request.scope) {
+            if (mcpOnlyMethod(request.method)) {
+                return failure(id, "scope_denied", request.method + " is an agent's: the MCP credential only");
+            }
             return std::nullopt;
         }
-        const Value id(request.requestId);
+        if (uiOnlyMethod(request.method)) {
+            return failure(id, "scope_denied", request.method + " is the user's: the UI credential only");
+        }
+        if (*request.scope == McpScope::trusted) {
+            return std::nullopt;
+        }
         for (const detail::McpTool& tool : detail::mcpTools()) {
             if (tool.method == request.method) {
                 // A propose credential cannot start a recording, so it cannot end
@@ -2567,7 +3021,13 @@ struct ProtocolServer::Impl {
 
     void handle(std::vector<Pending> requests) {
         expireLeases();
+        // A parked next_request keeps its agent connected (Protocol v0 item 32).
+        for (const auto& [agentId, waiter] : waiters_) {
+            (void)waiter;
+            agents.touch(agentId);
+        }
         agents.expire(options.agentIdleMs);
+        expireRequestsOfGoneAgents();
         for (const auto& request : requests) {
             if (request.closed) {
                 endConnection(request.connection);
@@ -2594,6 +3054,12 @@ struct ProtocolServer::Impl {
                     continue;
                 }
             }
+            // The long poll answers itself, now or in a later pump; an empty
+            // answer is neither cached nor an action (Protocol v0 item 32).
+            if (request.method == "agent.next_request") {
+                nextRequest(request);
+                continue;
+            }
             std::string response = execute(request);
             if (!request.agentId.empty()) {
                 agents.acted(request.agentId, request.tool, options.clock());
@@ -2616,6 +3082,11 @@ struct ProtocolServer::Impl {
         syncRecordState();
         finishImports();
         refreshMediaTable();
+        // A DELETE that arrived during the pump, and the parked calls the
+        // requests (or the clock) answered.
+        expireRequestsOfGoneAgents();
+        serveWaiters();
+        publishRequestChanges();
         publishAgents();
         events.flush();
     }
@@ -2678,6 +3149,12 @@ void ProtocolServer::start() {
 
 void ProtocolServer::stop() {
     impl_->stopPumpThread();
+    {
+        // A parked next_request is answered empty, so no transport thread
+        // waits on it while the transport stops.
+        std::lock_guard lock(impl_->pumpMutex);
+        impl_->releaseAllWaiters();
+    }
     if (impl_->started) {
         // No transport thread is left waiting on an MCP answer after this.
         impl_->transport.stop();

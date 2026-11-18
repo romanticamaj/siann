@@ -192,6 +192,58 @@ test('copy places each clip by the delta (and lanes), leaving the originals', ()
   assert.equal(copyCommand(snapshot, ['clp_gone'], 10n, 0), null);
 });
 
+// m5b-engine-clip-fades: clip.place takes no fade fields, so split, duplicate
+// and copy append clip.set_fade to the same list (architecture spec, M5b clip
+// fades). clp_f is 96000 frames from frame 0 with a 10000 fade in and a 30000
+// fade out.
+function fadedSnapshot() {
+  const faded: ClipEntity = {
+    ...clip('clp_f', 'trk_a', 'med_long', '0', '0', '96000'),
+    fadeIn: { length: '10000', curve: 'linear' },
+    fadeOut: { length: '30000', curve: 'equal_power' },
+  };
+  return snapshotOf(['trk_a'], [track('trk_a')], [media('med_long', '480000')], [faded]);
+}
+
+test('split carries a faded clip\'s fades: the fade in stays left, the fade out moves right (shortened to fit)', () => {
+  const snapshot = fadedSnapshot();
+  const command = splitCommand(snapshot, ['clp_f'], 76000n, ids('clp_r'));
+  assert.deepEqual(command!.commands, [
+    { op: 'clip.trim', clipId: 'clp_f', sourceStart: '0', length: '76000' },
+    { op: 'clip.set_fade', clipId: 'clp_f', fadeOut: { length: '0', curve: 'equal_power' } },
+    {
+      op: 'clip.place',
+      clipId: 'clp_r',
+      trackId: 'trk_a',
+      mediaId: 'med_long',
+      position: { domain: 'audio', value: '76000' },
+      sourceStart: '76000',
+      length: '20000',
+      gainMilliDb: 0,
+    },
+    { op: 'clip.set_fade', clipId: 'clp_r', fadeOut: { length: '20000', curve: 'equal_power' } },
+  ]);
+  // A cut past the fade out keeps its full length on the right piece.
+  const early = splitCommand(snapshot, ['clp_f'], 40000n, ids('clp_r'));
+  assert.deepEqual(early!.commands.at(-1), { op: 'clip.set_fade', clipId: 'clp_r', fadeOut: { length: '30000', curve: 'equal_power' } });
+  // A clip with a fade in only: no clip.set_fade at all (the trim keeps it).
+  const inOnly = snapshotOf(['trk_a'], [track('trk_a')], [media('med_long', '480000')], [
+    { ...clip('clp_i', 'trk_a', 'med_long', '0', '0', '96000'), fadeIn: { length: '10000', curve: 'linear' } },
+  ]);
+  assert.deepEqual(splitCommand(inOnly, ['clp_i'], 50000n, ids('clp_r'))!.commands.map((c) => c.op), ['clip.trim', 'clip.place']);
+});
+
+test('duplicate and copy carry both fades of a faded clip; a clip without fades gets no clip.set_fade', () => {
+  const snapshot = fadedSnapshot();
+  const fades = { fadeIn: { length: '10000', curve: 'linear' }, fadeOut: { length: '30000', curve: 'equal_power' } };
+  const dup = duplicateCommand(snapshot, ['clp_f'], ids('clp_d'));
+  assert.deepEqual(dup!.commands.map((c) => c.op), ['clip.place', 'clip.set_fade']);
+  assert.deepEqual(dup!.commands[1], { op: 'clip.set_fade', clipId: 'clp_d', ...fades });
+  const copy = copyCommand(snapshot, ['clp_f'], 1000n, 0, ids('clp_k'));
+  assert.deepEqual(copy!.commands[1], { op: 'clip.set_fade', clipId: 'clp_k', ...fades });
+  assert.ok(duplicateCommand(editSnapshot(), ['clp_long'])!.commands.every((c) => c.op === 'clip.place'));
+});
+
 test('a selection move is one list of clip.move, trackId only where the lane changed', () => {
   const snapshot = editSnapshot();
   const command = moveSelectionCommand(snapshot, ['clp_b1', 'clp_c2'], 12000n, 0);
