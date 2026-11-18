@@ -238,6 +238,7 @@ export function App({
                 loopClick={loopClick}
                 reconnects={reconnects}
                 review={review}
+                toasts={toasts}
               />
             </Counted>
           }

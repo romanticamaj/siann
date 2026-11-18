@@ -1,19 +1,26 @@
 // The info line (m5-ui-port-toolbar; UI redesign spec 3.2, "Info line",
-// 10.8 and 10.9; read-only in phase 1), ported from the mockup's
-// app.innerHTML template (mockup.html, div.infoline): one span.f per field,
-// the name first (the track's colour in <i>, the clip's title in <b>), then
-// start, end, length, offset and volume, each its label and b.num, styled by
+// 10.8 and 10.9), ported from the mockup's app.innerHTML template
+// (mockup.html, div.infoline): one span.f per field, the name first (the
+// track's colour in <i>, the clip's title in <b>), then start, end, length,
+// offset and volume, each its label and b.num, styled by
 // ui/project-zone.css. The values are info-line.ts's. The fade fields belong
 // to m5b-ui-fades: their boxes stay at the end of the line, empty (spec 3.0,
 // --hold-info-fade-*-w), so the volume field keeps the hairline the shared
 // rule draws after it. With no clip selected the line holds nothing between
 // its edges. data-clip names the selected clip for the e2e.
+//
+// Editing (m5b-ui-edit-more; spec 3.2, "Info line"): with an edit handler,
+// start, length, offset and volume take the focus; a click (or Enter) puts a
+// text field inside their b.num holding the value, the template's structure
+// otherwise unchanged; Enter applies it relatively to the selection, Mod+Enter
+// absolutely, Escape or leaving the field cancels (infoLineEditCommand turns
+// it into one command list). End stays read-only.
 
-import { useSyncExternalStore } from 'react';
+import { useEffect, useRef, useState, useSyncExternalStore, type KeyboardEvent } from 'react';
 
 import { useT, type MessageKey } from '../i18n/t';
 import type { SessionClient } from '../model/session-client';
-import { infoLine, type InfoLineValues } from './info-line';
+import { infoLine, type InfoField, type InfoLineValues } from './info-line';
 
 type ValueField = Exclude<keyof InfoLineValues, 'name' | 'colour'>;
 
@@ -26,14 +33,29 @@ const FIELDS: ReadonlyArray<readonly [string, ValueField, MessageKey]> = [
   ['info-volume', 'volume', 'info.volume'],
 ];
 
-export function InfoLine({ client, clipId }: { client: SessionClient; clipId: string | null }) {
+const EDITABLE: ReadonlySet<ValueField> = new Set<ValueField>(['start', 'length', 'offset', 'volume']);
+
+export interface InfoLineProps {
+  readonly client: SessionClient;
+  // The primary selected clip: the one whose values the line shows.
+  readonly clipId: string | null;
+  // Every selected clip (an edit applies to all of them).
+  readonly selection?: readonly string[];
+  // A typed value committed: relative, or absolute with Mod. Absent: read-only.
+  readonly onEdit?: (field: InfoField, text: string, absolute: boolean) => void;
+}
+
+export function InfoLine({ client, clipId, onEdit }: InfoLineProps) {
   const t = useT();
   const snapshot = useSyncExternalStore(
     (listener) => client.model.subscribe(listener),
     () => client.model.getSnapshot(),
     () => client.model.getSnapshot(),
   );
+  const [editing, setEditing] = useState<ValueField | null>(null);
   const values = infoLine(snapshot, clipId);
+  // A new primary clip (or none) ends an edit.
+  useEffect(() => setEditing(null), [clipId]);
   return (
     <div className="infoline" data-testid="info-line" data-part="info-line" data-clip={values ? (clipId ?? '') : ''} aria-label={t('info.label')}>
       {values ? (
@@ -45,12 +67,20 @@ export function InfoLine({ client, clipId }: { client: SessionClient; clipId: st
             </b>
           </span>
           {FIELDS.map(([part, field, label]) => (
-            <span key={part} className="f" data-part={part}>
-              {t(label)}
-              <b className="num" data-testid={part}>
-                {values[field]}
-              </b>
-            </span>
+            <InfoValueField
+              key={part}
+              part={part}
+              label={t(label)}
+              value={values[field]}
+              editable={onEdit !== undefined && EDITABLE.has(field)}
+              editing={editing === field}
+              onBegin={() => setEditing(field)}
+              onCommit={(text, absolute) => {
+                setEditing(null);
+                onEdit?.(field as InfoField, text, absolute);
+              }}
+              onCancel={() => setEditing(null)}
+            />
           ))}
           {/* Fade In and Fade Out (m5b-ui-fades): their boxes, empty. */}
           <span className="hold-info-fade-in" aria-hidden="true" />
@@ -58,5 +88,84 @@ export function InfoLine({ client, clipId }: { client: SessionClient; clipId: st
         </>
       ) : null}
     </div>
+  );
+}
+
+export interface InfoValueFieldProps {
+  readonly part: string;
+  readonly label: string;
+  readonly value: string;
+  readonly editable: boolean;
+  readonly editing: boolean;
+  readonly onBegin: () => void;
+  readonly onCommit: (text: string, absolute: boolean) => void;
+  readonly onCancel: () => void;
+}
+
+// One value field: span.f with its label and b.num; while edited, a text
+// field inside b.num.
+export function InfoValueField({ part, label, value, editable, editing, onBegin, onCommit, onCancel }: InfoValueFieldProps) {
+  const t = useT();
+  const input = useRef<HTMLInputElement | null>(null);
+  const done = useRef(false);
+  useEffect(() => {
+    if (!editing) return;
+    done.current = false;
+    input.current?.focus();
+    input.current?.select();
+  }, [editing]);
+  const onKeyDown = (event: KeyboardEvent<HTMLInputElement>) => {
+    if (event.key === 'Enter' || event.key === 'NumpadEnter') {
+      event.preventDefault();
+      event.stopPropagation();
+      done.current = true;
+      onCommit(event.currentTarget.value, event.ctrlKey || event.metaKey);
+    } else if (event.key === 'Escape') {
+      event.preventDefault();
+      done.current = true;
+      onCancel();
+    }
+  };
+  const editableProps = editable
+    ? {
+        tabIndex: 0,
+        'data-editable': 'true',
+        'aria-label': label,
+        title: t('info.editHint'),
+        onClick: () => {
+          if (!editing) onBegin();
+        },
+        onKeyDown: (event: KeyboardEvent<HTMLElement>) => {
+          if (editing || event.key !== 'Enter') return;
+          event.preventDefault();
+          event.stopPropagation();
+          onBegin();
+        },
+      }
+    : {};
+  return (
+    <span className="f" data-part={part}>
+      {label}
+      <b className="num" data-testid={part} {...editableProps}>
+        {editable && editing ? (
+          <input
+            ref={input}
+            type="text"
+            className="info-edit"
+            data-testid={`${part}-input`}
+            aria-label={label}
+            defaultValue={value}
+            size={Math.max(4, value.length)}
+            spellCheck={false}
+            onKeyDown={onKeyDown}
+            onBlur={() => {
+              if (!done.current) onCancel();
+            }}
+          />
+        ) : (
+          value
+        )}
+      </b>
+    </span>
   );
 }

@@ -115,6 +115,20 @@ const PATHS = {
       <path d="M6 5.6 13 11M6 10.4 13 5" />
     </>
   ),
+  // The Glue and Erase tools (m5b-ui-edit-more; mockup.html, P.glue and P.erase).
+  glue: (
+    <>
+      <path d="M6 2.5h4l-.6 3h-2.8z" />
+      <path d="M6.2 5.5h3.6l1.2 8H5z" />
+    </>
+  ),
+  erase: (
+    <>
+      <path d="M9.5 3 13 6.5 7.5 12H5l-2-2z" />
+      <path d="M6.5 6 10 9.5" />
+      <path d="M5 13.5h8" />
+    </>
+  ),
   magnet: (
     <>
       <path d="M4 3v5a4 4 0 0 0 8 0V3h-2.6v5a1.4 1.4 0 0 1-2.8 0V3z" />

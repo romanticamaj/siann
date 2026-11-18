@@ -26,10 +26,15 @@
 // the locators through the LoopClickController (only when the engine lists
 // session.set_locators and the locators feature), and P and Alt+P take the
 // canvas's selection from here.
+// m5b-ui-edit-more: 4 and 5 (Glue, Erase), edit.glue (no key), Ctrl+X, Ctrl+C,
+// Ctrl+V, Alt+V, Ctrl+K (RepeatDialog asks for the count), the nudges, and
+// Ctrl+Shift+A; the toolbar's snap type menu; the info line's typed values
+// (infoLineEditCommand, one command list through the canvas); a refused glue
+// is a toast (the `toasts` store) worded in the locale.
 
 import { useCallback, useEffect, useRef, useState, useSyncExternalStore, type CSSProperties } from 'react';
 
-import { localeStore, translator, useLocale } from '../i18n/t';
+import { localeStore, translator, useLocale, type MessageKey } from '../i18n/t';
 import type { CommandId, CommandRegistry } from '../keys/commands';
 import type { CapabilitySelector } from '../model/capabilities';
 import { loopClickGates, type LoopClickController } from '../model/loop-click';
@@ -44,9 +49,12 @@ import { planNameParts } from '../plans/plan-name';
 import { useCapabilities } from '../shell/Capable';
 import { ConfirmDialog } from '../shell/ConfirmDialog';
 import { createLayoutStore, type LayoutStore } from '../shell/layout-store';
+import type { ToastStore } from '../shell/toast-store';
 import type { TimelineCommand } from './commands';
-import { removeTracksCommand, trackMuteCommand, trackSoloCommand } from './edit-commands';
+import { removeTracksCommand, trackMuteCommand, trackSoloCommand, type GlueRefusal } from './edit-commands';
+import { infoLineEditCommand, type InfoField } from './info-line';
 import { InfoLine } from './InfoLine';
+import { RepeatDialog } from './RepeatDialog';
 import { EventDisplayMenu, Pool } from './Pool';
 import type { TrackSelectMode } from './selection';
 import { IDLE_STATE, TimelineCanvas, type TimelineTestHooks } from './TimelineCanvas';
@@ -91,7 +99,35 @@ export type EditCommand = Extract<
   | 'track.muteSelected'
   | 'track.soloSelected'
   | 'track.removeSelected'
+  | 'tool.glue'
+  | 'tool.erase'
+  | 'edit.glue'
+  | 'edit.cut'
+  | 'edit.copy'
+  | 'edit.paste'
+  | 'edit.pasteAtOrigin'
+  | 'edit.repeat'
+  | 'edit.nudgeLeft'
+  | 'edit.nudgeRight'
+  | 'edit.nudgeStartLeft'
+  | 'edit.nudgeStartRight'
+  | 'edit.nudgeEndLeft'
+  | 'edit.nudgeEndRight'
+  | 'edit.selectNone'
 >;
+
+// A refused glue's toast, by reason (UI redesign 3.2, "Tools").
+const GLUE_REFUSED: Readonly<Record<GlueRefusal | 'selection', MessageKey>> = {
+  no_next: 'glue.refused.no_next',
+  gap: 'glue.refused.gap',
+  other_media: 'glue.refused.other_media',
+  source_not_continuous: 'glue.refused.source_not_continuous',
+  other_track: 'glue.refused.other_track',
+  selection: 'glue.refused.selection',
+};
+
+// The info line's fields and the commands each edit sends.
+const INFO_EDIT_OPS: Readonly<Record<InfoField, string>> = { start: 'clip.move', length: 'clip.trim', offset: 'clip.trim', volume: 'clip.set_gain' };
 
 // Which editing commands (keys, buttons) exist with these capabilities (UI
 // redesign spec 3.0): each needs the commands it ends in (or, for L, N and
@@ -99,6 +135,9 @@ export type EditCommand = Extract<
 export function editGates(can: CapabilitySelector): Record<EditCommand, boolean> {
   const split = can.command('clip.trim') && can.command('clip.place');
   const locate = can.has('transport.locate');
+  const glue = can.command('clip.remove') && can.command('clip.trim');
+  const place = can.command('clip.place');
+  const start = can.command('clip.trim') && can.command('clip.move');
   return {
     'tool.select': can.command('clip.move') || can.command('clip.trim') || can.command('clip.place'),
     'tool.split': split,
@@ -115,6 +154,22 @@ export function editGates(can: CapabilitySelector): Record<EditCommand, boolean>
     'track.muteSelected': can.command('track.set_mute'),
     'track.soloSelected': can.command('track.set_solo'),
     'track.removeSelected': can.command('track.remove'),
+    // m5b-ui-edit-more: each on the commands it sends; copy and Select None send nothing.
+    'tool.glue': glue,
+    'tool.erase': can.command('clip.remove'),
+    'edit.glue': glue,
+    'edit.cut': can.command('clip.remove'),
+    'edit.copy': true,
+    'edit.paste': place,
+    'edit.pasteAtOrigin': place,
+    'edit.repeat': place,
+    'edit.nudgeLeft': can.command('clip.move'),
+    'edit.nudgeRight': can.command('clip.move'),
+    'edit.nudgeStartLeft': start,
+    'edit.nudgeStartRight': start,
+    'edit.nudgeEndLeft': can.command('clip.trim'),
+    'edit.nudgeEndRight': can.command('clip.trim'),
+    'edit.selectNone': true,
   };
 }
 
@@ -144,6 +199,8 @@ export interface TimelineProps {
   readonly loopClick?: LoopClickController;
   // The plan review (m5b-ui-ghosts): the canvas's ghosts and the toolbar's pill; none when absent.
   readonly review?: ReviewStore;
+  // Where a refused glue's toast goes (m5b-ui-edit-more); none when absent.
+  readonly toasts?: ToastStore;
 }
 
 function useSessionId(client: SessionClient): string | null {
@@ -192,6 +249,7 @@ export function Timeline({
   loopClick,
   reconnects = 0,
   review,
+  toasts,
 }: TimelineProps) {
   const contentRef = useRef<HTMLCanvasElement | null>(null);
   const overlayRef = useRef<HTMLCanvasElement | null>(null);
@@ -204,6 +262,10 @@ export function Timeline({
   const sessionId = useSessionId(client);
   const [timeline, setTimeline] = useState<TimelineCanvas | null>(null);
   const [removing, setRemoving] = useState<readonly string[] | null>(null);
+  // Ctrl+K's count dialog (m5b-ui-edit-more).
+  const [repeating, setRepeating] = useState(false);
+  const toastsRef = useRef(toasts);
+  toastsRef.current = toasts;
   // The Pool (Ctrl+P) and the event display's context menu (where it opened).
   const [poolOpen, setPoolOpen] = useState(false);
   const [displayMenu, setDisplayMenu] = useState<{ x: number; y: number } | null>(null);
@@ -295,6 +357,10 @@ export function Timeline({
             onReveal: (listener) => review.onReveal((request) => listener(request.step)),
           }
         : undefined,
+      onRefuse: (reason) => {
+        const key = GLUE_REFUSED[reason];
+        toastsRef.current?.push(translator(localeStore().getSnapshot())(key), (locale) => translator(locale)(key));
+      },
     });
     surface.setSnap(layout.getSnapshot().layout.snap);
     const offAutoScroll = layout.subscribe(() => surface.setAutoScroll(layout.getSnapshot().layout.autoScroll));
@@ -374,6 +440,25 @@ export function Timeline({
     edit('edit.delete', () => void timeline.deleteSelected());
     edit('tool.select', () => timeline.setTool('select'));
     edit('tool.split', () => timeline.setTool('split'));
+    edit('tool.glue', () => timeline.setTool('glue'));
+    edit('tool.erase', () => timeline.setTool('erase'));
+    edit('edit.glue', () => void timeline.glueSelection());
+    edit('edit.cut', () => void timeline.cut());
+    edit('edit.copy', () => timeline.copy());
+    edit('edit.paste', () => void timeline.paste(false));
+    edit('edit.pasteAtOrigin', () => void timeline.paste(true));
+    edit('edit.repeat', () => {
+      if (timeline.getState().selectedClipIds.length === 0) return false;
+      setRepeating(true);
+      return true;
+    });
+    edit('edit.nudgeLeft', () => void timeline.nudge('position', -1));
+    edit('edit.nudgeRight', () => void timeline.nudge('position', 1));
+    edit('edit.nudgeStartLeft', () => void timeline.nudge('startLeft'));
+    edit('edit.nudgeStartRight', () => void timeline.nudge('startRight'));
+    edit('edit.nudgeEndLeft', () => void timeline.nudge('endLeft'));
+    edit('edit.nudgeEndRight', () => void timeline.nudge('endRight'));
+    edit('edit.selectNone', () => timeline.selectNone());
     edit('edit.splitAtCursor', () => void timeline.splitAtCursor());
     edit('edit.duplicate', () => void timeline.duplicate());
     edit('edit.snapToggle', () => layout.dispatch({ type: 'snapToggle' }));
@@ -441,15 +526,30 @@ export function Timeline({
         tool={state.tool}
         snap={snap}
         autoScroll={autoScroll}
-        gates={{ select: gates['tool.select'], split: gates['tool.split'], snap: gates['edit.snapToggle'], autoScroll: can.has('transport.play') }}
+        gates={{ select: gates['tool.select'], split: gates['tool.split'], glue: gates['tool.glue'], erase: gates['tool.erase'], snap: gates['edit.snapToggle'], autoScroll: can.has('transport.play') }}
         error={state.error}
         onTool={(tool) => timeline?.setTool(tool)}
         onSnapToggle={() => layout.dispatch({ type: 'snapToggle' })}
         onGrid={(grid) => layout.dispatch({ type: 'setGrid', grid })}
+        onSnapType={(snapType) => layout.dispatch({ type: 'setSnapType', snapType })}
         onAutoScroll={() => layout.dispatch({ type: 'autoScroll' })}
         pill={pill}
       />
-      <InfoLine client={client} clipId={state.selectedClipId} />
+      <InfoLine
+        client={client}
+        clipId={state.selectedClipId}
+        selection={state.selectedClipIds}
+        onEdit={
+          timeline && (can.command('clip.move') || can.command('clip.trim') || can.command('clip.set_gain'))
+            ? (field, text, absolute) => {
+                const current = client.model.getSnapshot();
+                const primary = state.selectedClipId;
+                if (!current || !primary || !can.command(INFO_EDIT_OPS[field])) return;
+                void timeline.sendCommand(infoLineEditCommand(current, state.selectedClipIds, primary, field, text, absolute));
+              }
+            : undefined
+        }
+      />
       <div className="arr-body" data-part="arrange" style={{ gridTemplateColumns: `${trackListWidth}px var(--divider-w) minmax(0, 1fr)` }}>
         <TrackList
           client={client}
@@ -516,6 +616,14 @@ export function Timeline({
           onClose={() => setDisplayMenu(null)}
         />
       ) : null}
+      <RepeatDialog
+        open={repeating}
+        onConfirm={(count) => {
+          setRepeating(false);
+          void timeline?.repeat(count);
+        }}
+        onCancel={() => setRepeating(false)}
+      />
       <ConfirmDialog
         open={removing !== null}
         message={t('confirm.removeTracks', { count: removing?.length ?? 0 })}
