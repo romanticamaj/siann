@@ -156,8 +156,13 @@ export function prepareBundle(scratch: string): string {
 // one made stale (approved, then the applied plan changes its track), one
 // rejected with the mockup's note, one applied whose four steps bring the
 // seeded values to the mockup's. The history rows then read Applied,
-// Rejected, Stale from the top.
+// Rejected, Stale from the top. Each carries the mockup's title, and an MCP
+// client named mix-assistant submits them, so the rows read the mockup's
+// titles and agent (m5b-ui-plan-metadata).
 const NOTE = 'Too wide for the verse — keep it mono.';
+export const AGENT_NAME = 'mix-assistant';
+export const TITLES = { stale: 'Trim silence on drums', rejected: 'Double the lead vocal', applied: 'Tame the low end', plan: 'Lift the chorus' } as const;
+export const INTENT = 'Add a pad under the chorus, bring the backing vocals forward and land the riser on the downbeat of bar 9.';
 export function staleSteps(): Array<Record<string, unknown>> {
   return [{ op: 'track.set_gain', trackId: TRACK_IDS[0]!, gainMilliDb: -2000 }];
 }
@@ -247,18 +252,29 @@ export async function stageSession(app: ElectronApplication, page: Page, notes: 
   });
   if (!ready) throw new Error('the shell has no engine');
   const agent = new Agent(ready.port, ready.mcpToken);
-  await agent.rpc('initialize', { protocolVersion: '2025-06-18', capabilities: {}, clientInfo: { name: 'mockup-fidelity', version: '1' } });
+  await agent.rpc('initialize', { protocolVersion: '2025-06-18', capabilities: {}, clientInfo: { name: AGENT_NAME, version: '1' } });
   const engine = await engineClient(page, { events: false });
   expect(appliedSteps()).toHaveLength(4);
-  const stale = (await agent.tool('submit_plan', { steps: staleSteps() })).hash as string;
+  const stale = (await agent.tool('submit_plan', { steps: staleSteps(), title: TITLES.stale })).hash as string;
   await engine.call('plan.approve', { plan: stale });
-  const rejected = (await agent.tool('submit_plan', { steps: rejectedSteps() })).hash as string;
+  const rejected = (await agent.tool('submit_plan', { steps: rejectedSteps(), title: TITLES.rejected })).hash as string;
   await engine.call('plan.reject', { plan: rejected, note: NOTE });
-  const applied = (await agent.tool('submit_plan', { steps: appliedSteps() })).hash as string;
+  const applied = (await agent.tool('submit_plan', { steps: appliedSteps(), title: TITLES.applied })).hash as string;
   await engine.call('plan.approve', { plan: applied });
   await engine.call('plan.apply', { plan: applied });
   await expect.poll(async () => ((await engine.call('plan.status', { plan: stale })).stale as unknown[]).length).toBeGreaterThan(0);
-  const plan = await agent.tool('submit_plan', { steps: planSteps() });
+  const plan = await agent.tool('submit_plan', { steps: planSteps(), title: TITLES.plan, intent: INTENT });
+  // The mockup's agent row reads "connected · idle": the session that
+  // submitted ends, and a second one named the same only initializes, so the
+  // agent shown has made no tool call yet (lastAction null).
+  await agent.end();
+  const idle = new Agent(ready.port, ready.mcpToken);
+  await idle.rpc('initialize', { protocolVersion: '2025-06-18', capabilities: {}, clientInfo: { name: AGENT_NAME, version: '1' } });
+  const row = page.locator('[data-part="agent-row"]');
+  await expect(row.locator('b')).toHaveText(AGENT_NAME);
+  await expect(row.locator('.live')).toHaveText(new RegExp(`^\\S+ · \\S+$`));
+  await expect(row.locator('.live')).not.toHaveClass(/\boff\b/);
+  await expect(row.locator('.live')).not.toHaveAttribute('title', /./);
   await expect(page.getByTestId('plan-card')).toHaveAttribute('data-plan', hash8(plan.hash as string));
   await expect(page.locator('[data-part-item="plan-history"]')).toHaveCount(3);
   await expect(page.locator('[data-part-item="plan-history"] .badge')).toHaveText([/./, /./, /./]);

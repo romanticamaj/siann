@@ -15,6 +15,14 @@
 // (SIANN_CLI_EXE); the app runs the real siann-engine (SIANN_ENGINE_EXE) on
 // the fake device under SIANN_SHELL_TEST=1. A second protocol client watches
 // the engine. Waits are Playwright condition waits, never sleeps.
+//
+// m5b-ui-plan-metadata (UI redesign 4.3, 4.4, 3.0): an MCP client named
+// mix-assistant heads the tab as the agent row (connected, idle, then its last
+// tool from agent.changed, disconnected after DELETE /v0/mcp); a plan's title
+// and intent lead its card, and the toast, the history rows and the banner
+// name it by its title; a rejection's note comes from plan.changed. Against
+// capabilities without features.planMetadata and features.agents the three
+// parts are absent and their boxes keep the zone's layout.
 
 import { expect, test, type ElectronApplication, type Page } from '@playwright/test';
 import { spawnSync } from 'node:child_process';
@@ -23,7 +31,7 @@ import * as os from 'node:os';
 import * as path from 'node:path';
 
 import { formatDb, formatMilliDb } from '../../src/renderer/format';
-import { planArrivedMessage } from '../../src/renderer/i18n/messages';
+import { planArrivedMessage, planArrivedTitledMessage } from '../../src/renderer/i18n/messages';
 import { translator } from '../../src/renderer/i18n/t';
 import { isolateName } from '../../src/renderer/plans/isolate';
 import { engineClient, type EngineClient } from './support/engine-client';
@@ -75,9 +83,18 @@ class Agent {
     return (await response.json()) as Record<string, unknown>;
   }
 
-  async initialize(): Promise<void> {
-    await this.rpc('initialize', { protocolVersion: '2025-06-18', capabilities: {}, clientInfo: { name: 'plan-review-e2e', version: '1' } });
+  async initialize(name = 'plan-review-e2e'): Promise<void> {
+    await this.rpc('initialize', { protocolVersion: '2025-06-18', capabilities: {}, clientInfo: { name, version: '1' } });
     expect(this.#session).toMatch(/^mcp_/);
+  }
+
+  // DELETE /v0/mcp ends the session: the agent reads disconnected.
+  async end(): Promise<void> {
+    const response = await fetch(`http://127.0.0.1:${this.port}/v0/mcp`, {
+      method: 'DELETE',
+      headers: { authorization: `Bearer ${this.token}`, 'mcp-session-id': this.#session },
+    });
+    expect(response.status).toBe(204);
   }
 
   async tool(name: string, args: Record<string, unknown>): Promise<Record<string, unknown>> {
@@ -88,10 +105,12 @@ class Agent {
   }
 }
 
+let bundle: string;
+
 test.beforeEach(async () => {
   if (!fs.existsSync(MAIN)) throw new Error(`${MAIN} is missing: run npm run build first`);
   scratch = fs.mkdtempSync(path.join(os.tmpdir(), 'siann-plans-'));
-  const bundle = path.join(scratch, 'sessions', 'Untitled.siann');
+  bundle = path.join(scratch, 'sessions', 'Untitled.siann');
   fs.mkdirSync(path.dirname(bundle), { recursive: true });
   cli('create', bundle, '--name', 'Plans', '--rate', '48000');
   for (const [id, name] of [
@@ -100,6 +119,10 @@ test.beforeEach(async () => {
   ]) {
     cli('exec', bundle, JSON.stringify({ op: 'track.add', trackId: id, name, channels: 2 }));
   }
+  await launch();
+});
+
+async function launch(extraEnv: Record<string, string> = {}): Promise<void> {
   app = await launchElectron({
     args: [MAIN],
     cwd: APP_DIR,
@@ -111,13 +134,20 @@ test.beforeEach(async () => {
       SIANN_SHELL_BACKOFF_MS: '50',
       SIANN_SHELL_TEST: '1',
       SIANN_ENGINE_TEST_ARGS: '--device fake',
+      ...extraEnv,
     },
   });
   page = await app.firstWindow();
   await expect(page.getByTestId('status')).toHaveAttribute('data-status', 'connected');
   await expect(page.getByTestId('about-track-count')).toHaveText('2');
   watcher = await engineClient(page, { events: true });
-});
+}
+
+async function relaunch(extraEnv: Record<string, string> = {}): Promise<void> {
+  watcher.close();
+  await app.close();
+  await launch(extraEnv);
+}
 
 test.afterEach(async () => {
   watcher?.close();
@@ -126,14 +156,14 @@ test.afterEach(async () => {
   scratch = '';
 });
 
-async function agent(): Promise<Agent> {
+async function agent(name?: string): Promise<Agent> {
   const ready = await app.evaluate(() => {
     const shell = (globalThis as unknown as { __siannShell: { current(): { port: number; mcpToken: string } | null } }).__siannShell;
     return shell.current();
   });
   if (!ready) throw new Error('the shell has no engine');
   const client = new Agent(ready.port, ready.mcpToken);
-  await client.initialize();
+  await client.initialize(name);
   return client;
 }
 
@@ -253,7 +283,11 @@ test("every id of the Plans tab is in the window, and no id of a pending part", 
   }
   await expect(page.locator('[data-part-item="plan-step"]')).toHaveCount(STEPS.length);
   await expect(page.locator('[data-part-item="plan-history"]')).toHaveCount(1);
-  for (const id of ['agent-row', 'plan-title', 'plan-intent', 'composer', 'tab-media', 'tab-meter']) {
+  // m5b-ui-plan-metadata: the engine lists features.agents and planMetadata;
+  // the plan has no intent, so its box is empty.
+  for (const id of ['agent-row', 'plan-title']) await expect(page.locator(`[data-region="right-zone"] [data-part="${id}"]`), id).toHaveCount(1);
+  await expect(page.locator('.plan-intent-empty')).toHaveCount(1);
+  for (const id of ['plan-intent', 'composer', 'tab-media', 'tab-meter']) {
     await expect(page.locator(`[data-part="${id}"]`), id).toHaveCount(0);
   }
   await expect(page.locator('[data-part^="plan-step-"][data-part$="-title"]')).toHaveCount(0);
@@ -420,4 +454,135 @@ test('a stale plan shows the stale badge, the reason in user units and a disable
   await expect(primary).toHaveAttribute('title', t('actionReason.stale'));
   await expect(page.getByTestId('plan-reject')).toBeEnabled();
   await expect(stateBadge(hash)).toHaveAttribute('data-state', 'validated');
+});
+
+// ---- m5b-ui-plan-metadata
+
+const TITLE = 'Lift the chorus';
+// The mockup's intent: two lines at the right zone's width.
+const INTENT = 'Add a pad under the chorus, bring the backing vocals forward and land the riser on the downbeat of bar 9.';
+
+const agentRow = () => page.locator('[data-region="right-zone"] [data-part="agent-row"]');
+
+// The requests the renderer sent so far (window.__siannClient, SIANN_SHELL_TEST=1).
+async function sentMethods(): Promise<string[]> {
+  return page.evaluate(() => {
+    const hook = (window as unknown as { __siannClient?: { sent(): ReadonlyArray<{ method: string }> } }).__siannClient;
+    if (!hook) throw new Error('window.__siannClient is missing (SIANN_SHELL_TEST=1)');
+    return hook.sent().map((r) => r.method);
+  });
+}
+
+// The boxes the absent parts must not move (UI redesign 3.0).
+async function rightBoxes(): Promise<Record<string, unknown>> {
+  const out: Record<string, unknown> = {};
+  out['right-tabs'] = await page.locator('[data-part="right-tabs"]').boundingBox();
+  out['p-scroll'] = await page.locator('[data-region="right-zone"] .p-scroll').boundingBox();
+  out['plan-summary'] = await page.locator('[data-part="plan-summary"]').boundingBox();
+  return out;
+}
+
+test('the agent row, the title and the intent: named, followed without a reload, and the plan named by its title everywhere', async () => {
+  await showPlans();
+  await expect(agentRow()).toHaveText(t('agent.none'));
+  const client = await agent('mix-assistant');
+  // initialize announces the agent (agent.changed): connected, idle.
+  await expect(agentRow().locator('b')).toHaveText('mix-assistant');
+  await expect(agentRow().locator('span').nth(1)).toHaveText('mix-assistant · MCP');
+  await expect(agentRow().locator('.live')).toHaveText(`${t('agent.connected')} · ${t('agent.idle')}`);
+  await expect(agentRow()).toHaveCSS('white-space', 'nowrap');
+
+  const first = (await client.tool('submit_plan', { steps: STEPS, title: TITLE, intent: INTENT })).hash as string;
+  await expect(page.getByTestId('toast-message')).toHaveText(planArrivedTitledMessage('en', { title: isolateName(TITLE) }));
+  // The last tool, in user wording, without a reload; the time in the tooltip.
+  await expect(agentRow().locator('.live')).toHaveText(`${t('agent.connected')} · ${t('agent.tool.submit_plan')}`);
+  expect(await agentRow().locator('.live').getAttribute('title')).toBeTruthy();
+  await selectPlan(page, first);
+  await expect(page.locator('[data-part="plan-title"]')).toHaveText(TITLE);
+  await expect(page.locator('[data-part="plan-intent"]')).toHaveText(INTENT);
+
+  // A second plan: the first becomes a history row titled by its title.
+  const second = (await client.tool('submit_plan', { steps: STEPS.slice(1, 3), title: 'Tame the low end' })).hash as string;
+  await selectPlan(page, second);
+  await expect(page.getByTestId(`plan-${hash8(first)}`).locator('b')).toHaveText(TITLE);
+  await expect(page.getByTestId(`plan-${hash8(first)}`).locator('small')).toContainText('mix-assistant');
+  await expect(page.locator('[data-part="plan-title"]')).toHaveText('Tame the low end');
+  await expect(page.locator('[data-part="plan-intent"]')).toHaveCount(0);
+  await expect(page.locator('.plan-intent-empty')).toHaveCount(1);
+
+  // Reject with a note: the card shows the note from plan.changed, with no plan.status or plan.list.
+  const before = (await sentMethods()).length;
+  await page.getByTestId('plan-reject').click();
+  await page.getByTestId('plan-note').fill('Keep the riser');
+  await page.keyboard.press('Enter');
+  await expect(stateBadge(second)).toHaveAttribute('data-state', 'rejected');
+  await expect(page.getByTestId(`plan-reason-${hash8(second)}`)).toHaveText(t('history.rejected', { note: isolateName('Keep the riser') }));
+  const after = (await sentMethods()).slice(before);
+  expect(after.filter((m) => m === 'plan.status' || m === 'plan.list')).toEqual([]);
+
+  // Audition the first: the banner names it by its title.
+  await selectPlan(page, first);
+  await page.getByTestId('plan-audition').click();
+  await expect(page.getByTestId('audition-banner')).toBeVisible();
+  await expect(page.locator('.audition-banner-text')).toHaveText(t('banner.hearingTitled', { title: isolateName(TITLE) }));
+  await page.getByTestId('banner-hear-main').click();
+  await expect(page.getByTestId('hear-main')).toHaveAttribute('aria-pressed', 'true');
+
+  // DELETE /v0/mcp: the row reads disconnected.
+  await client.end();
+  await expect(agentRow().locator('.live')).toHaveText(new RegExp(`^${t('agent.disconnected')} · `));
+  await expect(agentRow().locator('b')).toHaveText('mix-assistant');
+});
+
+test('without features.planMetadata and features.agents the parts are absent, their boxes keep the layout, and plans are named as in M5', async () => {
+  await showPlans();
+  // The full run: a titled plan with a two-line intent.
+  const full = await agent('mix-assistant');
+  const titled = (await full.tool('submit_plan', { steps: STEPS, title: TITLE, intent: INTENT })).hash as string;
+  await selectPlan(page, titled);
+  await expect(page.locator('[data-part="plan-intent"]')).toHaveText(INTENT);
+  const intentBox = (await page.locator('[data-part="plan-intent"]').boundingBox())!;
+  const lineHeight = await page.locator('[data-part="plan-intent"]').evaluate((el) => parseFloat(getComputedStyle(el).lineHeight));
+  expect(Math.round(intentBox.height / lineHeight)).toBe(2);
+  const boxes = await rightBoxes();
+  // A plan without an intent keeps the chips at the same y.
+  const bare = (await full.tool('submit_plan', { steps: STEPS, title: 'No intent' })).hash as string;
+  await selectPlan(page, bare);
+  await expect(page.locator('.plan-intent-empty')).toHaveCount(1);
+  expect((await page.locator('[data-part="plan-summary"]').boundingBox())!.y).toBeCloseTo((boxes['plan-summary'] as { y: number }).y, 0);
+
+  // The engine's own answer without the two features.
+  const capabilities = (await watcher.call('engine.capabilities')) as { features: Record<string, unknown> };
+  const reduced = { ...capabilities, features: Object.fromEntries(Object.entries(capabilities.features).filter(([name]) => !['planMetadata', 'agents'].includes(name))) };
+  const file = path.join(scratch, 'capabilities-without-plan-metadata.json');
+  fs.writeFileSync(file, JSON.stringify(reduced));
+  await relaunch({ SIANN_TEST_CAPABILITIES: file });
+  await showPlans();
+  const client = await agent('mix-assistant');
+  const first = (await client.tool('submit_plan', { steps: STEPS, title: TITLE, intent: INTENT })).hash as string;
+  await expect(page.getByTestId('toast-message')).toHaveText(planArrivedMessage('en', { steps: STEPS.length }));
+  await selectPlan(page, first);
+  for (const id of ['agent-row', 'plan-title', 'plan-intent']) await expect(page.locator(`[data-part="${id}"]`), id).toHaveCount(0);
+  for (const cls of ['agent-row-empty', 'plan-title-empty', 'plan-intent-empty']) {
+    const box = page.locator(`.${cls}`);
+    await expect(box, cls).toHaveCount(1);
+    await expect(box).toHaveAttribute('aria-hidden', 'true');
+    expect(await box.getAttribute('role')).toBeNull();
+    expect(await box.getAttribute('tabindex')).toBeNull();
+    expect(await box.getAttribute('data-part')).toBeNull();
+    await expect(box).toHaveText('');
+  }
+  // The space stays: the same boxes as the full run's titled plan.
+  expect(await rightBoxes()).toEqual(boxes);
+  await expect(page.locator('[data-region="right-zone"]')).not.toContainText(TITLE);
+  await expect(page.locator('[data-region="right-zone"]')).not.toContainText('mix-assistant');
+  // The history row and the banner use the first step and "N steps".
+  const second = (await client.tool('submit_plan', { steps: STEPS.slice(1, 3), title: 'Tame the low end' })).hash as string;
+  await selectPlan(page, second);
+  await expect(page.getByTestId(`plan-${hash8(first)}`).locator('b')).toHaveText(`Add track ${isolateName('Pad')}`);
+  await expect(page.getByTestId(`plan-${hash8(first)}`).locator('small')).toContainText(t('plans.steps', { count: STEPS.length }));
+  await selectPlan(page, first);
+  await page.getByTestId('plan-audition').click();
+  await expect(page.locator('.audition-banner-text')).toContainText(t('plans.steps', { count: STEPS.length }));
+  await expect(page.locator('.audition-banner-text')).not.toContainText(TITLE);
 });

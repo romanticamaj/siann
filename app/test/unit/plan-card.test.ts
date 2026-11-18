@@ -13,6 +13,7 @@ import assert from 'node:assert/strict';
 import { formatMilliDb } from '../../src/renderer/format';
 import { relativeTime, translator } from '../../src/renderer/i18n/t';
 import { LOCALES } from '../../src/renderer/i18n/locale';
+import { capabilitySelector } from '../../src/renderer/model/capabilities';
 import { planEntry, type PlanEntry } from '../../src/renderer/model/plan-store';
 import { cardOf, staleReasons } from '../../src/renderer/plans/card';
 import { namesFromSnapshot, type StepNames } from '../../src/renderer/plans/describe';
@@ -258,4 +259,46 @@ test('"Earlier" and "N plans" in every locale, with plurals; zh-Hant is the mock
   // The mockup's rejected row, in its own words around the agent's note.
   const [, rejected] = historyOf(mockupPlans(), PENDING, NOW, new Map(), 'zh-Hant', MOCKUP_NAMES);
   assert.equal(rejected!.detail, zh['“Too wide for the verse — keep it mono.” · sent to agent']!.replace('主歌聽起來太寬，維持單聲道。', n(NOTE)));
+});
+
+// m5b-ui-plan-metadata (UI redesign 4.3, 10.7, 3): with features.planMetadata
+// a history row is titled by its plan's title and an agent's plan names the
+// agent in its detail, as the mockup's rows read; without it, M5's rows.
+const FULL_CAN = capabilitySelector({ methods: ['plan.list'], features: { planMetadata: true, agents: true } });
+const REDUCED_CAN = capabilitySelector({ methods: ['plan.list'], features: {} });
+
+test('history rows with plan metadata: the title, and "N steps · <agent> · time" for an agent\'s plan', () => {
+  const plans = mockupPlans();
+  const firstSeen = new Map([[APPLIED, NOW - 3_600_000]]);
+  const rows = historyOf(plans, PENDING, NOW, firstSeen, 'en', MOCKUP_NAMES, FULL_CAN);
+  assert.deepEqual(rows.map((r) => r.title), ['Tame the low end', 'Double the lead vocal', 'Trim silence on drums']);
+  assert.deepEqual(rows.map((r) => [r.detailKind, r.detail]), [
+    ['summary', `4 steps · ${n('mix-assistant')} · 1 hour ago`],
+    ['reason', `“${n(NOTE)}” · sent to agent`],
+    ['summary', `1 step · ${n('mix-assistant')}`],
+  ]);
+  // The mockup's zh-TW row: 4 個步驟 · mix-assistant · 1 小時前.
+  const [applied] = historyOf(plans, PENDING, NOW, firstSeen, 'zh-Hant', MOCKUP_NAMES, FULL_CAN);
+  assert.equal(applied!.detail.replace(/[⁨⁩]/g, ''), mockupZh()['4 steps · mix-assistant · 1 h ago · Roll back']!.replace(' · 回復', ''));
+  // A plan the UI submitted names no agent.
+  const ui = plan(H('9'), 'validated', { title: 'By hand', actor: { kind: 'ui', name: 'SIANN' } });
+  const [row] = historyOf([ui, plan(H('8'), 'validated')], H('8'), NOW, new Map(), 'en', NAMES, FULL_CAN);
+  assert.equal(row!.title, 'By hand');
+  assert.equal(row!.detail, '5 steps');
+  // An untitled plan keeps its first step.
+  const [untitled] = historyOf([plan(H('7'), 'validated'), plan(H('8'), 'validated')], H('8'), NOW, new Map(), 'en', NAMES, FULL_CAN);
+  assert.equal(untitled!.title, `Set ${n('Keys')} volume to ${formatMilliDb(-3000)}`);
+});
+
+test('history rows without features.planMetadata: M5\'s titles and detail even for titled plans', () => {
+  const plans = mockupPlans();
+  const firstSeen = new Map([[APPLIED, NOW - 3_600_000]]);
+  const rows = historyOf(plans, PENDING, NOW, firstSeen, 'en', MOCKUP_NAMES, REDUCED_CAN);
+  assert.deepEqual(rows.map((r) => r.title), [`Set ${n('Kick')} volume to ${formatMilliDb(0)}`, `Pan ${n('Vox Lead')} to R30`, `Set ${n('Kick')} volume to ${formatMilliDb(-1000)}`]);
+  assert.deepEqual(rows.map((r) => r.detail)[0], '4 steps · 1 hour ago');
+});
+
+test('a rejected plan\'s card shows the note it carries', () => {
+  const rejected = plan(H('3'), 'rejected', { rejectionNote: 'Keep the riser' });
+  assert.equal(cardOf(rejected, [rejected], null, NOW, undefined, 'en', NAMES).reason, 'Keep the riser');
 });

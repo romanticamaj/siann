@@ -390,9 +390,6 @@ test('the Plans tab\'s absent parts keep their boxes through hold tokens applied
   const shell = read('app', 'renderer', 'shell.css');
   // The part, its sides, and whether a value is set again per Chinese locale.
   const holds = {
-    'agent-row': [['h'], false],
-    'plan-title': [['h'], false],
-    'plan-intent': [['h'], false],
     composer: [['h'], false],
     'tab-media': [['w'], true],
     'tab-meter': [['w'], true],
@@ -638,7 +635,9 @@ test('the tools M5b leaves out, the master\'s mute, rack and e, and the strips\'
 test('the Plans tab masks only what M5 cannot derive, and each mask names the feature that removes it', () => {
   const dynamic = MANIFEST.pixels.dynamic;
   const masked = (id) => dynamic.some((pattern) => glob(pattern).test(id));
-  for (const id of ['plan-history-1', 'plan-history-2', 'plan-history-3', 'plan-step-2-title', 'plan-step-6-title']) assert.ok(masked(id), `${id} is masked`);
+  for (const id of ['plan-step-2-title', 'plan-step-6-title']) assert.ok(masked(id), `${id} is masked`);
+  // m5b-ui-plan-metadata shows the titles and the agent's name: the history rows are compared.
+  for (const id of ['plan-history-1', 'plan-history-2', 'plan-history-3']) assert.ok(!masked(id), `${id} is compared`);
   // Derived in M5, so compared: the summary chips, the approve button, the steps, the history head.
   for (const id of ['plan-summary', 'plan-approve', 'plan-step-2', 'plan-step-3', 'plan-steps-head', 'plan-history-head', 'plan-card', 'plan-badge']) {
     assert.ok(!masked(id), `${id} is compared`);
@@ -1222,4 +1221,31 @@ test('the rules, the runbook and the test matrix describe the component port as 
   // Spec 10.10 records that P1-17 landed.
   const s1010 = spec.slice(spec.indexOf('\n### 10.10 '));
   assert.match(s1010, /P1-17 \(`m5-ui-port-cleanup`\) landed/);
+});
+
+// ---- m5b-ui-plan-metadata: the agent row, the plan's title and intent
+
+test("the plan metadata's gate is report, its holds are gone, and shell.css sizes its empty boxes by calc() of tokens", () => {
+  assert.equal(MANIFEST.gates['m5b-ui-plan-metadata'], 'report');
+  for (const id of ['agent-row', 'plan-title', 'plan-intent']) assert.equal(ruleOf(id).gate, 'm5b-ui-plan-metadata', id);
+  const tokens = read('app', 'renderer', 'tokens.css');
+  for (const hold of ['--hold-agent-row-h', '--hold-plan-title-h', '--hold-plan-intent-h']) assert.ok(!tokens.includes(hold), `${hold} is deleted`);
+  const shell = read('app', 'renderer', 'shell.css').replace(/\/\*[\s\S]*?\*\//g, '');
+  for (const old of ['.hold-agent-row', '.hold-plan-title', '.hold-plan-intent']) assert.ok(!shell.includes(old), `no ${old} rule`);
+  const heights = {
+    'agent-row-empty': /^calc\(\s*2 \* var\(--space-2\) \+ var\(--agent-avatar\) \+ var\(--hairline\)\s*\)$/,
+    'plan-title-empty': /^calc\(\s*var\(--space-2\) \+ var\(--space\) \+ 1\.3 \* var\(--fs-plan\)\s*\)$/,
+    'plan-intent-empty': /^calc\(\s*2 \* 1\.45 \* var\(--fs-11h\)\s*\)$/,
+  };
+  for (const [cls, want] of Object.entries(heights)) {
+    const rule = new RegExp(`\\.${cls}\\s*\\{([^}]*)\\}`).exec(shell);
+    assert.ok(rule, `shell.css has a .${cls} rule of its own`);
+    const height = /(?:^|;)\s*height:\s*([^;]+)/.exec(rule[1])?.[1].trim();
+    assert.match(height ?? '', want, `.${cls}'s height`);
+    assert.doesNotMatch(rule[1], /\d(px|rem|em)|--hold-/, `.${cls} names tokens only`);
+  }
+  // A shorter intent keeps the two lines, so the chips do not move.
+  assert.match(shell, /\.card-h p\[data-part="plan-intent"\]\s*\{[^}]*min-height:\s*calc\(\s*2 \* 1\.45 \* var\(--fs-11h\)\s*\)/);
+  // The history rows are unmasked (UI redesign 10.7, 3).
+  assert.ok(!MANIFEST.pixels.dynamic.some((pattern) => /plan-history/.test(pattern)), 'no plan-history mask');
 });

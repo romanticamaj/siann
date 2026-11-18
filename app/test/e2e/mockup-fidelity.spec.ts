@@ -346,6 +346,8 @@ for (const [locale, setting] of Object.entries(MANIFEST.locales)) {
     const mockupParts = measured.parts;
     const mockupShot = measured.shot;
     if (!mockupParts || !mockupShot) throw new Error('the mockup was not measured');
+    // m5b-ui-plan-metadata's parts are in the window (the agent row, the plan's title and intent).
+    for (const id of ['agent-row', 'plan-title', 'plan-intent']) await expect(page.locator(`[data-part="${id}"]`), id).toHaveCount(1);
     const appParts = await collectApp(page);
     const appShot = await page.screenshot();
     fs.writeFileSync(path.join(dir, 'mockup.png'), mockupShot);

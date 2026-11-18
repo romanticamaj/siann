@@ -153,6 +153,15 @@ export class Agent {
     return (await response.json()) as Record<string, unknown>;
   }
 
+  // DELETE /v0/mcp ends the session (m5b-engine-plan-metadata): the agent reads disconnected.
+  async end(): Promise<void> {
+    const response = await fetch(`http://127.0.0.1:${this.port}/v0/mcp`, {
+      method: 'DELETE',
+      headers: { authorization: `Bearer ${this.token}`, 'mcp-session-id': this.#session },
+    });
+    expect(response.status).toBe(204);
+  }
+
   async tool(name: string, args: Record<string, unknown>): Promise<Record<string, unknown>> {
     const reply = await this.rpc('tools/call', { name, arguments: args });
     const result = reply.result as { isError: boolean; structuredContent: Record<string, unknown> };
