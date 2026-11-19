@@ -16,7 +16,10 @@
 //   recording), one command.execute of track.set_input or track.set_monitor
 //   per choice, record.recover_take for Keep and Discard. Nothing is
 //   optimistic. It says why a control is disabled (armBlock, recordBlock,
-//   inputBlock) and sends nothing then; a refusal becomes one toast.
+//   inputBlock) and sends nothing then; a refusal becomes one toast. While
+//   the edit guard holds (a proposal is heard; UI redesign 4.5 C5; 10.11, 22)
+//   starting Record, the input, the monitor and Keep send nothing; a stop,
+//   record enable and Discard commit nothing onto main and go.
 // - bindRecordCommands registers R (the selected track, project zone) and Num *
 //   / Ctrl+Shift+R (window); each declines when it would send nothing.
 // Framework-free.
@@ -222,8 +225,9 @@ export function recordGates(can: CapabilitySelector): RecordGates {
 }
 
 export type ArmBlock = 'disconnected' | 'noDevice' | 'noInput' | 'noTrackInput' | 'inputUnavailable' | 'recording';
-export type RecordBlock = 'disconnected' | 'noDevice' | 'noInput' | 'nothingArmed';
-export type InputBlock = 'recording';
+// `guard`: a proposal is heard (the edit guard, UI redesign 4.5 C5; 10.11, 22).
+export type RecordBlock = 'disconnected' | 'guard' | 'noDevice' | 'noInput' | 'nothingArmed';
+export type InputBlock = 'recording' | 'guard';
 
 export interface RecordToasts {
   push(text: string, reword?: (locale: Locale) => string): number;
@@ -239,6 +243,10 @@ export interface RecordControllerOptions {
   readonly locale: () => Locale;
   // A transport method's result, for the transport state (cycle, click, punch ...).
   readonly onTransportResult?: (result: unknown) => void;
+  // True while the edit guard holds (a proposal is heard; model/edit-guard.ts):
+  // starting Record, the input, the monitor and Keep commit onto main and send
+  // nothing then. A stop, record enable and Discard commit nothing onto main.
+  readonly blocked?: () => boolean;
 }
 
 export class RecordController {
@@ -270,6 +278,11 @@ export class RecordController {
 
   recording(): boolean {
     return this.store.getSnapshot()?.recording === true;
+  }
+
+  // True while the edit guard holds (a proposal is heard).
+  guarded(): boolean {
+    return this.#options.blocked?.() === true;
   }
 
   isArmed(trackId: string): boolean {
@@ -312,16 +325,18 @@ export class RecordController {
   recordBlock(): RecordBlock | null {
     if (this.#options.client.getState().status !== 'connected') return 'disconnected';
     if (this.recording()) return null;
+    if (this.guarded()) return 'guard';
     const device = this.#deviceBlock();
     if (device) return device;
     if ((this.store.getSnapshot()?.armed.length ?? 0) === 0) return 'nothingArmed';
     return null;
   }
 
-  // Why the input cannot change now (a track being recorded keeps it: track_recording).
+  // Why the input cannot change now (a track being recorded keeps it: track_recording; the edit guard).
   inputBlock(trackId: string): InputBlock | null {
     const state = this.store.getSnapshot();
     if (state?.recording && (state.armed.includes(trackId) || state.takes.some((t) => t.trackId === trackId && t.endedBy === null))) return 'recording';
+    if (this.guarded()) return 'guard';
     return null;
   }
 
@@ -349,7 +364,7 @@ export class RecordController {
   }
 
   toggleMonitor(trackId: string): boolean {
-    if (!this.gates().monitor) return false;
+    if (!this.gates().monitor || this.guarded()) return false;
     const track = this.#track(trackId);
     if (!track) return false;
     void this.#execute([{ op: 'track.set_monitor', trackId, monitor: nextMonitor(monitorOf(track)) }]);
@@ -372,7 +387,9 @@ export class RecordController {
   }
 
   // Keep (accept) or Discard a pending take; resolves true when the engine took it.
+  // Keep commits the take onto main, so the edit guard holds it.
   async recoverTake(takeId: string, accept: boolean): Promise<boolean> {
+    if (accept && this.guarded()) return false;
     const ok = await this.#request('record.recover_take', { takeId, accept });
     if (ok) {
       this.#decided.add(takeId);

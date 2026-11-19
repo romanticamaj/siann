@@ -392,8 +392,8 @@ test('while a proposal is heard Record, the In selector, the monitor and Keep ar
   const monitor = find(inspector, byAttr('data-part', 'inspector-monitor'));
   assert.ok('disabled' in monitor.attrs, 'the monitor');
   assert.equal(monitor.attrs.title, reason);
-  // Record enable is engine state: it arms as before, on the header, the strip and the Inspector.
-  for (const [what, root, id] of [['header', headers, 'track-record-trk_b'], ['strip', mixer, 'strip-record-trk_b']] as const) {
+  // Record enable is engine state: it arms and disarms as before, on the header, the strip and the Inspector.
+  for (const [what, root, id] of [['header', headers, 'track-record-trk_a'], ['strip', mixer, 'strip-record-trk_a']] as const) {
     const enable = find(root, byTestId(id));
     assert.ok(!('aria-disabled' in enable.attrs) && !('disabled' in enable.attrs), what);
   }

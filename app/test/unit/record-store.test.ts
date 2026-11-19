@@ -448,8 +448,8 @@ test('the edit guard (4.5 C5; 10.11, 22): while a proposal is heard starting Rec
   const off = bindRecordCommands(commands, r.controller, { selectedTrack: () => 'trk_2' });
   assert.equal(commands.run('window', 'transport.record'), false, 'Num * and Ctrl+Shift+R decline');
   await settle();
-  assert.deepEqual(r.sent, []);
-  assert.deepEqual(r.toasts, []);
+  assert.equal(r.sent.length, 0, 'nothing sent');
+  assert.equal(r.toasts.length, 0, 'no toast');
   // Record enable is engine state (no revision holds it), and Discard moves files to the trash: both go.
   assert.equal(r.controller.armBlock('trk_2'), 'noTrackInput');
   assert.equal(r.controller.toggleArm('trk_1'), true);

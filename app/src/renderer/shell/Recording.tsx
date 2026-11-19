@@ -26,17 +26,24 @@
 //   the engine's state and sending its transport method.
 // - PendingTakes: a native dialog listing the pending takes with Keep and
 //   Discard per take (record.recover_take).
+//
+// The edit guard (UI redesign 4.5 C5; 10.11, 22): while a proposal is heard
+// Record (a start; a stop stays), the In selector, the monitor and Keep are
+// disabled with the guard's reason (useEditGuard); record enable and Discard
+// commit nothing onto main and stay.
 
 import { useEffect, useRef, useState, useSyncExternalStore, type KeyboardEvent, type MouseEvent } from 'react';
 
 import type { MessageKey } from '../i18n/en';
 import { useT, type T } from '../i18n/t';
 import type { TrackEntity } from '../model/document';
+import { GUARD_REASON } from '../model/edit-guard';
 import { inputLabel, inputPorts, portKey, portOfKey } from '../model/input-ports';
 import { clampBars, MAX_BARS, MIN_BARS, type LoopClickController, type TransportState } from '../model/loop-click';
 import type { PendingTake } from '../model/pending-takes';
 import { monitorOf, type ArmBlock, type RecordBlock, type RecordController } from '../model/record';
 import type { SessionClient } from '../model/session-client';
+import { useEditGuard } from '../plans/heard-context';
 import { formatPosition } from '../timeline/transport-time';
 import { Icon } from './icons';
 import { useRecordValue, type RecordHost } from './record-context';
@@ -52,6 +59,7 @@ const ARM_REASONS: Readonly<Record<ArmBlock, MessageKey>> = {
 
 const RECORD_REASONS: Readonly<Record<RecordBlock, MessageKey>> = {
   disconnected: 'error.disconnected',
+  guard: GUARD_REASON,
   noDevice: 'record.reason.noDevice',
   noInput: 'record.reason.noInput',
   nothingArmed: 'record.reason.nothingArmed',
@@ -95,6 +103,7 @@ export function RecordEnable({ host, track, testId, partOf, part }: RecordEnable
 
 export function MonitorButton({ host, track }: { host: RecordHost; track: TrackEntity }) {
   const t = useT();
+  const guard = useEditGuard();
   const mode = monitorOf(track);
   const on = mode !== 'off';
   return (
@@ -105,7 +114,8 @@ export function MonitorButton({ host, track }: { host: RecordHost; track: TrackE
       data-part="inspector-monitor"
       aria-pressed={on}
       aria-label={t('monitor.label', { track: track.name })}
-      title={t('monitor.tooltip', { mode: t(mode === 'input' ? 'monitor.mode.input' : mode === 'auto' ? 'monitor.mode.auto' : 'monitor.mode.off') })}
+      disabled={guard !== null}
+      title={guard ?? t('monitor.tooltip', { mode: t(mode === 'input' ? 'monitor.mode.input' : mode === 'auto' ? 'monitor.mode.auto' : 'monitor.mode.off') })}
       onClick={() => host.controller.toggleMonitor(track.id)}
     >
       <Icon name="mon" small />
@@ -116,7 +126,9 @@ export function MonitorButton({ host, track }: { host: RecordHost; track: TrackE
 export function InputRow({ host, track }: { host: RecordHost; track: TrackEntity }) {
   const t = useT();
   const open = useRecordValue<number | null>(host, (c) => c.openChannels(), null);
-  const blocked = useRecordValue(host, (c) => c.inputBlock(track.id) !== null, false);
+  const guard = useEditGuard();
+  const recording = useRecordValue(host, (c) => c.inputBlock(track.id) === 'recording', false);
+  const blocked = recording || guard !== null;
   const current = track.input ?? null;
   const ports = inputPorts(open ?? 0);
   const currentKey = portKey(current);
@@ -135,7 +147,7 @@ export function InputRow({ host, track }: { host: RecordHost; track: TrackEntity
           aria-label={t('input.select', { track: track.name })}
           value={currentKey}
           disabled={blocked}
-          title={blocked ? t('input.reason.recording') : undefined}
+          title={recording ? t('input.reason.recording') : (guard ?? undefined)}
           onChange={(event) => host.controller.setInput(track.id, portOfKey(event.currentTarget.value))}
         >
           <option value="none">{t('input.none')}</option>
@@ -171,7 +183,10 @@ export interface RecordButtonProps {
 export function RecordButton({ host, loopClick, onStudioSetup }: RecordButtonProps) {
   const t = useT();
   const recording = useRecordValue(host, (c) => c.recording(), false);
-  const block = useRecordValue<RecordBlock | null>(host, (c) => c.recordBlock(), null);
+  const read = useRecordValue<RecordBlock | null>(host, (c) => c.recordBlock(), null);
+  // The edit guard holds a start, never a stop (10.11, 22).
+  const guard = useEditGuard();
+  const block: RecordBlock | null = guard !== null && !recording && read !== 'disconnected' ? 'guard' : read;
   const options = useSyncExternalStore(
     (listener) => loopClick.state.subscribe(listener),
     () => optionsOn(loopClick.state.getSnapshot(), t).join(', '),
@@ -355,6 +370,8 @@ const DEFAULT_RATE = 48000;
 // with Decide later (or Escape) until the next connection lists them again.
 export function PendingTakes({ controller, client }: PendingTakesProps) {
   const t = useT();
+  // Keep commits onto main: the edit guard holds it; Discard moves the files to the trash and stays.
+  const guard = useEditGuard();
   const ref = useRef<HTMLDialogElement | null>(null);
   const read = () => controller.pendingTakes().map((take) => take.takeId).join(' ');
   const ids = useSyncExternalStore((listener) => controller.subscribePending(listener), read, read);
@@ -402,7 +419,7 @@ export function PendingTakes({ controller, client }: PendingTakesProps) {
         {takes.map((take) => (
           <li key={take.takeId} className="pending-take" data-testid={`pending-take-${take.takeId}`}>
             <span className="pending-take-name">{t('pending.take', { track: name(take.trackId), position: position(take.startFrame) })}</span>
-            <button type="button" data-testid={`pending-take-keep-${take.takeId}`} aria-label={t('pending.keepLabel', { track: name(take.trackId) })} disabled={busy !== null || take.startFrame === null} onClick={() => void decide(take.takeId, true)}>
+            <button type="button" data-testid={`pending-take-keep-${take.takeId}`} aria-label={t('pending.keepLabel', { track: name(take.trackId) })} disabled={busy !== null || take.startFrame === null || guard !== null} title={guard ?? undefined} onClick={() => void decide(take.takeId, true)}>
               {t('pending.keep')}
             </button>
             <button type="button" className="danger" data-testid={`pending-take-discard-${take.takeId}`} aria-label={t('pending.discardLabel', { track: name(take.trackId) })} disabled={busy !== null} onClick={() => void decide(take.takeId, false)}>

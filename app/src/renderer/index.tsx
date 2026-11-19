@@ -255,6 +255,8 @@ const recordController = new RecordController({
   toasts,
   locale: () => locales.getSnapshot(),
   onTransportResult: (result) => transportState.apply(result),
+  // The edit guard (UI redesign 4.5 C5): starting Record, the input, the monitor and Keep wait for main.
+  blocked: () => structuralBlocked(plans.getSnapshot().heard),
 });
 const record = { controller: recordController, status: engineStatus };
 const powerBridge = bridge?.power;
