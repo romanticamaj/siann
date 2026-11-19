@@ -33,14 +33,18 @@ import type { TrackEntity } from '../../src/renderer/model/document';
 import { parseEngineStatus, type EngineStatus } from '../../src/renderer/model/engine-status';
 import type { GestureController } from '../../src/renderer/model/gesture-controller';
 import { LoopClickController, TransportStateStore } from '../../src/renderer/model/loop-click';
+import { structuralBlocked } from '../../src/renderer/model/edit-guard';
 import type { MeterLegend } from '../../src/renderer/model/meter-frames';
+import type { PendingTake } from '../../src/renderer/model/pending-takes';
 import type { ReadModel, Snapshot } from '../../src/renderer/model/read-model';
 import type { RealtimeClient } from '../../src/renderer/model/realtime-client';
 import { RecordController, RecordStore, type RecordState } from '../../src/renderer/model/record';
 import { SessionClient, type ClientState, type EventMessage } from '../../src/renderer/model/session-client';
 import { TransportController } from '../../src/renderer/model/transport';
 import { CapabilitiesContext } from '../../src/renderer/shell/Capable';
+import { HeardContext } from '../../src/renderer/plans/heard-context';
 import { Inspector } from '../../src/renderer/shell/Inspector';
+import { PendingTakes } from '../../src/renderer/shell/Recording';
 import { createLayoutStore } from '../../src/renderer/shell/layout-store';
 import { RecordContext, type RecordHost } from '../../src/renderer/shell/record-context';
 import { ToastStore } from '../../src/renderer/shell/toast-store';
@@ -63,9 +67,9 @@ const WITH_INPUT = parseEngineStatus({ device: DEVICE, xruns: '0' });
 const vox = (): TrackEntity => ({ ...track('trk_a'), name: 'Vox Lead', channels: 1, input: { port: 0, channels: 1 } });
 const keys = (): TrackEntity => ({ ...track('trk_b'), name: 'Keys', monitor: 'input' } as TrackEntity);
 
-function host(snapshot: Snapshot, caps: Capabilities | null, state: RecordState | null, status: EngineStatus | null = WITH_INPUT): RecordHost {
+function host(snapshot: Snapshot, caps: Capabilities | null, state: RecordState | null, status: EngineStatus | null = WITH_INPUT, blocked?: () => boolean, pendingTakes: readonly PendingTake[] = []): RecordHost {
   const events = new Map<string, Set<(event: EventMessage) => void>>();
-  const clientState = { status: 'connected', capabilities: caps, connections: 1, syncCount: 1, pendingTakes: [] } as unknown as ClientState;
+  const clientState = { status: 'connected', capabilities: caps, connections: 1, syncCount: 1, pendingTakes } as unknown as ClientState;
   const client = {
     request: async () => ({}),
     execute: async () => ({}),
@@ -88,6 +92,7 @@ function host(snapshot: Snapshot, caps: Capabilities | null, state: RecordState 
     capabilities: () => capabilitySelector(caps),
     toasts: { push: () => 0 },
     locale: () => 'en',
+    ...(blocked ? { blocked } : {}),
   });
   return { controller, status: statusSource };
 }
@@ -106,6 +111,8 @@ interface Options {
   caps?: Capabilities;
   state?: RecordState | null;
   status?: EngineStatus | null;
+  // The side heard (HeardContext; the edit guard holds while it is a branch).
+  heard?: string;
 }
 
 const ARMED: RecordState = { recording: false, armed: ['trk_a'], takes: [] };
@@ -115,12 +122,15 @@ function renderZones(options: Options = {}): { headers: Element; mixer: Element;
   const tracks = [vox(), keys()];
   const snap = snapshotOf(tracks.map((t) => t.id), tracks, [], []);
   const client = fakeClient(snap, caps);
-  const recordHost = host(snap, caps, options.state === undefined ? ARMED : options.state, options.status === undefined ? WITH_INPUT : options.status);
+  const heard = options.heard ?? null;
+  const recordHost = host(snap, caps, options.state === undefined ? ARMED : options.state, options.status === undefined ? WITH_INPUT : options.status, () => structuralBlocked(heard));
   const wrap = (node: ReactNode) =>
     parse(
       renderToStaticMarkup(
         <CapabilitiesContext.Provider value={caps}>
-          <RecordContext.Provider value={recordHost}>{node}</RecordContext.Provider>
+          <RecordContext.Provider value={recordHost}>
+            <HeardContext.Provider value={heard}>{node}</HeardContext.Provider>
+          </RecordContext.Provider>
         </CapabilitiesContext.Provider>,
       ),
     );
@@ -157,12 +167,15 @@ function renderTransport(options: Options = {}): Element {
   });
   const transport = new TransportController({ client: session, playing: () => false, toasts: new ToastStore({ schedule: () => () => undefined }), locale: () => 'en' });
   const snap = snapshotOf(['trk_a'], [vox()], [], []);
-  const recordHost = host(snap, caps, options.state === undefined ? ARMED : options.state, status);
+  const heard = options.heard ?? null;
+  const recordHost = host(snap, caps, options.state === undefined ? ARMED : options.state, status, () => structuralBlocked(heard));
   return parse(
     renderToStaticMarkup(
       <CapabilitiesContext.Provider value={caps}>
         <RecordContext.Provider value={recordHost}>
-          <Transport client={session} realtime={null} engineStatus={{ getSnapshot: () => status, subscribe: () => () => undefined }} layout={createLayoutStore({ storage: null })} commands={new CommandRegistry()} transport={transport} loopClick={loopClick} onStudioSetup={() => undefined} />
+          <HeardContext.Provider value={heard}>
+            <Transport client={session} realtime={null} engineStatus={{ getSnapshot: () => status, subscribe: () => () => undefined }} layout={createLayoutStore({ storage: null })} commands={new CommandRegistry()} transport={transport} loopClick={loopClick} onStudioSetup={() => undefined} />
+          </HeardContext.Provider>
         </RecordContext.Provider>
       </CapabilitiesContext.Provider>,
     ),
@@ -364,4 +377,55 @@ test('an engine without track.set_monitor or features.monitoring has no monitor;
   const buttons = find(inspector, byClass('i-btns'));
   assert.ok(elements(buttons)[2]!.attrs['data-part'] === 'inspector-record');
   assertEmptyBox(elements(buttons)[3]!, 'the monitor box');
+});
+
+test('while a proposal is heard Record, the In selector, the monitor and Keep are disabled with the guard\'s reason; record enable and Discard are not (4.5 C5; 10.11, 22)', () => {
+  const t = translator('en');
+  const reason = t('guard.structural');
+  const { headers, mixer, inspector } = renderZones({ heard: 'prop_1' });
+  const record = find(renderTransport({ heard: 'prop_1' }), byAttr('data-part', 'transport-record'));
+  assert.equal(record.attrs['aria-disabled'], 'true', 'Record');
+  assert.equal(record.attrs.title, reason);
+  const select = find(inspector, byTestId('inspector-input'));
+  assert.ok('disabled' in select.attrs, 'the In selector');
+  assert.equal(select.attrs.title, reason);
+  const monitor = find(inspector, byAttr('data-part', 'inspector-monitor'));
+  assert.ok('disabled' in monitor.attrs, 'the monitor');
+  assert.equal(monitor.attrs.title, reason);
+  // Record enable is engine state: it arms as before, on the header, the strip and the Inspector.
+  for (const [what, root, id] of [['header', headers, 'track-record-trk_b'], ['strip', mixer, 'strip-record-trk_b']] as const) {
+    const enable = find(root, byTestId(id));
+    assert.ok(!('aria-disabled' in enable.attrs) && !('disabled' in enable.attrs), what);
+  }
+  assert.ok(!('aria-disabled' in find(inspector, byAttr('data-part', 'inspector-record')).attrs), 'inspector');
+  // A recording that runs can be stopped.
+  const running = find(renderTransport({ heard: 'prop_1', state: { recording: true, armed: ['trk_a'], takes: [] } }), byAttr('data-part', 'transport-record'));
+  assert.ok(!('aria-disabled' in running.attrs) && !('disabled' in running.attrs));
+  assert.equal(running.attrs['aria-pressed'], 'true');
+  // With main heard nothing is held.
+  const main = renderZones({ heard: 'main' });
+  assert.ok(!('disabled' in find(main.inspector, byTestId('inspector-input')).attrs));
+  assert.ok(!('disabled' in find(main.inspector, byAttr('data-part', 'inspector-monitor')).attrs));
+  assert.ok(!('aria-disabled' in find(renderTransport({ heard: 'main' }), byAttr('data-part', 'transport-record')).attrs));
+
+  // The pending takes: Keep commits onto main and is held; Discard moves the files to the trash and is not.
+  const pending: PendingTake[] = [{ takeId: 'take_a1', trackId: 'trk_a', channels: 1, sampleRate: 48000, startFrame: '0', endedBy: 'device', overflows: '0' }];
+  const snap = snapshotOf(['trk_a'], [vox()], [], []);
+  const renderPending = (heard: string) => {
+    const recordHost = host(snap, FULL, { recording: false, armed: [], takes: [] }, WITH_INPUT, () => structuralBlocked(heard), pending);
+    const client = { model: { getSnapshot: () => snap }, getState: () => ({ connections: 1 }), subscribe: () => () => undefined } as unknown as SessionClient;
+    return parse(
+      renderToStaticMarkup(
+        <HeardContext.Provider value={heard}>
+          <PendingTakes controller={recordHost.controller} client={client} />
+        </HeardContext.Provider>,
+      ),
+    );
+  };
+  const held = renderPending('prop_1');
+  const keep = find(held, byTestId('pending-take-keep-take_a1'));
+  assert.ok('disabled' in keep.attrs, 'Keep');
+  assert.equal(keep.attrs.title, reason);
+  assert.ok(!('disabled' in find(held, byTestId('pending-take-discard-take_a1')).attrs), 'Discard');
+  assert.ok(!('disabled' in find(renderPending('main'), byTestId('pending-take-keep-take_a1')).attrs), 'Keep with main heard');
 });

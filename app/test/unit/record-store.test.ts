@@ -221,7 +221,7 @@ interface Sent {
 
 const DEVICE = { id: 'fake', sampleRate: 48000, bufferFrames: 256, inputLatencyFrames: 256, outputLatencyFrames: 256, input: { id: 'fake', channels: 2, latencyFrames: 256 } };
 
-function rig(options: { tracks?: TrackEntity[]; status?: EngineStatus | null; caps?: Capabilities; answer?: (method: string, params: Record<string, unknown>) => unknown; pending?: unknown } = {}) {
+function rig(options: { tracks?: TrackEntity[]; status?: EngineStatus | null; caps?: Capabilities; answer?: (method: string, params: Record<string, unknown>) => unknown; pending?: unknown; blocked?: () => boolean } = {}) {
   const sent: Sent[] = [];
   const toasts: string[] = [];
   const tracks = options.tracks ?? [{ ...track('trk_1'), input: { port: 0, channels: 1 } }, track('trk_2')];
@@ -273,6 +273,7 @@ function rig(options: { tracks?: TrackEntity[]; status?: EngineStatus | null; ca
     capabilities: () => capabilitySelector(client.getState().capabilities),
     toasts: { push: (text: string) => toasts.push(text) },
     locale: () => 'en',
+    ...(options.blocked ? { blocked: options.blocked } : {}),
   });
   return {
     sent,
@@ -416,6 +417,68 @@ test('pending takes: Keep and Discard are record.recover_take, and a decided tak
   const live = rig({ pending: PENDING });
   live.store.apply({ recording: true, armed: ['trk_1'], takes: [{ takeId: 'take_a1', trackId: 'trk_1', startFrame: null, durableFrames: '0' }] });
   assert.deepEqual(live.controller.pendingTakes(), []);
+});
+
+test('the edit guard (4.5 C5; 10.11, 22): while a proposal is heard starting Record, the input, the monitor and Keep send nothing and the keys decline; a stop, record enable and Discard go', async () => {
+  let heard = true;
+  const two = [...PENDING, { takeId: 'take_b2', trackId: 'trk_2', channels: 2, sampleRate: 48000, startFrame: '0' }];
+  const r = rig({
+    blocked: () => heard,
+    pending: two,
+    answer: (method, params) =>
+      method === 'record.arm'
+        ? { recording: false, armed: params.armed ? [params.trackId] : [], takes: [] }
+        : method === 'transport.record'
+          ? { playing: Boolean(params.enabled), position: '0', cycle: false, click: { enabled: false, gainMilliDb: -12000 }, recording: params.enabled, armed: ['trk_1'] }
+          : method === 'record.recover_take'
+            ? params.accept
+              ? { revision: 'r9' }
+              : { takeId: params.takeId, trashed: true }
+            : {},
+  });
+  r.store.apply({ recording: false, armed: ['trk_1'], takes: [] });
+  assert.equal(r.controller.guarded(), true);
+  assert.equal(r.controller.recordBlock(), 'guard', 'Record says the guard is why');
+  assert.equal(r.controller.toggleRecord(), false);
+  assert.equal(r.controller.inputBlock('trk_1'), 'guard');
+  assert.equal(r.controller.setInput('trk_1', null), false);
+  assert.equal(r.controller.toggleMonitor('trk_1'), false);
+  assert.equal(await r.controller.recoverTake('take_a1', true), false, 'Keep commits onto main');
+  const commands = new CommandRegistry();
+  const off = bindRecordCommands(commands, r.controller, { selectedTrack: () => 'trk_2' });
+  assert.equal(commands.run('window', 'transport.record'), false, 'Num * and Ctrl+Shift+R decline');
+  await settle();
+  assert.deepEqual(r.sent, []);
+  assert.deepEqual(r.toasts, []);
+  // Record enable is engine state (no revision holds it), and Discard moves files to the trash: both go.
+  assert.equal(r.controller.armBlock('trk_2'), 'noTrackInput');
+  assert.equal(r.controller.toggleArm('trk_1'), true);
+  assert.equal(await r.controller.recoverTake('take_b2', false), true);
+  await settle();
+  assert.deepEqual(
+    r.sent.map((s) => s.method),
+    ['record.arm', 'record.recover_take'],
+  );
+  assert.deepEqual(r.controller.pendingTakes().map((p) => p.takeId), ['take_a1'], 'the kept take is still pending');
+  // A recording that runs is stopped, guard or not.
+  r.store.apply({ recording: true, armed: ['trk_1'], takes: [] });
+  assert.equal(r.controller.recordBlock(), null);
+  assert.equal(r.controller.toggleRecord(), true);
+  await settle();
+  assert.deepEqual(r.sent.at(-1), { method: 'transport.record', params: { enabled: false } });
+  // With main heard everything goes again.
+  heard = false;
+  r.store.apply({ recording: false, armed: ['trk_1'], takes: [] });
+  assert.equal(r.controller.guarded(), false);
+  assert.equal(r.controller.recordBlock(), null);
+  assert.equal(r.controller.inputBlock('trk_1'), null);
+  assert.equal(commands.run('window', 'transport.record'), true);
+  assert.equal(r.controller.setInput('trk_1', null), true);
+  assert.equal(r.controller.toggleMonitor('trk_1'), true);
+  assert.equal(await r.controller.recoverTake('take_a1', true), true);
+  await settle();
+  assert.deepEqual(r.sent.slice(-4).map((s) => (s.method === 'command.execute' ? (s.params.commands as Array<{ op: string }>)[0]!.op : s.method)), ['transport.record', 'track.set_input', 'track.set_monitor', 'record.recover_take']);
+  off();
 });
 
 test('R arms the selected track (project scope) and Num * / Ctrl+Shift+R toggle Record (window); each declines when it would send nothing', async () => {

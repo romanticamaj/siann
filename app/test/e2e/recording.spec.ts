@@ -20,19 +20,22 @@
 //   monitoring off.
 // - The engine killed while recording: the restarted engine lists the takes
 //   and the window offers Keep and Discard per take.
+// - The edit guard (4.5 C5; 10.11, 22): while a proposal is heard Record, the
+//   In selector and the monitor are disabled with the guard's reason and the
+//   keys send nothing; record enable still arms.
 // - Against capabilities without features.recording none of the controls
 //   exists.
 //
 // Waits are condition polls, never sleeps.
 
-import { expect, test, type ElectronApplication, type Page } from '@playwright/test';
+import { expect, test, type ElectronApplication, type Locator, type Page } from '@playwright/test';
 import * as fs from 'node:fs';
 import * as os from 'node:os';
 import * as path from 'node:path';
 
 import { en } from '../../src/renderer/i18n/en';
 import { engineClient, type EngineClient } from './support/engine-client';
-import { launchApp, seedBundle } from './support/seed';
+import { agentFor, launchApp, seedBundle, selectPlan } from './support/seed';
 
 const RATE = 48000;
 // 240 BPM: one bar of four quarter notes is one second.
@@ -374,6 +377,58 @@ test('after the engine dies while recording, the pending takes are listed with K
   ]);
   // The discarded take is in the bundle's trash, not committed.
   expect((await clips()).length).toBe(1);
+});
+
+test('while a proposal is heard Record, the In selector and the monitor are disabled with the guard\'s reason and send nothing; record enable still arms', async () => {
+  await launch();
+  // The Plans tab in the right zone (a drawer under 1280 px).
+  await page.setViewportSize({ width: 1440, height: 900 });
+  await page.getByTestId('track-record-trk_rec').click();
+  await expect.poll(armed).toEqual(['trk_rec']);
+  const record = page.getByTestId('transport-record');
+  await expect(record).not.toHaveAttribute('aria-disabled', 'true');
+  // A plan on the source track, auditioned: the branch is heard.
+  const agent = await agentFor(app!);
+  const hash = (await agent.tool('submit_plan', { steps: [{ op: 'track.set_gain', trackId: 'trk_src', gainMilliDb: -6000 }] })).hash as string;
+  await selectPlan(page, hash);
+  await page.getByTestId('plan-audition').click();
+  await expect.poll(async () => (await engine!.call('session.inspect')).heard as string).not.toBe('main');
+  await expect(page.getByTestId('hear-proposal')).toHaveAttribute('aria-pressed', 'true');
+  const head = (await engine!.call('session.inspect')).revision as string;
+  const guarded = async (control: Locator) => expect(control).toHaveAttribute('title', en['guard.structural']);
+
+  await expect(record).toHaveAttribute('aria-disabled', 'true');
+  await guarded(record);
+  await selectTrack('trk_rec');
+  const select = page.getByTestId('inspector-input');
+  await expect(select).toBeDisabled();
+  await guarded(select);
+  const monitor = page.locator('[data-part="inspector-monitor"]');
+  await expect(monitor).toBeDisabled();
+  await guarded(monitor);
+  // aria-disabled: Playwright's actionability check refuses it, a person's click does not.
+  await record.click({ force: true });
+  await focusProject();
+  await page.keyboard.press('NumpadMultiply');
+  await page.keyboard.press('ControlOrMeta+Shift+KeyR');
+  await engine!.call('session.inspect');
+  expect((await sent()).filter((r) => r.method === 'transport.record')).toEqual([]);
+  expect(await commands('track.set_input')).toEqual([]);
+  expect(await commands('track.set_monitor')).toEqual([]);
+  expect((await engine!.call('engine.status')).recording).toBe(false);
+  expect((await engine!.call('session.inspect')).revision).toBe(head);
+  // Record enable is engine state: it still arms and disarms.
+  await page.getByTestId('track-record-trk_rec2').click();
+  await expect.poll(armed).toEqual(['trk_rec', 'trk_rec2']);
+  await page.getByTestId('track-record-trk_rec2').click();
+  await expect.poll(armed).toEqual(['trk_rec']);
+
+  // With main heard every control goes again.
+  await engine!.call('audition.hear', { side: 'main' });
+  await expect(page.getByTestId('hear-main')).toHaveAttribute('aria-pressed', 'true');
+  await expect(record).not.toHaveAttribute('aria-disabled', 'true');
+  await expect(select).toBeEnabled();
+  await expect(monitor).toBeEnabled();
 });
 
 test('against capabilities without features.recording none of the recording controls is in the DOM', async () => {

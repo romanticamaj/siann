@@ -70,7 +70,8 @@ import {
   type Rect,
   type RegionReport,
 } from './support/fidelity-core';
-import { hook, painted, prepareBundle, stageSession, TRACK_IDS } from './support/fidelity-session';
+import { engineClient } from './support/engine-client';
+import { hook, painted, prepareBundle, RATE, stageSession, TRACK_IDS } from './support/fidelity-session';
 import { launchElectron } from './support/launch';
 import { exeFromEnv } from './support/seed';
 
@@ -289,6 +290,95 @@ test.afterEach(async () => {
   scratch = '';
 });
 
+// m5b-ui-recording's app-only states (see the call in the gate's test). Vox
+// Lead is armed on Mono In 1 with the fake device's input open (stageSession).
+async function recordingStates(page: Page, dir: string, locale: string, notes: string[], parts: readonly Part[]): Promise<void> {
+  const region = (id: string) => parts.find((part) => part.id === id) ?? null;
+  const shootRegion = async (id: string, file: string) => {
+    const rect = region(id);
+    if (!rect) throw new Error(`the mockup has no region ${id}`);
+    await page.mouse.move(VIEW.width - 2, 1);
+    await painted(page);
+    fs.writeFileSync(path.join(dir, file), encodePng(crop(decodePng(await page.screenshot()), rect)));
+  };
+  const shootWindow = async (file: string, away = true) => {
+    if (away) await page.mouse.move(VIEW.width - 2, 1);
+    await painted(page);
+    fs.writeFileSync(path.join(dir, file), await page.screenshot());
+  };
+  const vox = TRACK_IDS[4]!;
+  const record = page.getByTestId('transport-record');
+  const engine = await engineClient(page, { events: true });
+  try {
+    await expect(page.getByTestId(`track-record-${vox}`)).toHaveAttribute('aria-pressed', 'true');
+    await expect(record).not.toHaveAttribute('aria-disabled', 'true');
+
+    // The record options panel, opened by a right-click on Record.
+    await record.click({ button: 'right' });
+    await expect(page.getByTestId('record-options')).toBeVisible();
+    await shootWindow('record-options.app.png', false);
+    notes.push(`The record options panel (a right-click on Record: punch in and out, pre-roll and count-in with their bars) is ${locale}/record-options.app.png, the app's alone: the mockup draws no such panel.`);
+    await page.keyboard.press('Escape');
+    await expect(page.getByTestId('record-options')).toHaveCount(0);
+
+    // Record pressed: a red clip grows on Vox Lead from the take's first frame to the playhead.
+    await record.click();
+    await expect(record).toHaveAttribute('aria-pressed', 'true');
+    await expect.poll(async () => (await hook<Array<{ trackId: string; columns: number }>>(page, 'recordingClips')).filter((c) => c.trackId === vox && c.columns > 4).length, { timeout: 20_000 }).toBe(1);
+    await shootWindow('recording.app.png');
+    notes.push(`A recording in progress (Record pressed, Vox Lead armed, its red clip growing to the playhead with the live waveform of its input) is ${locale}/recording.app.png, the app's alone: the mockup draws Record released and no recording clip.`);
+    await page.getByTestId('transport-stop').click();
+    await expect(record).toHaveAttribute('aria-pressed', 'false');
+    await expect.poll(async () => (await hook<unknown[]>(page, 'recordingClips')).length).toBe(0);
+
+    // The lit monitor: Vox Lead selected, its monitor on input (the app-only rule .i-btns > .mon.on).
+    await page.getByTestId(`track-header-${vox}`).click({ position: { x: 30, y: 30 } });
+    const monitor = page.locator('[data-part="inspector-monitor"]');
+    await monitor.click();
+    await expect(monitor).toHaveAttribute('aria-pressed', 'true');
+    await shootRegion('left-zone', 'left-zone.monitor-on.app.png');
+    notes.push(`The Inspector with Vox Lead's monitor on (input; lit by the app-only rule .i-btns > .mon.on) is ${locale}/left-zone.monitor-on.app.png, the app's alone: the mockup draws the monitor off. Compare it with ${locale}/left-zone.mockup.png.`);
+    await monitor.click();
+    await expect(monitor).toHaveAttribute('aria-pressed', 'false');
+
+    // Record disabled: nothing armed (aria-disabled, the reason in its tooltip).
+    await page.getByTestId(`track-record-${vox}`).click();
+    await expect(page.getByTestId(`track-record-${vox}`)).toHaveAttribute('aria-pressed', 'false');
+    await expect(record).toHaveAttribute('aria-disabled', 'true');
+    const reason = (await record.getAttribute('title')) ?? '';
+    await shootRegion('top-bar', 'top-bar.record-disabled.app.png');
+    notes.push(`Record disabled with nothing armed (aria-disabled, its tooltip "${reason}") is ${locale}/top-bar.record-disabled.app.png, the app's alone: the mockup draws Record enabled. Compare it with ${locale}/top-bar.mockup.png.`);
+
+    // The pending takes dialog: Vox Lead armed again, a recording with a durable second, the engine killed.
+    await page.getByTestId(`track-record-${vox}`).click();
+    await expect(record).not.toHaveAttribute('aria-disabled', 'true');
+    await record.click();
+    await expect
+      .poll(
+        () => {
+          const last = engine.ofType('record.changed').at(-1) as { takes?: Array<{ durableFrames: string }> } | undefined;
+          return (last?.takes ?? []).filter((t) => Number(t.durableFrames) >= RATE).length;
+        },
+        { timeout: 20_000 },
+      )
+      .toBe(1);
+    const pid = await app!.evaluate(() => (globalThis as unknown as { __siannShell: { pid(): number | null } }).__siannShell.pid());
+    if (pid === null) throw new Error('the shell has no engine');
+    engine.close();
+    process.kill(pid);
+    await expect(page.getByTestId('status')).not.toHaveAttribute('data-status', 'connected');
+    await expect(page.getByTestId('status')).toHaveAttribute('data-status', 'connected', { timeout: 30_000 });
+    const dialog = page.getByTestId('pending-takes');
+    await expect(dialog).toBeVisible();
+    await shootWindow('pending-takes.app.png');
+    notes.push(`The pending takes dialog (the engine killed while Vox Lead recorded; the restarted engine lists the take with Keep and Discard) is ${locale}/pending-takes.app.png, the app's alone: the mockup has no such dialog.`);
+    await page.getByTestId('pending-takes-later').click();
+    await expect(dialog).toBeHidden();
+  } finally {
+    engine.close();
+  }
+}
+
 // ---------------------------------------------------------------- the gate
 
 function commit(): string {
@@ -329,7 +419,7 @@ for (const [locale, setting] of Object.entries(MANIFEST.locales)) {
 
   test(`the app matches the mockup (${locale})`, async () => {
     test.skip(MOCKUP_ONLY, 'SIANN_FIDELITY_MOCKUP_ONLY=1 measures the mockup alone');
-    test.setTimeout(240_000);
+    test.setTimeout(360_000);
     const dir = path.join(OUT, locale);
     fs.mkdirSync(dir, { recursive: true });
     const notes: string[] = [];
@@ -498,6 +588,14 @@ for (const [locale, setting] of Object.entries(MANIFEST.locales)) {
       fs.writeFileSync(path.join(dir, 'left-zone.empty.app.png'), encodePng(crop(decodePng(await page.screenshot()), leftZone)));
       notes.push(`The left zone with no track selected is ${locale}/left-zone.empty.app.png, the app's alone: the mockup always shows a selected track.`);
     }
+
+    // m5b-ui-recording's states the mockup does not draw, the app's alone,
+    // after every measurement (they commit a take and restart the engine):
+    // the record options panel (a right-click on Record), Record pressed with
+    // the red clip growing on Vox Lead, the lit monitor, Record disabled with
+    // nothing armed, and the pending takes dialog after the engine is killed
+    // while recording (the restarted engine lists the take).
+    await recordingStates(page, dir, locale, notes, mockupParts.parts);
 
     const entry: LocaleReport = { locale, comparison, regions, extra, notes };
     report.locales.push(entry);
