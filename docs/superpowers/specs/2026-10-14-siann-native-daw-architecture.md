@@ -412,8 +412,9 @@ years. Milestones are designed so that something useful exists at every stage.
 - No devtools or reload: the shell installs an application menu built from role
   items without `toggleDevTools`, `reload` and `forceReload` (quit and the edit
   roles stay, and the app menu on macOS), the window has `webPreferences.devTools`
-  false, and `before-input-event` swallows F12, Ctrl/Cmd+Shift+I, Ctrl/Cmd+R and F5.
-  This does not depend on `app.isPackaged`, so the e2e proves the packaged build's
+  false, and `before-input-event` swallows F12, Ctrl/Cmd+Shift+I, plain Ctrl/Cmd+R and
+  F5 (Ctrl/Cmd+Shift+R goes on to the renderer as Record's laptop fallback and,
+  with no reload role, reloads nothing). This does not depend on `app.isPackaged`, so the e2e proves the packaged build's
   behaviour; `SIANN_SHELL_DEVTOOLS=1` re-enables devtools and the keys for
   debugging. `setWindowOpenHandler` denies every `window.open`, and `will-navigate`
   blocks any URL outside `siann://app/`.

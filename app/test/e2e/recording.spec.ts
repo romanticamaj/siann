@@ -14,6 +14,8 @@
 //   stopped after four bars, is one clip of at least four bars; while it
 //   runs a red clip grows on the armed track with no React commit per frame;
 //   Ctrl+Z removes the committed clip.
+// - Ctrl+Shift+R (Cmd+Shift+R on macOS), sent as the window receives a key
+//   (through before-input-event), records: exactly one transport.record.
 // - Punch in and out at the locators give a clip of exactly [left, right).
 // - Monitor: the monitored track's meter shows its input (the seeded clip's
 //   loopback, the track's fader lowered so the loop decays), and nothing with
@@ -299,6 +301,31 @@ test('a recording after a one-bar count-in starts at the record position, grows 
   await focusProject();
   await page.keyboard.press('ControlOrMeta+KeyZ');
   await expect.poll(async () => (await clips()).length).toBe(before);
+});
+
+test('Ctrl/Cmd+Shift+R, as the window receives it, reaches the renderer and records: exactly one transport.record', async () => {
+  await launch();
+  await page.getByTestId('track-record-trk_rec').click();
+  await expect(page.getByTestId('track-record-trk_rec')).toHaveAttribute('aria-pressed', 'true');
+  await focusProject();
+  // sendInputEvent goes through before-input-event, where the main process
+  // takes the reload keys; Playwright's keyboard (CDP input) would bypass it.
+  const modifier = process.platform === 'darwin' ? 'meta' : 'control';
+  await app!.evaluate(({ BrowserWindow }, mod) => {
+    const contents = BrowserWindow.getAllWindows()[0]!.webContents;
+    const modifiers: Array<'control' | 'meta' | 'shift'> = [mod, 'shift'];
+    contents.sendInputEvent({ type: 'keyDown', keyCode: 'R', modifiers });
+    contents.sendInputEvent({ type: 'keyUp', keyCode: 'R', modifiers });
+  }, modifier);
+  await expect(page.getByTestId('transport-record')).toHaveAttribute('aria-pressed', 'true');
+  const records = async () => (await sent()).filter((r) => r.method === 'transport.record').length;
+  await expect.poll(records).toBe(1);
+  // No second one follows (a menu accelerator or a repeat).
+  await expect(page.getByTestId('transport-record')).toHaveAttribute('aria-pressed', 'true');
+  expect(await records()).toBe(1);
+  await page.getByTestId('transport-stop').click();
+  await expect(page.getByTestId('transport-record')).toHaveAttribute('aria-pressed', 'false');
+  expect(await records()).toBe(1);
 });
 
 test('punch in and out at the locators record exactly [left, right)', async () => {

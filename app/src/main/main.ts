@@ -66,6 +66,7 @@ import { spawn } from 'node:child_process';
 import * as fs from 'node:fs';
 import * as path from 'node:path';
 
+import { isDevtoolsOrReloadKey } from './blocked-keys';
 import { engineArgs, engineTestArgs, fidelityEnvironmentArgs, pluginRegistryFile, testCapabilitiesArgs } from './engine-args';
 import { focusFirstWindow } from './focus';
 import { chosenPaths, mediaDialogOptions, mediaFormats, mediaLabel } from './media';
@@ -356,13 +357,6 @@ ipcMain.on(IPC_MENU_SET, (event, value: unknown) => {
   applyMenu();
 });
 
-
-// F12 and Ctrl/Cmd+Shift+I (devtools), Ctrl/Cmd+R (and with Shift) and F5 (reload).
-function isDevtoolsOrReloadKey(input: Electron.Input): boolean {
-  const key = input.key.toLowerCase();
-  const command = input.control || input.meta;
-  return key === 'f12' || key === 'f5' || (command && input.shift && key === 'i') || (command && key === 'r');
-}
 
 function denyPermissions(): void {
   const { defaultSession } = session;

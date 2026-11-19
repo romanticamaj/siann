@@ -171,7 +171,7 @@ test('every permission is denied', async () => {
 // A key as the window receives one: sendInputEvent goes through before-input-event
 // and, unhandled, the menu's accelerators, which Playwright's keyboard (CDP input)
 // bypasses.
-async function press(keyCode: string, modifiers: Array<'control' | 'shift'> = []): Promise<void> {
+async function press(keyCode: string, modifiers: Array<'control' | 'meta' | 'shift'> = []): Promise<void> {
   await app.evaluate(
     ({ BrowserWindow }, key) => {
       const contents = BrowserWindow.getAllWindows()[0]!.webContents;
@@ -238,14 +238,31 @@ test('no devtools and no reload: the menu, the preference and the keys', async (
   // A reload would drop the marker and start the connection count again.
   const connections = await page.getByTestId('connections').textContent();
   expect(Number(connections)).toBeGreaterThan(0);
+  // The page records the R keydowns that reach it, with their modifiers.
   await page.evaluate(() => {
-    (window as unknown as { __marker: number }).__marker = 1;
+    const w = window as unknown as { __marker: number; __pageR: string[] };
+    w.__marker = 1;
+    w.__pageR = [];
+    window.addEventListener(
+      'keydown',
+      (event) => {
+        if (event.key.toLowerCase() === 'r') w.__pageR.push(`${event.ctrlKey || event.metaKey ? 'Mod+' : ''}${event.shiftKey ? 'Shift+' : ''}R`);
+      },
+      { capture: true },
+    );
   });
+  const pageR = () => page.evaluate(() => (window as unknown as { __pageR: string[] }).__pageR);
+  // Plain Ctrl/Cmd+R and F5 reload, so they are taken; Ctrl/Cmd+Shift+R is
+  // Record's laptop fallback (m5b-ui-recording), so it goes on to the page,
+  // where it reloads nothing (the menu has no reload role).
   await press('R', ['control']);
+  await press('R', ['meta']);
   await press('F5');
   await press('R', ['control', 'shift']);
+  await press('R', ['meta', 'shift']);
   await expect.poll(keys).toEqual(expect.arrayContaining(['F12', 'I', 'F5']));
-  await expect.poll(async () => (await keys()).filter((key) => key.toLowerCase() === 'r').length).toBe(2);
+  await expect.poll(async () => (await keys()).filter((key) => key.toLowerCase() === 'r').length).toBe(4);
+  await expect.poll(pageR).toEqual(['Mod+Shift+R', 'Mod+Shift+R']);
   await expect(page.getByTestId('status')).toHaveAttribute('data-status', 'connected');
   expect(await page.evaluate(() => (window as unknown as { __marker?: number }).__marker)).toBe(1);
   await expect(page.getByTestId('connections')).toHaveText(connections ?? '');
