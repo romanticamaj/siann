@@ -7,9 +7,10 @@
 //   a track without an input or with one beyond the open input, recording)
 //   it is aria-disabled with the reason in its tooltip and sends nothing.
 // - MonitorButton: the Inspector's `.msr` holding ic('mon','s'); a click sends
-//   one track.set_monitor (off to input, input or auto to off); lit (.mon.on,
+//   one track.set_monitor (off to input, input or auto to off); lit (.on,
 //   aria-pressed) while the document's mode is not off, the mode in its
-//   tooltip. `.mon` is the hook of its app-only lit rule (shell.css).
+//   tooltip. Its classes are the mockup's; the app-only lit rule (shell.css)
+//   selects [data-part="inspector-monitor"].on.
 // - InputRow: the first .irow of sec('Routing'): the label In and the .pick
 //   with the input's name and ic('chev','s'), a native <select> over it (the
 //   open input's mono ports and stereo pairs, and no input) that sends one
@@ -109,7 +110,7 @@ export function MonitorButton({ host, track }: { host: RecordHost; track: TrackE
   return (
     <button
       type="button"
-      className={`msr mon${on ? ' on' : ''}`}
+      className={`msr${on ? ' on' : ''}`}
       data-testid="inspector-monitor"
       data-part="inspector-monitor"
       aria-pressed={on}

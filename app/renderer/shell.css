@@ -543,9 +543,10 @@ button.media-remove { min-height: 0; padding: 0 var(--space-1h); font-size: var(
 .irow .pick:has(.pick-select:focus-visible) { outline: var(--space-half) solid var(--focus-ring); outline-offset: var(--hairline); }
 /* A lit monitor (m5b-ui-recording; UI redesign 3.5): the shared rules light
    M, S, record and read only, and the mockup never draws monitor lit, so its
-   look is this app-only rule on existing tokens (on .mon: shell.css names no
+   look is this app-only rule on existing tokens, selected by the button's
+   data-part so the button keeps the mockup's class list (shell.css names no
    .msr selector). */
-.i-btns > .mon.on { background: var(--bg-5); color: var(--tx-1); border-color: var(--tx-3); }
+.i-btns > [data-part="inspector-monitor"].on { background: var(--bg-5); color: var(--tx-1); border-color: var(--tx-3); }
 /* The e box sits at the end of the row, as the mockup puts e. */
 .i-btns > .msr-box:last-child { margin-left: auto; }
 /* An unlisted slider keeps its column. */

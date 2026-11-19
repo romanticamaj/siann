@@ -331,13 +331,13 @@ async function recordingStates(page: Page, dir: string, locale: string, notes: s
     await expect(record).toHaveAttribute('aria-pressed', 'false');
     await expect.poll(async () => (await hook<unknown[]>(page, 'recordingClips')).length).toBe(0);
 
-    // The lit monitor: Vox Lead selected, its monitor on input (the app-only rule .i-btns > .mon.on).
+    // The lit monitor: Vox Lead selected, its monitor on input (the app-only rule .i-btns > [data-part="inspector-monitor"].on).
     await page.getByTestId(`track-header-${vox}`).click({ position: { x: 30, y: 30 } });
     const monitor = page.locator('[data-part="inspector-monitor"]');
     await monitor.click();
     await expect(monitor).toHaveAttribute('aria-pressed', 'true');
     await shootRegion('left-zone', 'left-zone.monitor-on.app.png');
-    notes.push(`The Inspector with Vox Lead's monitor on (input; lit by the app-only rule .i-btns > .mon.on) is ${locale}/left-zone.monitor-on.app.png, the app's alone: the mockup draws the monitor off. Compare it with ${locale}/left-zone.mockup.png.`);
+    notes.push(`The Inspector with Vox Lead's monitor on (input; lit by the app-only rule .i-btns > [data-part="inspector-monitor"].on) is ${locale}/left-zone.monitor-on.app.png, the app's alone: the mockup draws the monitor off. Compare it with ${locale}/left-zone.mockup.png.`);
     await monitor.click();
     await expect(monitor).toHaveAttribute('aria-pressed', 'false');
 

@@ -9,7 +9,7 @@
 // - strip-N-record: the third .msr of strip()'s second .btns (after the boxes
 //   of R and W), the same markup;
 // - inspector-record and inspector-monitor: the third and fourth .msr of
-//   .i-btns, the monitor a `.msr` holding ic('mon','s'), .mon.on while the mode
+//   .i-btns, the monitor a `.msr` holding ic('mon','s'), .on while the mode
 //   is not off, the mode in its tooltip;
 // - transport-record: the mockup's `.tbtn.rec` holding ic('rec'), fifth in
 //   .tgroup[transport-buttons], aria-pressed while recording;
@@ -258,10 +258,11 @@ test('inspector-record and inspector-monitor are the third and fourth .msr of .i
   assertRecordButton(record, mRecord, 'inspector');
   assert.equal(record.attrs['data-part'], 'inspector-record');
   assert.ok(classes(record).includes('on'));
-  // The monitor: .msr with the mockup's icon; .mon is the app's hook for its lit rule.
+  // The monitor: the mockup's .msr with its icon, and no class the mockup lacks
+  // (its lit rule selects [data-part="inspector-monitor"].on).
   assert.equal(monitor.attrs['data-part'], 'inspector-monitor');
   assert.equal(monitor.tag, 'button');
-  assert.ok(classes(monitor).includes('msr'));
+  assert.deepEqual(classes(monitor).filter((c) => c !== 'on'), classes(mMonitor));
   assert.deepEqual(elements(monitor).map(sig), elements(mMonitor).map(sig), 'svg.i.s');
   const appSvg = elements(monitor)[0]!;
   const mSvg = svgOf(MOCKUP.ic('mon', 's'));
@@ -288,7 +289,9 @@ test('a monitored track\'s monitor is lit with its mode in the tooltip', () => {
     ),
   );
   const monitor = find(markup, byAttr('data-part', 'inspector-monitor'));
-  assert.ok(classes(monitor).includes('on') && classes(monitor).includes('mon'));
+  const mMonitor = find(mockupZone(), byAttr('data-part', 'inspector-monitor'));
+  assert.ok(classes(monitor).includes('on'));
+  assert.deepEqual(classes(monitor).filter((c) => c !== 'on'), classes(mMonitor));
   assert.equal(monitor.attrs['aria-pressed'], 'true');
   assert.ok((monitor.attrs.title ?? '').includes(translator('en')('monitor.mode.input')));
 });
