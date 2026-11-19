@@ -31,15 +31,18 @@ const PLANS = '.p-head .tab, .ab .b, .steps-h a, .acts .btn, .plans .badge';
 // readout (level and peak value) and the MixConsole tab, in the mockup's boxes.
 const MIXER = '[role=slider], [data-testid^=pan-value-], .readout, [data-testid^=fader-value-]';
 // The project zone toolbar (m5-ui-port-toolbar): the tools, the snap, grid
-// type and auto-scroll fields, the info line's fields and the open Pool.
-const TOOLBAR = '.arr-toolbar .b, .arr-toolbar .field, .infoline .f, [data-testid=media-pool] .pool-head, [data-testid^=pool-]';
+// type and auto-scroll fields and the info line's fields.
+const TOOLBAR = '.arr-toolbar .b, .arr-toolbar .field, .infoline .f';
+// The Media tab (m5b-ui-media): the tab, Import, the search field, the
+// column heads and each row's Remove.
+const MEDIA = '[data-part=tab-media], [data-testid=media-import], [data-testid=media-search], .media-list th, [data-testid^=media-remove-]';
 // The ghosts (m5b-ui-ghosts): the toolbar's proposal pill and its Ghosts
 // toggle, the steps' target buttons, the proposed track's header labels and
 // the proposed strip's NEW · STEP label.
 const GHOSTS = '.overlaypill, .overlaypill .tog, .step .go, .th.ghost .r1 > span, .th.ghost .r2 > span, .strip.ghost .btns > span';
 // The track list head (m5-ui-port-track-list): the .add button is a button; its count is text that must fit too.
-const LABELLED = `button, select, summary, label, th, dt, [role=tab], [role=button], [role=menuitemradio], [data-testid^=position-], [data-testid=transport-tempo], [data-testid=display-locators], [data-testid=display-signature], [data-testid=track-count], ${PLANS}, ${MIXER}, ${TOOLBAR}, ${GHOSTS}`;
-const ONE_LINE = `button, summary, th, dt, [role=tab], [role=menuitemradio], [data-testid^=position-], [data-testid=transport-tempo], [data-testid=display-locators-value], [data-testid=display-signature-value], [data-testid=track-count], ${PLANS}, ${MIXER}, ${TOOLBAR}, ${GHOSTS}`;
+const LABELLED = `button, select, summary, label, th, dt, [role=tab], [role=button], [role=menuitemradio], [data-testid^=position-], [data-testid=transport-tempo], [data-testid=display-locators], [data-testid=display-signature], [data-testid=track-count], ${PLANS}, ${MIXER}, ${TOOLBAR}, ${GHOSTS}, ${MEDIA}`;
+const ONE_LINE = `button, summary, th, dt, [role=tab], [role=menuitemradio], [data-testid^=position-], [data-testid=transport-tempo], [data-testid=display-locators-value], [data-testid=display-signature-value], [data-testid=track-count], ${PLANS}, ${MIXER}, ${TOOLBAR}, ${GHOSTS}, ${MEDIA}`;
 
 // The tour's tracks (ux-tour.spec.ts), without the audio.
 const TRACKS = [
@@ -82,7 +85,7 @@ async function resize(size: { width: number; height: number }): Promise<void> {
 }
 
 // Labelled controls whose content is wider than their box.
-async function overflowing(): Promise<string[]> {
+async function overflowing(within: string = LABELLED): Promise<string[]> {
   return page.evaluate((selector) => {
     const out: string[] = [];
     for (const el of document.querySelectorAll<HTMLElement>(selector)) {
@@ -93,7 +96,7 @@ async function overflowing(): Promise<string[]> {
       }
     }
     return out;
-  }, LABELLED);
+  }, within);
 }
 
 // The branch chip (m5b-ui-audition), naming the auditioned plan: one line,
@@ -128,7 +131,7 @@ async function chipFits(): Promise<string[]> {
 }
 
 // Labels drawn on more than one line: the line boxes of each text node.
-async function wrapped(): Promise<string[]> {
+async function wrapped(within: string = ONE_LINE): Promise<string[]> {
   return page.evaluate((selector) => {
     const out: string[] = [];
     for (const el of document.querySelectorAll<HTMLElement>(selector)) {
@@ -142,7 +145,7 @@ async function wrapped(): Promise<string[]> {
       }
     }
     return out;
-  }, ONE_LINE);
+  }, within);
 }
 
 test('no labelled control overflows or wraps its label in any locale at either window size', async () => {
@@ -255,12 +258,6 @@ test('no labelled control overflows or wraps its label in any locale at either w
       toasts.push(message);
     }, planArrivedMessage(locale as Locale, { steps: MIX_PASS.length }));
     await expect(page.getByTestId('toast').last()).toBeVisible();
-    // The Pool, open, in this locale (Ctrl+P; m5-ui-port-toolbar). The reason
-    // row's text field has the focus, where no key command fires: out of it first.
-    await page.evaluate(() => (document.activeElement as HTMLElement | null)?.blur());
-    await page.keyboard.press('ControlOrMeta+KeyP');
-    await expect(page.getByTestId('media-pool')).toBeVisible();
-    await expect(page.getByTestId('pool-med_seed')).toBeVisible();
     // The time format menu, open, in this locale.
     await page.getByTestId('position-display').click({ button: 'right' });
     await expect(page.getByTestId('time-format-menu')).toBeVisible();
@@ -272,7 +269,27 @@ test('no labelled control overflows or wraps its label in any locale at either w
     }
     await page.keyboard.press('Escape');
     await expect(page.getByTestId('time-format-menu')).toBeHidden();
-    await expect(page.getByTestId('media-pool')).toHaveCount(0);
+  }
+  // The Media tab (m5b-ui-media), open in each locale at both sizes (Ctrl+P,
+  // which also opens the small window's drawer): the tab, Import, the search
+  // field, the column heads and Remove. The reason row's text field has the
+  // focus, where no key command fires: out of it first.
+  await page.evaluate(() => (document.activeElement as HTMLElement | null)?.blur());
+  for (const locale of LOCALES) {
+    await page.evaluate((next) => {
+      const store = (window as unknown as { __siannLocale?: { setLocale(l: string): void } }).__siannLocale;
+      if (!store) throw new Error('window.__siannLocale is missing (SIANN_SHELL_TEST=1)');
+      store.setLocale(next);
+    }, locale);
+    await expect(page.locator('html')).toHaveAttribute('data-locale', locale);
+    for (const size of SIZES) {
+      await resize(size);
+      if (!(await page.getByTestId('media-tab').isVisible())) await page.keyboard.press('ControlOrMeta+KeyP');
+      await expect(page.getByTestId('media-tab')).toBeVisible();
+      await expect(page.getByTestId('media-row-med_seed')).toBeVisible();
+      for (const entry of await overflowing(MEDIA)) failures.push(`${locale} ${size.width}x${size.height} (Media tab): ${entry}`);
+      for (const entry of await wrapped(MEDIA)) failures.push(`${locale} ${size.width}x${size.height} (Media tab): ${entry}`);
+    }
   }
   expect(failures).toEqual([]);
 });
@@ -520,3 +537,140 @@ test('the snap type menu and the repeat dialog fit in every locale at either win
   expect(failures).toEqual([]);
 });
 
+// m5b-ui-meter: the DSP load, the Meter tab, the master's loudness row and the
+// panel's controls (its head, the four readouts and Reset) fit on one line in
+// en, zh-TW, zh-CN and the pseudo-locale, at 1440 px and with the right zone
+// at its minimum width (the DSP load goes under 1300 px, spec 2.4).
+test('the DSP load, the Meter tab, the loudness row and the Meter panel fit in every locale', async () => {
+  test.setTimeout(120_000);
+  scratch = fs.mkdtempSync(path.join(os.tmpdir(), 'siann-fit-meter-'));
+  const sessionDir = seedBundle(scratch, TRACKS);
+  app = await launchApp({ sessionDir, userData: path.join(scratch, 'user-data'), languages: ['en-US'] });
+  page = await app.firstWindow();
+  await expect(page.getByTestId('status')).toHaveAttribute('data-status', 'connected');
+  await resize({ width: 1440, height: 900 });
+  if ((await page.getByTestId('zone-right').getAttribute('data-visible')) !== 'true') await page.getByTestId('plans-button').click();
+  await page.getByTestId('tab-right-meter').click();
+  await expect(page.getByTestId('meter-panel')).toBeVisible();
+  for (const id of ['dsp-load', 'strip-master-loudness', 'meter-reset-loudness', 'loudness-momentary', 'loudness-short-term', 'loudness-integrated']) await expect(page.getByTestId(id)).toBeVisible();
+  const separator = page.getByTestId('separator-right');
+  const SELECTORS = ['[data-part="dsp-load"]', '[data-part="tab-meter"]', '[data-part="tab-plans"]', '[data-part-of="loudness"]', '.meter-panel .z-head', '.meter-panel .readout', '[data-testid="meter-reset-loudness"]'];
+  const failures: string[] = [];
+  for (const locale of LOCALES) {
+    await page.evaluate((next) => {
+      const store = (window as unknown as { __siannLocale?: { setLocale(l: string): void } }).__siannLocale;
+      if (!store) throw new Error('window.__siannLocale is missing (SIANN_SHELL_TEST=1)');
+      store.setLocale(next);
+    }, locale);
+    await expect(page.locator('html')).toHaveAttribute('data-locale', locale);
+    for (const edge of ['Enter', 'Home']) {
+      await separator.focus();
+      await page.keyboard.press(edge);
+      const report = await page.evaluate((selectors) => {
+        const out: string[] = [];
+        const zone = document.querySelector<HTMLElement>('[data-region="right-zone"]')!.getBoundingClientRect();
+        for (const selector of selectors) {
+          const all = [...document.querySelectorAll<HTMLElement>(selector)];
+          if (all.length === 0) out.push(`${selector} is missing`);
+          for (const el of all) {
+            if (el.scrollWidth > el.clientWidth) out.push(`${selector} "${(el.textContent ?? '').trim()}" ${el.scrollWidth} > ${el.clientWidth}`);
+            for (const node of el.childNodes) {
+              if (node.nodeType !== Node.TEXT_NODE || !node.textContent?.trim()) continue;
+              const range = document.createRange();
+              range.selectNodeContents(node);
+              const tops = new Set([...range.getClientRects()].map((r) => Math.round(r.top)));
+              if (tops.size > 1) out.push(`${selector} "${node.textContent.trim()}" on ${tops.size} lines`);
+            }
+            if (el.closest('[data-region="right-zone"]') && el.getBoundingClientRect().right > zone.right + 0.5) out.push(`${selector} past the zone`);
+          }
+        }
+        return out;
+      }, SELECTORS);
+      for (const entry of report) failures.push(`${locale} ${edge === 'Home' ? 'minimum' : '1440'}: ${entry}`);
+    }
+  }
+  expect(failures).toEqual([]);
+});
+
+// m5b-ui-composer: the "ask the agent" box, its send control, the request
+// rows' state texts and their cancel and dismiss controls, in en, zh-TW, zh-CN
+// and the pseudo-locale, at 1440x900: an open request sent and one taken,
+// under them the closed one in each closed state in turn (answered with a
+// message, declined, cancelled, then expired by the agent's disconnect).
+test('the composer, its send control, the request states and their controls fit in every locale', async () => {
+  test.setTimeout(150_000);
+  scratch = fs.mkdtempSync(path.join(os.tmpdir(), 'siann-fit-composer-'));
+  const sessionDir = seedBundle(scratch, TRACKS);
+  app = await launchApp({ sessionDir, userData: path.join(scratch, 'user-data'), languages: ['en-US'] });
+  page = await app.firstWindow();
+  await expect(page.getByTestId('status')).toHaveAttribute('data-status', 'connected');
+  await resize({ width: 1440, height: 900 });
+  if ((await page.getByTestId('zone-right').getAttribute('data-visible')) !== 'true') await page.getByTestId('plans-button').click();
+  const ready = await app.evaluate(() => (globalThis as unknown as { __siannShell: { current(): { port: number; mcpToken: string } } }).__siannShell.current());
+  const agent = new Agent(ready.port, ready.mcpToken);
+  await agent.rpc('initialize', { protocolVersion: '2025-06-18', capabilities: {}, clientInfo: { name: 'mix-assistant', version: '1' } });
+  const field = page.locator('[data-part="composer"] textarea');
+  await expect(field).toBeEnabled();
+  const send = async (text: string) => {
+    const before = await page.locator('.request').count();
+    await field.fill(text);
+    await field.press('Enter');
+    await expect(field).toHaveValue('');
+    await expect(page.locator('.request[data-state="pending"]').last()).toContainText(text);
+    return before;
+  };
+  const failures: string[] = [];
+  const check = async (what: string) => {
+    for (const locale of LOCALES) {
+      await page.evaluate((next) => {
+        const store = (window as unknown as { __siannLocale?: { setLocale(l: string): void } }).__siannLocale;
+        if (!store) throw new Error('window.__siannLocale is missing (SIANN_SHELL_TEST=1)');
+        store.setLocale(next);
+      }, locale);
+      await expect(page.locator('html')).toHaveAttribute('data-locale', locale);
+      const report = await page.evaluate(() => {
+        const out: string[] = [];
+        const zone = document.querySelector<HTMLElement>('[data-region="right-zone"]')!.getBoundingClientRect();
+        for (const el of document.querySelectorAll<HTMLElement>('[data-part="composer"], [data-part="composer"] .send, .request-state, .request button, .composer-refusal')) {
+          const box = el.getBoundingClientRect();
+          if (el.scrollWidth > el.clientWidth) out.push(`${el.className} "${el.textContent}" ${el.scrollWidth} > ${el.clientWidth}`);
+          if (box.right > zone.right + 0.5 || box.left < zone.left - 0.5) out.push(`${el.className} "${el.textContent}" outside the zone`);
+          if (el.classList.contains('request-state')) {
+            const range = document.createRange();
+            range.selectNodeContents(el);
+            if (new Set([...range.getClientRects()].map((r) => Math.round(r.top))).size > 1) out.push(`state "${el.textContent}" wraps`);
+          }
+        }
+        // The placeholder on the box's one line.
+        const area = document.querySelector<HTMLTextAreaElement>('[data-part="composer"] textarea')!;
+        if (area.value === '' && area.scrollHeight > area.clientHeight + 1) out.push(`placeholder "${area.placeholder}" wraps`);
+        return out;
+      });
+      for (const entry of report) failures.push(`${locale} ${what}: ${entry}`);
+    }
+  };
+  await check('empty');
+  // next_request takes the oldest pending request.
+  const take = async () => ((await agent.tool('next_request', { waitMs: 0 })).request as { id: string }).id;
+  await send('Taken request');
+  await take();
+  await send('Open request');
+  await send('Answered request');
+  await take(); // "Open request" stays taken
+  await agent.tool('answer_request', { request: await take(), message: 'Lowered the drums by 3 dB' });
+  await expect(page.locator('.request[data-state="answered"]')).toHaveCount(1);
+  await check('answered');
+  await send('Declined request');
+  await agent.tool('answer_request', { request: await take(), decline: true, message: 'Not now' });
+  await expect(page.locator('.request[data-state="declined"]')).toHaveCount(1);
+  await check('declined');
+  await send('Cancelled request');
+  await page.locator('.request[data-state="pending"] [data-testid="request-cancel"]').last().click();
+  await expect(page.locator('.request[data-state="cancelled"]')).toHaveCount(1);
+  await page.locator('.request[data-state="cancelled"]').getByTestId('request-dismiss').waitFor();
+  await check('cancelled');
+  await agent.end();
+  await expect(page.locator('.request[data-state="expired"]')).toHaveCount(1);
+  await check('expired');
+  expect(failures).toEqual([]);
+});

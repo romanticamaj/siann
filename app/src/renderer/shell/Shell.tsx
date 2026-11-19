@@ -69,7 +69,7 @@ import {
 
 import { useT } from '../i18n/t';
 import type { CommandId, CommandRegistry, ZoneScope } from '../keys/commands';
-import { isTextField, resolveKey } from '../keys/dispatcher';
+import { composingKey, isTextField, resolveKey } from '../keys/dispatcher';
 import { CUBASE_PRESET } from '../keys/preset-cubase';
 import { capabilitySelector } from '../model/capabilities';
 import { FOCUS_COMMANDS, focusMove, ringStep, type FocusPlace } from '../keys/zone-focus';
@@ -86,6 +86,7 @@ import type { UndoHistory } from '../model/undo-history';
 import {
   effectiveLayout,
   limits,
+  rightTab,
   type EffectiveLayout,
   type ShellAction,
   type Viewport,
@@ -209,6 +210,10 @@ export interface ShellProps {
   readonly project: ReactNode;
   readonly lower: ReactNode;
   readonly right: ReactNode;
+  // The right zone's Media tab (m5b-ui-media), shown in place of `right` while its tab is chosen.
+  readonly rightMedia?: ReactNode;
+  // The Meter tab's panel (m5b-ui-meter), shown in the right zone on that tab.
+  readonly rightMeter?: ReactNode;
   // The end of the right zone's tab row (the hearing switch, m5-ui-port-plans).
   readonly rightHead?: ReactNode;
   // The start view (m5b-ui-project), over the zones; null when it is not up.
@@ -390,6 +395,8 @@ export function Shell({
   project,
   lower,
   right,
+  rightMedia = null,
+  rightMeter,
   rightHead,
   startView = null,
   studioSetup = null,
@@ -413,8 +420,10 @@ export function Shell({
   const covered = startView !== null && startView !== undefined && startView !== false;
   // The zones take no pointer, focus or key under the banner or the start view.
   const inert = offline || covered;
-  const latest = useRef({ effective, focused, offline, covered });
-  latest.current = { effective, focused, offline, covered };
+  // The Media tab exists while the engine lists media.import (m5b-ui-media; 3.0).
+  const media = can.has('media.import');
+  const latest = useRef({ effective, focused, offline, covered, media });
+  latest.current = { effective, focused, offline, covered, media };
 
   // Zones that open or close by a button or key animate (spec 1.6); drags,
   // arrow steps and the first layout do not.
@@ -490,6 +499,13 @@ export function Shell({
       commands.register('window', 'zone.right.plans', () =>
         dispatch((viewport) => ({ type: 'openTab', zone: 'right', tab: 'plans', viewport })),
       ),
+      // Ctrl+P (m5b-ui-media): the right zone on the Media tab, shown if it was
+      // collapsed; nothing on an engine without media.import (no Media tab).
+      commands.register('window', 'media.open', () => {
+        if (!latest.current.media) return false;
+        dispatch((viewport) => ({ type: 'openTab', zone: 'right', tab: 'media', viewport }));
+        return true;
+      }),
       ...[...FOCUS_COMMANDS].map((id) => commands.register('window', id, move(id))),
     ];
     return () => offs.forEach((off) => off());
@@ -571,6 +587,11 @@ export function Shell({
     const listener = (preset: typeof CUBASE_PRESET) => (event: KeyboardEvent) => {
       if (event.defaultPrevented) {
         note(preset, event, null, false, true);
+        return;
+      }
+      // An input method's key (Escape or Tab during a composition) moves no focus.
+      if (composingKey(event)) {
+        note(preset, event, null, false, false);
         return;
       }
       const binding = resolveKey(
@@ -657,24 +678,60 @@ export function Shell({
     </div>
   );
   // The right zone's tab row, the mockup's .p-head (m5-ui-port-plans;
-  // ui/right-zone.css): the Plans tab, the boxes of the Media and Meter tabs
-  // (pending: m5b-ui-media, m5b-ui-meter; UI redesign 3.0) and the hearing switch.
+  // ui/right-zone.css): the Plans tab, the Media tab (m5b-ui-media; the
+  // mockup's span.tab with ic('folder','s')) or, on an engine without
+  // media.import, its empty box (--tab-media-empty-w, shell.css), the Meter
+  // tab (m5b-ui-meter: with the bars icon, on an engine that lists
+  // features.loudness, its empty box .tab-meter-empty otherwise) and the
+  // hearing switch. A stored tab the engine lacks shows Plans.
+  const meterTab = can.feature('loudness');
+  const shownRight = rightTab(state.layout, { media, meter: meterTab });
   const rightTabs = (
     <div className="p-head" role="tablist" data-part="right-tabs">
       <button
         type="button"
         role="tab"
-        className="tab on"
+        className={shownRight === 'plans' ? 'tab on' : 'tab'}
         data-testid="tab-right-plans"
         data-part="tab-plans"
-        aria-selected={state.layout.tabs.right === 'plans'}
+        aria-selected={shownRight === 'plans'}
         onClick={() => store.dispatch({ type: 'tab', zone: 'right', tab: 'plans' })}
       >
         <Icon name="spark" small />
         {t('tab.plans')}
       </button>
-      <Hold className="hold-tab-media" />
-      <Hold className="hold-tab-meter" />
+      {media ? (
+        <button
+          type="button"
+          role="tab"
+          className={shownRight === 'media' ? 'tab on' : 'tab'}
+          data-testid="tab-right-media"
+          data-part="tab-media"
+          aria-selected={shownRight === 'media'}
+          onClick={() => store.dispatch({ type: 'tab', zone: 'right', tab: 'media' })}
+        >
+          <Icon name="folder" small />
+          {t('media.tab')}
+        </button>
+      ) : (
+        <Hold className="tab-media-empty" />
+      )}
+      {meterTab ? (
+        <button
+          type="button"
+          role="tab"
+          className={`tab${shownRight === 'meter' ? ' on' : ''}`}
+          data-testid="tab-right-meter"
+          data-part="tab-meter"
+          aria-selected={shownRight === 'meter'}
+          onClick={() => store.dispatch({ type: 'tab', zone: 'right', tab: 'meter' })}
+        >
+          <Icon name="bars" small />
+          {t('tab.meter')}
+        </button>
+      ) : (
+        <Hold className="tab-meter-empty" />
+      )}
       {rightHead}
     </div>
   );
@@ -755,7 +812,7 @@ export function Shell({
         onFocus={(z) => focusZone(z, false)}
         frameRef={frameRef('right')}
       >
-        {right}
+        {shownRight === 'media' ? rightMedia : shownRight === 'meter' ? rightMeter : right}
       </ZoneFrame>
       <StatusBar client={client} plans={plans} engineStatus={engineStatus} saved={saved} />
       {startView}

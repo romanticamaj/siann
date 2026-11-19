@@ -45,15 +45,18 @@ test("the mockup's six steps in English, with plan.preview", () => {
   const rows = stepRows(MOCKUP_STEPS, mockupPreview(), NAMES, en);
   assert.deepEqual(rows.map((r) => [html(r.title), html(r.detail)]), [
     ['Add track <b>Pad</b>', 'stereo · after FX'],
-    ['Place a clip on Pad', 'bar 9.1 → 17.1 · pad_swell.wav'],
+    ['Place <b>pad_swell.wav</b> on Pad', 'bar 9.1 → 17.1 · pad_swell.wav'],
     ['<b>Vox BG</b> gain', '<s>−9.0 dB</s> → <em>−6.0 dB</em>'],
     ['<b>Keys</b> pan', '<s>L35</s> → <em>L20</em>'],
     ['Unmute <b>FX</b>', '<s>muted</s> → <em>on</em>'],
-    ['Move a clip on FX', '<s>bar 6.1</s> → <em>bar 7.1</em> · ends on 9.1'],
+    ['Move <b>Riser</b> on FX', '<s>bar 6.1</s> → <em>bar 7.1</em> · ends on 9.1'],
   ]);
-  // The mockup's own strings, where M5 can derive them (the clip titles name
-  // the clip by its track: their text is m5b-ui-media's).
-  for (const index of [0, 2, 3, 4]) assert.equal(html(rows[index]!.title), MOCK_STEPS[index]![0], `title of step ${index + 1}`);
+  // The mockup's own strings, where they can be derived: a step that names a
+  // clip names it by its media (m5b-ui-media), so step 6 is the mockup's;
+  // step 2's clip is "Pad swell" in the mockup and its media pad_swell.wav.
+  for (const index of [0, 2, 3, 4, 5]) assert.equal(html(rows[index]!.title), MOCK_STEPS[index]![0], `title of step ${index + 1}`);
+  // Only the two steps that name a clip carry the title part.
+  assert.deepEqual(rows.map((r) => r.namesClip === true), [false, true, false, false, false, true]);
   for (const index of [0, 1, 2, 3, 4, 5]) assert.equal(html(rows[index]!.detail), MOCK_STEPS[index]![1], `detail of step ${index + 1}`);
   assert.deepEqual(
     rows.map((r) => r.colour),
@@ -69,7 +72,7 @@ test('names are their own bidi isolates inside the emphasis', () => {
 test('zh-Hant equals the mockup\'s ZH entries; zh-Hans is its simplified form', () => {
   const zh = mockupZh();
   const rows = stepRows(MOCKUP_STEPS, mockupPreview(), NAMES, translator('zh-Hant'));
-  for (const index of [0, 2, 3, 4]) {
+  for (const index of [0, 2, 3, 4, 5]) {
     const want = zh[MOCK_STEPS[index]![0]];
     assert.ok(want, `the ZH table has step ${index + 1}`);
     assert.equal(html(rows[index]!.title), want, `title of step ${index + 1}`);
@@ -146,11 +149,26 @@ test('every other op has a title and, where it has one, a detail', () => {
     ['Trim a clip on FX', '<s>4 s</s> → <em>2 s</em>'],
     ['Clip gain on FX', '<s>0.0 dB</s> → <em>−3.0 dB</em>'],
     // The trim two steps before shortened the clip to a bar.
-    ['Move a clip to Keys', '<s>bar 6.1</s> → <em>bar 7.1</em> · ends on 8.1'],
+    ['Move <b>Riser</b> to Keys', '<s>bar 6.1</s> → <em>bar 7.1</em> · ends on 8.1'],
     // After the track the plan's first step removed: the last one left.
     ['Add track <b>Mono</b>', 'mono · after FX'],
     ['Rename the session to Night', ''],
   ]);
   assert.equal(rows[9]!.colour, '--tx-4', 'a step on no track');
   assert.equal(rows[8]!.colour, '--ai');
+});
+
+test('a step that names a clip whose media has no name, or an unknown clip, keeps the generic title and no title part', () => {
+  const steps = [
+    { op: 'clip.place', clipId: 'clp_x', trackId: T.fx, mediaId: 'med_unnamed', position: { domain: 'audio', value: '0' }, sourceStart: '0', length: '48000' },
+    { op: 'clip.move', clipId: 'clp_unknown', position: { domain: 'audio', value: String(BAR) } },
+  ];
+  const rows = stepRows(steps, null, NAMES, en);
+  assert.deepEqual(rows.map((r) => html(r.title)), ['Place a clip on FX', 'Move a clip on a track']);
+  assert.deepEqual(rows.map((r) => r.namesClip === true), [false, false]);
+  const zh = stepRows(MOCKUP_STEPS, null, NAMES, translator('zh-Hant'));
+  assert.equal(html(zh[1]!.title), '在 Pad 放置 <b>pad_swell.wav</b>');
+  assert.equal(html(zh[5]!.title), '移動 FX 上的 <b>Riser</b>');
+  const hans = stepRows(MOCKUP_STEPS, null, NAMES, translator('zh-Hans'));
+  assert.equal(html(hans[5]!.title), '移动 FX 上的 <b>Riser</b>');
 });

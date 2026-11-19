@@ -641,16 +641,17 @@ test('the licence line stays visible at 1440x900 and 1024x700 in every locale, a
 });
 
 // The top bar in small windows (UI redesign spec 2.4 and 3.0). From 1440 down
-// to 1301 px the transport is centred and the branch chip (m5b-ui-audition)
-// and the boxes of the pending DSP load and Record button keep their space;
-// from 1300 px down the transport follows the left group and those three go; from 1100 px
+// to 1301 px the transport is centred, the branch chip (m5b-ui-audition) and
+// the DSP load (m5b-ui-meter: the engine lists features.load) are shown and
+// the box of the pending Record button keeps its space; from 1300 px down the
+// transport follows the left group and those three go; from 1100 px
 // down the brand and the locator, tempo and signature displays go too (the
 // Sig cell, m5b-ui-signature), and the session name shortens instead of
 // going. The bar never overflows.
 test('the top bar gives way at 1300 and 1100 px as spec 2.4 says', async () => {
   const sessionDir = seedBundle(scratch, TRACKS);
   await launch(sessionDir);
-  const HOLDS = ['[data-part=branch-chip]', '.hold-dsp-load', '.hold-transport-record'];
+  const HOLDS = ['[data-part=branch-chip]', '[data-part=dsp-load]', '.hold-transport-record'];
   const measure = () =>
     page.evaluate((holds) => {
       const bar = document.querySelector<HTMLElement>('[data-testid=top-bar]')!;

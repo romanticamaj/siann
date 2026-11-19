@@ -28,6 +28,8 @@ export interface ClipName {
   readonly position: string;
   // The clip's length in frames, when known (the step rows' "ends on").
   readonly length?: string;
+  // The media it plays, when known: a step names the clip by its media's name (m5b-ui-media).
+  readonly mediaId?: string;
 }
 
 export interface SlotName {
@@ -71,7 +73,12 @@ export function namesFromSnapshot(snapshot: Snapshot | null, timeFormat: TimeFor
       const clip = entity(`clip:${id}`);
       const position = clip?.position as { domain?: unknown; value?: unknown } | undefined;
       if (typeof clip?.trackId !== 'string' || position?.domain !== 'audio' || typeof position.value !== 'string') return undefined;
-      return { trackId: clip.trackId, position: position.value, ...(typeof clip.length === 'string' ? { length: clip.length } : {}) };
+      return {
+        trackId: clip.trackId,
+        position: position.value,
+        ...(typeof clip.length === 'string' ? { length: clip.length } : {}),
+        ...(typeof clip.mediaId === 'string' ? { mediaId: clip.mediaId } : {}),
+      };
     },
     media: (id) => {
       const name = entity(`media:${id}`)?.name;
@@ -112,7 +119,10 @@ export function overlay(names: StepNames, earlier: readonly Record<string, unkno
       case 'clip.place': {
         const position = audioFrames(step.position);
         const length = str(step.length);
-        if (clipId && trackId && position !== undefined) clips.set(clipId, { trackId, position, ...(length !== undefined ? { length } : {}) });
+        const mediaId = str(step.mediaId);
+        if (clipId && trackId && position !== undefined) {
+          clips.set(clipId, { trackId, position, ...(length !== undefined ? { length } : {}), ...(mediaId !== undefined ? { mediaId } : {}) });
+        }
         break;
       }
       case 'clip.move': {
@@ -253,8 +263,12 @@ export function describeStep(
       break;
     case 'track.explode':
       return t('step.explodeTrack', { track: track() });
-    case 'clip.place':
-      return t('step.placeClip', { track: track(), time: position(audioFrames(step.position), names) ?? t('step.newPosition') });
+    case 'clip.place': {
+      // Named by its media (m5b-ui-media), when the media has a name.
+      const time = position(audioFrames(step.position), names) ?? t('step.newPosition');
+      const media = named(typeof step.mediaId === 'string' ? names.media?.(step.mediaId) : undefined);
+      return media ? t('step.placeMedia', { media, track: track(), time }) : t('step.placeClip', { track: track(), time });
+    }
     case 'clip.move': {
       const clip = clipOf(step.clipId, names, t, false);
       const time = position(audioFrames(step.position), names) ?? t('step.newPosition');

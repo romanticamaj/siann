@@ -94,7 +94,8 @@ test('the renderer connects with the token handshake', async () => {
   });
   expect(preferences).toEqual({ contextIsolation: true, nodeIntegration: false, sandbox: true });
   // The preload bridge exposes the engine endpoint and, since m5b-ui-project,
-  // the shell's project record and dialogs and the menu's two directions, and
+  // the shell's project record and dialogs and the menu's two directions,
+  // since m5b-ui-media the audio file dialog and a dropped file's path, and
   // nothing else; the MCP token stays in the main process.
   const bridge = await page.evaluate(async () => {
     const siann = (window as unknown as { siann: Record<string, Record<string, unknown>> }).siann;
@@ -105,13 +106,15 @@ test('the renderer connects with the token handshake', async () => {
       engine: Object.keys(siann.engine),
       project: Object.keys(siann.project ?? {}),
       menu: Object.keys(siann.menu ?? {}),
+      media: Object.keys(siann.media ?? {}),
       current: current ? Object.keys(current) : null,
     };
   });
-  expect([...bridge.top].sort()).toEqual(['engine', 'menu', 'project']);
+  expect([...bridge.top].sort()).toEqual(['engine', 'media', 'menu', 'project']);
   expect([...bridge.project].sort()).toEqual(['chooseNew', 'chooseOpen', 'onChange', 'opened', 'state']);
   expect([...bridge.menu].sort()).toEqual(['onCommand', 'set']);
   expect([...bridge.engine].sort()).toEqual(['current', 'onChange']);
+  expect([...bridge.media].sort()).toEqual(['choose', 'pathForFile']);
   expect([...(bridge.current ?? [])].sort()).toEqual(['port', 'token']);
 });
 
@@ -376,6 +379,14 @@ test('the whole window has no id of a pending part and every landed id of the mo
     expect(landed.length).toBeGreaterThan(60);
     expect(named.filter((id) => mode(id) === 'pending').length).toBeGreaterThan(10);
     expect(landed.filter((id) => !shown.includes(id)), 'landed ids of the mockup missing from the window').toEqual([]);
+    // The ids the mockup's markup computes: a plan step that names a clip
+    // (step()'s sixth argument true) wraps its title in plan-step-N-title
+    // (m5b-ui-media). Checked for presence whether or not pixels.dynamic masks
+    // them (it masks plan-step-2-title's pixels only).
+    const titled = [...mockup.matchAll(/\$\{step\((\d+),.*,(?:true|false),true\)\}/g)].map((m) => `plan-step-${m[1]!}-title`);
+    expect(titled).toEqual(['plan-step-2-title', 'plan-step-6-title']);
+    expect(titled.filter((id) => mode(id) === 'report')).toEqual(titled);
+    expect(titled.filter((id) => !shown.includes(id)), 'computed ids of the mockup missing from the window').toEqual([]);
   } finally {
     await app.close().catch(() => undefined);
     fs.rmSync(scratch, { recursive: true, force: true, maxRetries: 10, retryDelay: 200 });

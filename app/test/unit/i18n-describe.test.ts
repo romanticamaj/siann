@@ -270,6 +270,10 @@ const CODES = [
   'plugin_missing',
   'editor_failed',
   'no_plugin_host',
+  // The "ask the agent" box's refusals (m5b-ui-composer).
+  'agent_busy',
+  'agent_not_connected',
+  'invalid_request_text',
 ];
 
 test('engine error codes: catalog text in Chinese, the engine\'s own message in English', () => {

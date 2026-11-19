@@ -421,9 +421,6 @@ test('the Plans tab\'s absent parts keep their boxes through hold tokens applied
   const shell = read('app', 'renderer', 'shell.css');
   // The part, its sides, and whether a value is set again per Chinese locale.
   const holds = {
-    composer: [['h'], false],
-    'tab-media': [['w'], true],
-    'tab-meter': [['w'], true],
   };
   for (const [part, [sides, perLocale]] of Object.entries(holds)) {
     assert.equal(MANIFEST.gates[ruleOf(part).gate], 'pending', `${part} is pending`);
@@ -434,7 +431,7 @@ test('the Plans tab\'s absent parts keep their boxes through hold tokens applied
       assert.ok(shell.includes(`var(--hold-${part}-${side})`), `shell.css applies --hold-${part}-${side}`);
     }
   }
-  if (Object.values(holds).some(([, perLocale]) => perLocale)) assert.match(tokens, /:root:lang\(zh-TW\)[^{]*\{[^}]*--hold-tab-media-w/);
+  if (Object.values(holds).some(([, perLocale]) => perLocale)) assert.match(tokens, /:root:lang\(zh-TW\)[^{]*\{[^}]*--hold-tab-meter-w/);
   // The rules the port replaced are gone from shell.css: the old card, the
   // hearing label, the badges by state key, and the right zone's .zone-tabs.
   for (const selector of ['.plan-review', '.plan-list', '.plan-card', '.plan-detail', '.plan-steps-select', '.plan-step ', '.step-label', '.hearing-switch', '.hearing-label', '.badge-', '.plan-diff', '.plan-action', '.plan-landed', '.plan-card-lead']) {
@@ -449,7 +446,6 @@ test('the chrome\'s gate is report, and the boxes of its absent parts are held b
   const tokens = read('app', 'renderer', 'tokens.css');
   const holds = {
     'transport-record': ['w', 'h'],
-    'dsp-load': ['w'],
     'zone-button-channel': ['w', 'h'],
   };
   for (const [part, sides] of Object.entries(holds)) {
@@ -668,7 +664,12 @@ test('the tools M5b leaves out, the master\'s mute, rack and e, and the strips\'
 test('the Plans tab masks only what M5 cannot derive, and each mask names the feature that removes it', () => {
   const dynamic = MANIFEST.pixels.dynamic;
   const masked = (id) => dynamic.some((pattern) => glob(pattern).test(id));
-  for (const id of ['plan-step-2-title', 'plan-step-6-title']) assert.ok(masked(id), `${id} is masked`);
+  // m5b-ui-media names a clip by its media: step 6 ("Move Riser on FX") is
+  // compared, step 2 ("Pad swell" from pad_swell.wav) keeps its mask (10.11).
+  assert.ok(masked('plan-step-2-title'), 'plan-step-2-title is masked');
+  assert.ok(!masked('plan-step-6-title'), 'plan-step-6-title is compared');
+  assert.ok(dynamic.includes('plan-step-2-title'), 'pixels.dynamic names plan-step-2-title');
+  assert.ok(!dynamic.includes('plan-step-*-title'), 'pixels.dynamic no longer names plan-step-*-title');
   // m5b-ui-plan-metadata shows the titles and the agent's name: the history rows are compared.
   for (const id of ['plan-history-1', 'plan-history-2', 'plan-history-3']) assert.ok(!masked(id), `${id} is compared`);
   // Derived in M5, so compared: the summary chips, the approve button, the steps, the history head.
@@ -680,7 +681,8 @@ test('the Plans tab masks only what M5 cannot derive, and each mask names the fe
   // step titles that name a clip are pending parts of the feature that shows names.
   assert.equal(ruleOf('plan-history-2').gate, 'm5-ui-port-plans');
   assert.equal(ruleOf('plan-step-6-title').gate, 'm5b-ui-media');
-  assert.equal(MANIFEST.gates['m5b-ui-media'], 'pending');
+  assert.equal(ruleOf('plan-step-2-title').gate, 'm5b-ui-media');
+  assert.equal(MANIFEST.gates['m5b-ui-media'], 'report');
   // The mockup marks a title as a part only where it names a clip: steps 2 and 6.
   assert.equal((MOCKUP.match(/\$\{step\(\d,[^\n]*,false,true\)\}/g) || []).length, 2);
   assert.match(MOCKUP, /\$\{step\(2,'Place <b>Pad swell<\/b> on Pad',[^\n]*,false,true\)\}/);
@@ -816,9 +818,42 @@ test('the small-window breakpoints of shell.css are the ones spec 2.4 and 3.0 de
     return '';
   };
   assert.match(block(1300), /\.topbar \{ grid-template-columns: auto auto minmax\(0, 1fr\); \}/);
-  assert.match(block(1300), /\[data-part="branch-chip"\], \.hold-dsp-load, \.hold-transport-record \{ display: none; \}/);
+  assert.match(block(1300), /\[data-part="branch-chip"\], \.hold-transport-record, \.dsp, \.dsp-load-empty \{ display: none; \}/);
   assert.match(block(1100), /\.brand \{ display: none; \}/);
   assert.match(block(1100), /\.lcd \.cell\[data-part="display-signature"\]/);
+});
+
+// ---- m5b-ui-meter (UR-14; UI redesign 3.0, 10.7 5, 10.11): the DSP load, the
+// master's loudness and the Meter tab landed. Their gate is report; the hold
+// tokens of dsp-load and tab-meter are gone, and the empty boxes of an engine
+// without features.load or features.loudness take the same values from two
+// permanent tokens (tab-meter per locale), applied by shell.css only.
+
+test('m5b-ui-meter landed: its gate is report, its holds are gone, and two permanent empty-width tokens keep their values', () => {
+  assert.equal(MANIFEST.gates['m5b-ui-meter'], 'report');
+  for (const id of ['dsp-load', 'strip-master-loudness', 'tab-meter']) assert.equal(ruleOf(id).gate, 'm5b-ui-meter', id);
+  // Dynamic content, masked in layer 3 as meter levels are.
+  for (const id of ['dsp-load', 'strip-master-loudness']) assert.ok(MANIFEST.pixels.dynamic.includes(id), id);
+  const tokens = read('app', 'renderer', 'tokens.css');
+  const shell = read('app', 'renderer', 'shell.css');
+  assert.doesNotMatch(tokens, /--hold-dsp-load-w|--hold-tab-meter-w/);
+  assert.doesNotMatch(shell, /hold-dsp-load|hold-tab-meter/);
+  const values = (name) => [...tokens.matchAll(new RegExp(`--${name}:\\s*([^;]+);`, 'g'))].map((m) => m[1].trim());
+  // The values the hold tokens carried (the mockup's measured boxes).
+  assert.deepEqual(values('dsp-load-empty-w'), ['calc(99.484px * var(--scale))']);
+  assert.deepEqual(values('tab-meter-empty-w'), ['calc(69.031px * var(--scale))', 'calc(70.688px * var(--scale))']);
+  // Set for :root, then again for zh-TW and zh-CN.
+  assert.match(tokens, /:root:lang\(zh-TW\), :root:lang\(zh-CN\) \{[^}]*--tab-meter-empty-w: calc\(70\.688px \* var\(--scale\)\);/);
+  // Applied by shell.css only, and hidden under 1300 px with the DSP load.
+  assert.match(shell, /\.dsp-load-empty \{[^}]*width: var\(--dsp-load-empty-w\);[^}]*height: var\(--icon-s\);[^}]*margin-right: var\(--space-half\);/);
+  assert.match(shell, /\.tab-meter-empty \{[^}]*width: var\(--tab-meter-empty-w\);[^}]*height: var\(--zone-head\);/);
+  const ui = fs.readdirSync(path.join(ROOT, 'app', 'renderer', 'ui')).map((file) => read('app', 'renderer', 'ui', file)).join('\n');
+  assert.doesNotMatch(ui, /--dsp-load-empty-w|--tab-meter-empty-w/);
+  assert.doesNotMatch(MOCKUP, /dsp-load-empty|tab-meter-empty/);
+  // The Meter panel's rules are shell.css's, with class names of their own and existing tokens.
+  assert.match(shell, /\.meter-panel \{/);
+  assert.match(shell, /\.meter-panel \.meter \.ch \{ width: var\(--meter-master-w\); \}/);
+  assert.match(shell, /\.meter-panel \.meter \{[^}]*height: var\(--meter-scale-h\);/);
 });
 
 // ---- m5-ui-port-inspector (UI redesign 10.10, P1-14): the left zone ported from the mockup's template
@@ -1285,6 +1320,40 @@ test("the plan metadata's gate is report, its holds are gone, and shell.css size
   assert.ok(!MANIFEST.pixels.dynamic.some((pattern) => /plan-history/.test(pattern)), 'no plan-history mask');
 });
 
+// ---- m5b-ui-composer: the "ask the agent" box (UI redesign 4.4, 3.0)
+
+test("the composer's gate is report, its hold is gone, and shell.css sizes its empty box by a calc() of tokens", () => {
+  assert.equal(MANIFEST.gates['m5b-ui-composer'], 'report');
+  assert.equal(ruleOf('composer').gate, 'm5b-ui-composer');
+  const tokens = read('app', 'renderer', 'tokens.css');
+  assert.ok(!tokens.includes('--hold-composer-h'), '--hold-composer-h is deleted');
+  assert.doesNotMatch(read('app', 'src', 'renderer', 'tokens.ts'), /hold-composer/, 'tokens.ts is regenerated');
+  const shell = read('app', 'renderer', 'shell.css').replace(/\/\*[\s\S]*?\*\//g, '');
+  assert.ok(!shell.includes('.hold-composer'), 'no .hold-composer rule');
+  // The mockup's one-line box with its bottom margin: the send control, the
+  // padding, the border and the margin the shared .composer rule gives it.
+  const rule = /(?:^|\})\s*\.composer-empty\s*\{([^}]*)\}/.exec(shell);
+  assert.ok(rule, 'shell.css has a .composer-empty rule of its own');
+  const height = /(?:^|;)\s*height:\s*([^;]+)/.exec(rule[1])?.[1].trim();
+  assert.match(height ?? '', /^calc\(\s*var\(--composer-send\) \+ 2 \* var\(--space-9q\) \+ 2 \* var\(--hairline\) \+ var\(--space-2h\)\s*\)$/, '.composer-empty height');
+  assert.doesNotMatch(rule[1], /\d(px|rem|em)|--hold-/, '.composer-empty names tokens only');
+  // The app-only rules of the box (its field, its growth, the request rows) are shell.css's, never app/renderer/ui's.
+  for (const file of fs.readdirSync(path.join(ROOT, 'app', 'renderer', 'ui'))) {
+    assert.doesNotMatch(read('app', 'renderer', 'ui', file), /composer-empty|composer textarea|\.requests?\b/, `ui/${file} is unchanged`);
+  }
+  assert.match(shell, /\.composer textarea\s*\{/, 'the field reset is in shell.css');
+  // The box rests at one line, grows with its text to four lines, then scrolls
+  // (UI redesign 4.4); app/test/e2e/composer.spec.ts measures it in the window.
+  const field = /(?:^|\})\s*\.composer textarea\s*\{([^}]*)\}/.exec(shell);
+  assert.ok(field, 'shell.css has a .composer textarea rule');
+  const decl = (name) => new RegExp(`(?:^|;)\\s*${name}\\s*:\\s*([^;]+);`).exec(field[1])?.[1].trim();
+  assert.equal(decl('line-height'), '1.45', 'the field line height');
+  assert.match(decl('min-height') ?? '', /^calc\(\s*1\.45 \* var\(--fs-11h\)\s*\)$/, 'rests at one line');
+  assert.match(decl('max-height') ?? '', /^calc\(\s*4 \* 1\.45 \* var\(--fs-11h\)\s*\)$/, 'grows to at most four lines');
+  assert.equal(decl('field-sizing'), 'content', 'grows with its text');
+  assert.equal(decl('overflow-y'), 'auto', 'scrolls past four lines');
+});
+
 // ---- m5b-ui-ghosts (UI redesign 4.2, 10.4): the ghosts, the proposal pill and
 // the Inspector's Agent changes landed, so their gate is report and their
 // holds are gone; the pill needs no box when absent, so no empty-width token
@@ -1373,4 +1442,34 @@ test('m5b-ui-audition: before the first snapshot the chip is exempt from the emp
   // The table of authorised permanent tokens does not name the chip.
   assert.doesNotMatch(rules, /\| A permanent `--<part>-empty-w` token[^\n]*branch-chip/);
   for (const file of [['app', 'renderer', 'tokens.css'], ['app', 'renderer', 'shell.css'], ['app', 'src', 'renderer', 'tokens.ts']]) assert.doesNotMatch(read(...file), /branch-chip-empty/, file.join('/'));
+});
+
+// ---- m5b-ui-media (UR-5; UI redesign 3.0, 10.7, 5 and 10.11, 9): the Media
+// tab landed, so its gate is report and its hold is gone; on an engine
+// without media.import its box keeps its width through the permanent
+// --tab-media-empty-w, the hold's values per locale, applied from shell.css.
+test('m5b-ui-media: the gate is report, --hold-tab-media-w is gone and --tab-media-empty-w keeps the tab box per locale', () => {
+  assert.equal(MANIFEST.gates['m5b-ui-media'], 'report');
+  assert.equal(ruleOf('tab-media').gate, 'm5b-ui-media');
+  const tokens = read('app', 'renderer', 'tokens.css');
+  const shell = read('app', 'renderer', 'shell.css');
+  assert.ok(!tokens.includes('--hold-tab-media-w'), 'no --hold-tab-media-w in tokens.css');
+  assert.ok(!shell.includes('--hold-tab-media-w'), 'no --hold-tab-media-w in shell.css');
+  assert.doesNotMatch(shell, /\.hold-tab-media/);
+  const blocks = [...tokens.matchAll(/(:root[^{]*)\{([^}]*)\}/g)].map((m) => ({ selector: m[1].trim(), body: m[2] }));
+  const value = (block) => /--tab-media-empty-w:\s*calc\(([\d.]+)px \* var\(--scale\)\);/.exec(block.body)?.[1];
+  const root = blocks.filter((block) => block.selector === ':root').map(value).filter(Boolean);
+  assert.deepEqual(root, ['71.078'], ':root sets --tab-media-empty-w once, the mockup en box');
+  const zh = blocks.filter((block) => /:root:lang\(zh-TW\)/.test(block.selector) && /:root:lang\(zh-CN\)/.test(block.selector)).map(value).filter(Boolean);
+  assert.deepEqual(zh, ['59.125'], 'the zh-TW / zh-CN block sets it again, the mockup zh-TW box');
+  // Applied from shell.css only, never from the shared rules.
+  assert.match(shell, /\.tab-media-empty\s*\{[^}]*width:\s*var\(--tab-media-empty-w\)/);
+  for (const file of fs.readdirSync(path.join(ROOT, 'app', 'renderer', 'ui'))) {
+    assert.ok(!read('app', 'renderer', 'ui', file).includes('--tab-media-empty-w'), `ui/${file} does not apply it`);
+  }
+  // pixels.dynamic narrows to the one title that needs a clip name of its own.
+  assert.ok(MANIFEST.pixels.dynamic.includes('plan-step-2-title'));
+  assert.ok(!MANIFEST.pixels.dynamic.includes('plan-step-*-title'));
+  // The rule itself does not change.
+  assert.deepEqual(MANIFEST.rules.find((rule) => rule.gate === 'm5b-ui-media').match, ['tab-media', 'plan-step-*-title']);
 });

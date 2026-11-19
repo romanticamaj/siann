@@ -56,7 +56,7 @@ export function mockupSnapshot(): Snapshot {
   return snapshotOf(
     tracks.map((t) => t.id),
     tracks,
-    [pad, media('med_fx', String(16 * RATE))],
+    [pad, { ...media('med_fx', String(16 * RATE)), name: 'Riser' }],
     [clip(RISER, T.fx, 'med_fx', String(5 * BAR), '0', String(2 * BAR))],
     'r39',
   );

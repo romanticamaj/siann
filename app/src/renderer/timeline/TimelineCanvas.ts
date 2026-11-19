@@ -222,6 +222,7 @@ import {
   type LocatorRange,
 } from './locators';
 import { DEFAULT_SNAP, gridStepFrames, moveSnapperFor, snapContext, snapperFor, type SnapSettings, type Snapper } from './snap';
+import { planDrop, type DropPlan } from './media-drop';
 import { SELECTED_OUTLINE_W, clipPalette, trackColourVar, type ClipPalette } from './track-colour';
 import { waveformColumns, type WaveColumn } from './waveform';
 import { ZOOM_STEP, maxScrollY, scrollFramesBy, scrollYBy, stepLaneHeight, zoomAbout, zoomFull, zoomToRange } from './zoom';
@@ -785,6 +786,16 @@ export class TimelineCanvas {
     return () => {
       this.#heightRequests = this.#heightRequests.filter((l) => l !== listener);
     };
+  }
+
+  // Where a drop of `count` files or a Media tab row at a client point lands
+  // (m5b-ui-media; media-drop.ts): the snapped position and each file's lane,
+  // with this canvas's view and snap state; null on the ruler or the marker row.
+  dropPlan(clientX: number, clientY: number, count: number): DropPlan | null {
+    const snapshot = this.#options.model.getSnapshot();
+    if (!snapshot) return null;
+    const { x, y } = this.#point({ clientX, clientY });
+    return planDrop({ snapshot, view: this.#view, snap: this.#snap, x, y, count });
   }
 
   // Arms (or disarms, with null) the media a click on a lane places.

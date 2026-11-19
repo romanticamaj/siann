@@ -19,7 +19,9 @@ export function structuralBlocked(heard: string | null): boolean {
 const TRACK_OPS = new Set(['track.add', 'track.remove', 'track.rename', 'track.set_mute', 'track.set_solo', 'track.set_pan', 'track.set_gain', 'track.set_input', 'track.set_output']);
 // An insert, its removal and its bypass (m5b-ui-inserts-master) commit onto
 // main too; a plugin's editor window, the registry and an approval do not.
-const OTHER_OPS = new Set(['media.import', 'transport.record', 'plugin.instantiate', 'plugin.insert', 'plugin.remove', 'plugin.set_bypass']);
+// A media's rename and removal (m5b-ui-media) commit onto main as
+// track.rename does.
+const OTHER_OPS = new Set(['media.import', 'media.rename', 'media.remove', 'transport.record', 'plugin.instantiate', 'plugin.insert', 'plugin.remove', 'plugin.set_bypass']);
 
 export function isStructural(op: string): boolean {
   if (op.startsWith('clip.') || op.startsWith('marker.')) return true;

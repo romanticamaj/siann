@@ -9,7 +9,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 
 import type { Binding } from '../../src/renderer/keys/commands';
-import { chordOf, isTextField, resolveKey, type KeyInput } from '../../src/renderer/keys/dispatcher';
+import { chordOf, composingKey, isTextField, resolveKey, type KeyInput } from '../../src/renderer/keys/dispatcher';
 import { CUBASE_PRESET } from '../../src/renderer/keys/preset-cubase';
 
 const NONE = { ctrl: false, alt: false, shift: false, meta: false };
@@ -73,6 +73,37 @@ test('nothing fires while a text field has focus', () => {
   );
   assert.equal(resolveKey(input({ code: 'Enter', key: 'Enter', targetIsTextField: true }), CUBASE_PRESET), null);
   assert.equal(resolveKey(input({ code: 'Delete', key: 'Delete', targetIsTextField: true }), CUBASE_PRESET), null);
+});
+
+// m5b-ui-composer (acceptance 1 as corrected; UI redesign 2.1): from the
+// "ask the agent" box no transport, edit or tool command runs, while the focus
+// keys still move the focus.
+test('from a text field Space, Delete, a digit, Mod+Z and numpad Enter run nothing; the focus keys still resolve', () => {
+  const field = (code: string, key: string, modifiers = NONE) => resolveKey(input({ code, key, modifiers, targetIsTextField: true }), CUBASE_PRESET);
+  // Each of them is bound outside a field.
+  for (const [code, key, modifiers] of [
+    ['Space', ' ', NONE],
+    ['Delete', 'Delete', NONE],
+    ['Digit1', '1', NONE],
+    ['KeyZ', 'z', { ...NONE, ctrl: true }],
+    ['NumpadEnter', 'Enter', NONE],
+  ] as const) {
+    assert.notEqual(resolveKey(input({ code, key, modifiers }), CUBASE_PRESET), null, `${code} is bound in the project zone`);
+    assert.equal(field(code, key, modifiers), null, `${code} from the box`);
+  }
+  assert.equal(field('KeyA', 'a'), null, 'a typed character');
+  assert.equal(field('Escape', 'Escape')?.commandId, 'focus.zoneRoot');
+  assert.equal(field('Tab', 'Tab')?.commandId, 'focus.next');
+  assert.equal(field('Tab', 'Tab', { ...NONE, shift: true })?.commandId, 'focus.prev');
+  assert.equal(field('F6', 'F6')?.commandId, 'focus.nextZone');
+  assert.equal(field('F6', 'F6', { ...NONE, shift: true })?.commandId, 'focus.prevZone');
+});
+
+test('a key that belongs to an input-method composition is not the shell\'s (isComposing, or keyCode 229)', () => {
+  assert.equal(composingKey({ isComposing: true, keyCode: 27 }), true, 'Escape that cancels a composition');
+  assert.equal(composingKey({ isComposing: false, keyCode: 229 }), true);
+  assert.equal(composingKey({ isComposing: false, keyCode: 27 }), false);
+  assert.equal(composingKey({ isComposing: false, keyCode: 9 }), false);
 });
 
 test('isTextField: input, textarea, select and contenteditable', () => {
@@ -251,17 +282,17 @@ test('Ctrl+Alt+G toggles the ghosts from any zone, Cmd+Alt+G on macOS, and not w
   }
 });
 
-test('Ctrl+P opens the Pool on Windows and Linux, Cmd+P on macOS, from any zone and not while typing (m5-ui-port-toolbar)', () => {
+test('Ctrl+P opens the Media tab on Windows and Linux, Cmd+P on macOS, from any zone and not while typing (m5b-ui-media)', () => {
   const ctrlP = input({ code: 'KeyP', key: 'p', modifiers: { ...NONE, ctrl: true } });
   const cmdP = input({ code: 'KeyP', key: 'p', modifiers: { ...NONE, meta: true }, platform: 'mac' });
   assert.equal(chordOf(ctrlP), 'Mod+P');
   assert.equal(chordOf(cmdP), 'Mod+P');
   for (const key of [ctrlP, cmdP]) {
     for (const focusedZone of ['project', 'left', 'lower', 'right'] as const) {
-      assert.equal(resolveKey({ ...key, focusedZone }, CUBASE_PRESET)?.commandId, 'pool.open', focusedZone);
+      assert.equal(resolveKey({ ...key, focusedZone }, CUBASE_PRESET)?.commandId, 'media.open', focusedZone);
     }
     assert.equal(resolveKey({ ...key, targetIsTextField: true }, CUBASE_PRESET), null);
   }
-  // Ctrl+P on macOS is the Control key: not the Pool.
-  assert.notEqual(resolveKey(input({ code: 'KeyP', key: 'p', modifiers: { ...NONE, ctrl: true }, platform: 'mac' }), CUBASE_PRESET)?.commandId, 'pool.open');
+  // Ctrl+P on macOS is the Control key: not the Media tab.
+  assert.notEqual(resolveKey(input({ code: 'KeyP', key: 'p', modifiers: { ...NONE, ctrl: true }, platform: 'mac' }), CUBASE_PRESET)?.commandId, 'media.open');
 });

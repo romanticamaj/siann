@@ -163,18 +163,19 @@ code, dd { font-family: var(--font-mono); }
 .tb-left:has(> [data-part="branch-chip"]) > .session { flex-shrink: 0; }
 [data-part="branch-chip"] > span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 /* The boxes of the parts still pending (spec 3.0; --hold-* tokens): the
-   Record button, DSP load (with the margin the mockup's .dsp has) and the
-   Channel zone button. */
-.hold-transport-record, .hold-dsp-load, .hold-zone-button-channel { display: block; flex: none; }
+   Record button and the Channel zone button. */
+.hold-transport-record, .hold-zone-button-channel { display: block; flex: none; }
 .hold-transport-record { width: var(--hold-transport-record-w); height: var(--hold-transport-record-h); }
-.hold-dsp-load { width: var(--hold-dsp-load-w); height: var(--icon-s); margin-right: var(--space-half); }
 .hold-zone-button-channel { width: var(--hold-zone-button-channel-w); height: var(--hold-zone-button-channel-h); }
 /* The boxes of parts that have landed but are absent here: cycle and the
    click group on an engine without them (a .tbtn's and a .tgroup's size),
    the locator cell of a session without locators (an empty .cell of the
    display, --display-locators-empty-w wide), undo and redo on an engine
-   without them (an icon button's). */
-.transport-hold-tbtn, .transport-hold-tgroup, .undo-empty { display: block; flex: none; }
+   without them (an icon button's), and the DSP load on an engine without
+   features.load (m5b-ui-meter: --dsp-load-empty-w, with the margin the
+   mockup's .dsp has). */
+.transport-hold-tbtn, .transport-hold-tgroup, .undo-empty, .dsp-load-empty { display: block; flex: none; }
+.dsp-load-empty { width: var(--dsp-load-empty-w); height: var(--icon-s); margin-right: var(--space-half); }
 .transport-hold-tbtn { width: var(--transport-w); height: var(--transport-h); }
 .transport-hold-tgroup {
   box-sizing: content-box;
@@ -185,7 +186,7 @@ code, dd { font-family: var(--font-mono); }
 .display-locators-empty { width: var(--display-locators-empty-w); }
 .lcd .cell[data-part="display-locators"] { min-width: var(--display-locators-empty-w); }
 .undo-empty { width: var(--icon-button); height: var(--icon-button); }
-.transport-hold, .undo-empty, [class^="hold-"] { pointer-events: none; }
+.transport-hold, .undo-empty, .dsp-load-empty, .tab-meter-empty, [class^="hold-"] { pointer-events: none; }
 /* Playing: the start button pressed. */
 .tbtn.play[aria-pressed="true"] { box-shadow: 0 0 var(--space-3h) var(--play-a350), inset 0 var(--hairline) 0 var(--white-a350), 0 0 0 var(--hairline) var(--play-line); }
 /* The position field over the position cell (Shift+P). */
@@ -337,29 +338,50 @@ code, dd { font-family: var(--font-mono); }
 .hold-info-fade-in { width: var(--hold-info-fade-in-w); }
 .hold-info-fade-out { width: var(--hold-info-fade-out-w); }
 .tool-empty, .field-empty { pointer-events: none; }
-/* The Pool (m5-ui-port-toolbar; spec 10.8, 1): an app-only window over the
-   project zone, under the info line at its right edge, the track list's
-   width. */
-.pool {
+/* The Media tab (m5b-ui-media; UR-5): the right zone's content while its
+   tab is chosen. The mockup draws the tab but not its content, so these
+   rules are the app's, from existing tokens: a bar with the search field and
+   Import, then the list as a table (name, length, channels, rate, uses,
+   Remove), scrolling under the bar. */
+.media-tab { display: flex; flex-direction: column; min-height: 0; flex: 1; font-size: var(--fs-small); }
+.media-bar { flex: none; display: flex; align-items: center; gap: var(--space-1h); padding: var(--space-1h) var(--space-2); border-bottom: var(--hairline) solid var(--line); }
+button.media-import { flex: none; }
+input.media-search { flex: 1; min-width: 0; min-height: var(--control-h); padding: 0 var(--space-1h); background: var(--bg-3); border: var(--hairline) solid var(--line-2); border-radius: var(--radius-m); }
+.media-scroll { flex: 1; min-height: 0; overflow-y: auto; scrollbar-width: none; }
+/* The name takes what the other columns leave and ellipsises; the others fit their content. */
+.media-list { width: 100%; border-collapse: collapse; }
+.media-list th { position: sticky; top: 0; padding: var(--space-half); background: var(--bg-2); color: var(--tx-3); font-weight: 500; font-size: var(--fs-micro); text-align: start; white-space: nowrap; border-bottom: var(--hairline) solid var(--line); }
+.media-list th:first-child, .media-name { width: 100%; max-width: 0; min-width: calc(var(--track-list-w) / 3); }
+.media-list td { padding: var(--space-half); border-bottom: var(--hairline) solid var(--line); color: var(--tx-2); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.media-list .num { text-align: end; font-variant-numeric: tabular-nums; }
+.media-list tr[draggable="true"] { cursor: grab; }
+.media-list tbody tr:hover { background: var(--bg-2); }
+.media-name { color: var(--tx-1); }
+input.media-rename { width: 100%; min-height: 0; padding: 0 var(--space-half); }
+button.media-remove { min-height: 0; padding: 0 var(--space-1h); font-size: var(--fs-micro); }
+.media-importing td { color: var(--ai-2); }
+.media-empty { margin: 0; padding: var(--space-2); color: var(--tx-3); }
+/* A file importing (m5b-ui-media): a box over the event display where its
+   clip will land, the file's name and the job's progress along its foot. */
+.media-placeholder {
   position: absolute;
-  z-index: 5;
-  top: calc(var(--toolbar) + var(--info-line) + var(--space-2));
-  right: var(--space-2);
+  z-index: 2;
   display: flex;
   flex-direction: column;
-  width: var(--track-list-w);
-  max-height: calc(100% - var(--toolbar) - var(--info-line) - var(--space-4));
-  background: var(--bg-3);
-  border: var(--hairline) solid var(--line-2);
-  border-radius: var(--radius-m);
+  justify-content: space-between;
+  min-width: var(--track-list-w);
+  max-width: var(--track-list-w);
+  padding: var(--space-half) var(--space-1h);
+  background: var(--ai-a120);
+  border: var(--hairline) dashed var(--ai-line);
+  border-radius: var(--radius-s);
+  color: var(--ai-2);
+  font-size: var(--fs-micro);
+  pointer-events: none;
   overflow: hidden;
 }
-.pool-head { flex: none; padding: var(--space-1h) var(--space-2); border-bottom: var(--hairline) solid var(--line); color: var(--tx-2); font-size: var(--fs-small); font-weight: 600; white-space: nowrap; }
-.pool-empty { margin: 0; padding: var(--space-2); color: var(--tx-3); font-size: var(--fs-small); }
-.pool-list { list-style: none; margin: 0; padding: var(--space-half); overflow-y: auto; }
-.pool-item { display: flex; align-items: center; width: 100%; min-height: var(--control-h); padding: 0 var(--space-1h); font-size: var(--fs-small); text-align: start; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-button.pool-item { justify-content: flex-start; border-color: transparent; background: none; }
-button.pool-item[aria-pressed="true"] { border-color: var(--select); }
+.media-placeholder-name { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.media-placeholder-bar { display: block; height: var(--space-half); background: var(--ai); }
 /* Shift+Delete's confirmation: the About panel's dialog chrome (below). */
 .confirm-dialog-message { margin: 0 0 calc(var(--space) * 4); }
 .confirm-dialog-buttons { display: flex; gap: calc(var(--space) * 2); justify-content: flex-end; }
@@ -539,17 +561,33 @@ button.pool-item[aria-pressed="true"] { border-color: var(--select); }
    P1-13). ui/right-zone.css draws the mockup's parts; these rules are the
    zone frame's and the app's own: the zone body as the mockup's column, the
    boxes of the pending parts, the rows the mockup does not draw (the reason
-   field, the stale reasons, the refusal lines, a step's disclosure), the
+   field, the stale reasons, the refusal lines, a step's disclosure, the
+   composer's field and request rows), the
    unticked and the empty box, and the badges of states the mockup does not
    show. Each names tokens only. */
 .plans .zone-body { display: flex; flex-direction: column; padding: 0; overflow: hidden; }
 /* A list longer than the zone scrolls (a state the mockup does not show,
    10.7), by the wheel and the focus, without a gutter that would narrow the card. */
 .plans .p-scroll { overflow-y: auto; scrollbar-width: none; }
-.hold-composer, .hold-tab-media, .hold-tab-meter { display: block; flex: none; }
-.hold-composer { height: var(--hold-composer-h); }
-.hold-tab-media { width: var(--hold-tab-media-w); height: var(--zone-head); }
-.hold-tab-meter { width: var(--hold-tab-meter-w); height: var(--zone-head); }
+.tab-media-empty, .tab-meter-empty { display: block; flex: none; }
+/* The Media tab's box on an engine without media.import (m5b-ui-media; 3.0). */
+.tab-media-empty { width: var(--tab-media-empty-w); height: var(--zone-head); }
+/* The Meter tab on an engine without features.loudness (m5b-ui-meter). */
+.tab-meter-empty { width: var(--tab-meter-empty-w); height: var(--zone-head); }
+/* The Meter tab's panel (m5b-ui-meter; UR-14): the mockup draws its label
+   only, so the panel is the shared rules' .z-head, .meter, .ch, .readout and
+   .btn, laid out here with existing tokens. The master's two channel wells
+   are as wide as on the master strip and --meter-scale-h high (the scale the
+   bar's gradient spans); the readouts stack beside them; the canvas lies over
+   the panel and paints only inside the wells. */
+.meter-panel { position: relative; display: flex; flex-direction: column; flex: 1; min-height: 0; }
+.meter-panel-body { display: flex; align-items: flex-start; gap: var(--space-3); padding: var(--space-2h); }
+.meter-panel .meter { flex: none; height: var(--meter-scale-h); }
+.meter-panel .meter .ch { width: var(--meter-master-w); }
+.meter-panel-values { display: flex; flex-direction: column; gap: var(--space-2); flex: 1; min-width: 0; }
+.meter-panel-values .readout { justify-content: flex-start; }
+.meter-panel-values .btn { align-self: flex-start; padding: 0 var(--space-3); }
+.meter-panel-canvas { position: absolute; inset: 0; pointer-events: none; }
 /* The agent row, the plan's title and its intent (m5b-ui-plan-metadata; UI
    redesign 3.0, 4.4): landed parts that are absent on an engine without
    features.agents or features.planMetadata. Their empty boxes take the size
@@ -568,6 +606,73 @@ button.pool-item[aria-pressed="true"] { border-color: var(--select); }
 .agent > span:not(.av):not(.live) { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
 [data-part="agent-row"] > :is(.av, .live) { flex-shrink: 0; }
 .agent .live.off i { background: var(--tx-4); box-shadow: none; }
+/* The "ask the agent" box (m5b-ui-composer; UI redesign 4.4, 3.0):
+   ui/right-zone.css draws the mockup's .composer; these are the app's own
+   rules. The textarea in its first span takes the box's text style with no
+   frame of its own; the box rests at the mockup's one-line height and grows
+   with its text to four lines, then scrolls. Above it, the request rows the
+   mockup does not draw, bounded to three one-line rows and scrolling beyond
+   that, so the box stays at the foot of the tab; then the refusal line. On
+   an engine without features.agentRequests the box is empty and keeps the
+   mockup's box with its bottom margin: the send control, the padding, the
+   border and the margin of the shared .composer rule. */
+.composer-empty { display: block; flex: none; height: calc(var(--composer-send) + 2 * var(--space-9q) + 2 * var(--hairline) + var(--space-2h)); }
+.plans .composer { flex: none; }
+.plans .composer:focus-within { outline: var(--space-half) solid var(--focus-ring); outline-offset: var(--hairline); }
+.composer > span:not(.send) { display: flex; flex: 1 1 auto; min-width: 0; }
+.composer textarea {
+  flex: 1 1 auto;
+  min-width: 0;
+  min-height: calc(1.45 * var(--fs-11h));
+  max-height: calc(4 * 1.45 * var(--fs-11h));
+  margin: 0;
+  padding: 0;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  color: var(--tx-1);
+  font: inherit;
+  line-height: 1.45;
+  resize: none;
+  outline: none;
+  field-sizing: content;
+  overflow-y: auto;
+  scrollbar-width: none;
+}
+.composer textarea::placeholder { color: var(--tx-3); opacity: 1; }
+.composer textarea:disabled { cursor: default; }
+.plans .composer .send { flex: none; cursor: pointer; }
+.plans .composer .send[aria-disabled="true"] { opacity: .5; cursor: default; }
+.requests {
+  flex: none;
+  display: grid;
+  gap: var(--space-half);
+  margin: 0 var(--space-2h) var(--space-1h);
+  max-height: calc(3 * (2 * var(--space-1h) + 2 * var(--hairline) + 1.45 * var(--fs-small)) + 2 * var(--space-half));
+  overflow-y: auto;
+  scrollbar-width: none;
+}
+.request {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto auto;
+  align-items: center;
+  gap: 0 var(--space-2);
+  padding: var(--space-1h) var(--space-2h);
+  border: var(--hairline) solid var(--line);
+  border-radius: var(--radius-7);
+  background: var(--bg-2);
+  color: var(--tx-2);
+  font-size: var(--fs-small);
+  line-height: 1.45;
+}
+.request-text { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--tx-1); }
+.request-state { white-space: nowrap; color: var(--tx-3); }
+.request[data-state="answered"] .request-state { color: var(--ai-2); }
+.request[data-state="declined"] .request-state { color: var(--err-2); }
+.request-cancel, .request-dismiss { display: grid; place-items: center; min-height: 0; padding: 0; border: 0; background: transparent; color: var(--tx-3); cursor: pointer; }
+.request-cancel:hover, .request-dismiss:hover { color: var(--tx-1); }
+.request-message { grid-column: 1 / -1; display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 3; overflow: hidden; white-space: pre-line; overflow-wrap: anywhere; }
+.composer-refusal { flex: none; margin: 0 var(--space-2h) var(--space-1h); color: var(--err-2); font-size: var(--fs-small); overflow-wrap: anywhere; }
 /* The steps head's link, as the mockup's inline style sets it, on one line
    at its own width (the count beside it gives way in a long locale). */
 .plans .steps-h a { text-transform: none; letter-spacing: 0; cursor: pointer; flex: none; white-space: nowrap; }
@@ -861,7 +966,7 @@ button.ghost[data-ghost-mode="solid"] { outline-style: solid; }
    first. */
 @media (max-width: 1300px) {
   .topbar { grid-template-columns: auto auto minmax(0, 1fr); }
-  [data-part="branch-chip"], .hold-dsp-load, .hold-transport-record { display: none; }
+  [data-part="branch-chip"], .hold-transport-record, .dsp, .dsp-load-empty { display: none; }
   .tb-left:has(> [data-part="branch-chip"]) > .session { flex-shrink: 1; }
 }
 @media (max-width: 1100px) {

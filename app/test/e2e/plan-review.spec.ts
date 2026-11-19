@@ -287,11 +287,15 @@ test("every id of the Plans tab is in the window, and no id of a pending part", 
   await expect(page.locator('[data-part-item="plan-history"]')).toHaveCount(1);
   // m5b-ui-plan-metadata: the engine lists features.agents and planMetadata;
   // the plan has no intent, so its box is empty.
-  for (const id of ['agent-row', 'plan-title']) await expect(page.locator(`[data-region="right-zone"] [data-part="${id}"]`), id).toHaveCount(1);
+  for (const id of ['agent-row', 'plan-title', 'composer']) await expect(page.locator(`[data-region="right-zone"] [data-part="${id}"]`), id).toHaveCount(1);
   await expect(page.locator('.plan-intent-empty')).toHaveCount(1);
-  for (const id of ['plan-intent', 'composer', 'tab-media', 'tab-meter']) {
+  for (const id of ['plan-intent']) {
     await expect(page.locator(`[data-part="${id}"]`), id).toHaveCount(0);
   }
+  // m5b-ui-media: the Media tab; no step of this plan names a clip, so no title part.
+  await expect(page.locator('[data-region="right-zone"] [data-part="tab-media"]')).toHaveCount(1);
+  // m5b-ui-meter: the Meter tab (the full capabilities list features.loudness).
+  await expect(page.locator('[data-region="right-zone"] [data-part="tab-meter"]')).toHaveCount(1);
   await expect(page.locator('[data-part^="plan-step-"][data-part$="-title"]')).toHaveCount(0);
   // The row under the pointer is hot, and only that one.
   await page.getByTestId('step-2').hover();

@@ -7,13 +7,18 @@
 //               (BranchChip.tsx, m5b-ui-audition), a separator, undo and
 //               redo (Transport.tsx)
 //   .transport  the transport bar of m5-ui-transport and m5-ui-loop-click
-//   .tb-right   DSP load's box, the zone buttons (the Channel button's box,
-//               then left, lower and right) and the Plans button with the
-//               number of plans waiting for review
+//   .tb-right   the DSP load (span.dsp: "DSP", .bar > i, .num; m5b-ui-meter),
+//               the zone buttons (the Channel button's box, then left, lower
+//               and right) and the Plans button with the number of plans
+//               waiting for review
 //
-// A part whose feature has not landed keeps its box empty (spec 3.0): DSP load (m5b-ui-meter) and the Channel
-// zone button (m5b-ui-editor-channel) are elements with no role, no focus,
-// no id and no text, sized by a --hold-<part> token in shell.css. The
+// A part whose feature has not landed keeps its box empty (spec 3.0): the
+// Channel zone button (m5b-ui-editor-channel) is an element with no role, no
+// focus, no id and no text, sized by a --hold-<part> token in shell.css. The
+// DSP load has landed and is absent on an engine that does not list
+// features.load (or engine.status): its empty box is .dsp-load-empty,
+// --dsp-load-empty-w wide. Its values change with every poll, so they are
+// written through refs (dsp-load.ts), never through React state (spec 5.6). The
 // project zone has no button: it is never hidden. The page's heading is
 // there for assistive technology and draws nothing.
 //
@@ -24,7 +29,7 @@
 // save. Over the start view the scratch bundle is nobody's project and the
 // name is empty.
 
-import { useSyncExternalStore } from 'react';
+import { useEffect, useRef, useSyncExternalStore } from 'react';
 
 import { useT } from '../i18n/t';
 import type { CommandRegistry } from '../keys/commands';
@@ -36,6 +41,9 @@ import type { TransportController } from '../model/transport';
 import type { UndoHistory } from '../model/undo-history';
 import { ISOLATE } from '../plans/isolate';
 import { BranchChip } from './BranchChip';
+import { useCapabilities } from './Capable';
+import { Counted } from './Counted';
+import { bindDspLoad } from './dsp-load';
 import { Hold } from './Hold';
 import { Icon, type IconName } from './icons';
 import type { EffectiveLayout, Zone } from './layout';
@@ -66,6 +74,30 @@ export interface TopBarProps {
 }
 
 const noMark = { getSnapshot: () => false, subscribe: () => () => undefined };
+
+// The mockup's span.dsp (mockup.html line 242): DSP, the bar, the percentage.
+function DspLoad({ source }: { source: EngineStatusSource }) {
+  const t = useT();
+  const root = useRef<HTMLSpanElement | null>(null);
+  const bar = useRef<HTMLElement | null>(null);
+  const num = useRef<HTMLSpanElement | null>(null);
+  useEffect(() => {
+    const { getLoad, subscribeLoad } = source;
+    if (!root.current || !bar.current || !num.current || !getLoad || !subscribeLoad) return undefined;
+    const channel = { getLoad: () => getLoad.call(source), subscribeLoad: (listener: () => void) => subscribeLoad.call(source, listener) };
+    return bindDspLoad(channel, { root: root.current, bar: bar.current, num: num.current }, (percent) => t('topbar.dspPeak', { percent }));
+  }, [source, t]);
+  return (
+    <Counted id="dsp-load">
+      <span ref={root} className="dsp" data-part="dsp-load" data-testid="dsp-load" role="meter" aria-label={t('topbar.dspLoad')} aria-valuemin={0} aria-valuemax={100}>
+        {t('topbar.dsp')} <span className="bar">
+          <i ref={bar} />
+        </span>
+        <span ref={num} className="num" style={{ color: 'var(--tx-2)' }} />
+      </span>
+    </Counted>
+  );
+}
 
 const ZONE_ORDER: readonly Zone[] = ['left', 'lower', 'right'];
 const ZONE_ICON: Readonly<Record<Zone, IconName>> = { left: 'zLeft', lower: 'zLow', right: 'zRight' };
@@ -101,6 +133,8 @@ export function TopBar({
   const marked = useSyncExternalStore(saved.subscribe, saved.getSnapshot, saved.getSnapshot);
   const name = nameHidden ? '' : (snapshot?.root?.name ?? '');
   const unsaved = marked && name !== '';
+  const can = useCapabilities();
+  const load = can.feature('load') && can.has('engine.status');
   return (
     <header className="topbar" data-region="top-bar" data-testid="top-bar">
       <div className="tb-left">
@@ -135,7 +169,7 @@ export function TopBar({
         onStudioSetup={onStudioSetup}
       />
       <div className="tb-right">
-        <Hold className="hold-dsp-load" />
+        {load ? <DspLoad source={engineStatus} /> : <Hold className="dsp-load-empty" />}
         <span className="zones" data-part="zone-buttons" role="group" aria-label={t('zone.buttons')}>
           <Hold className="hold-zone-button-channel" />
           {ZONE_ORDER.map((zone) => (

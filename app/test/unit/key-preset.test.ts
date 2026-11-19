@@ -155,10 +155,14 @@ test('Ctrl+Alt+G (Cmd+Alt+G on macOS) toggles the ghosts of the overlaid plan, i
   assert.ok(CUBASE_PRESET.some((b) => b.chord === 'G' && b.commandId !== 'plans.toggleGhosts'));
 });
 
-test('Ctrl+P (Cmd+P on macOS) opens the Pool, Cubase\'s Open Pool key (m5-ui-port-toolbar; UI redesign 10.8, 1)', () => {
-  const found = CUBASE_PRESET.filter((b) => b.commandId === 'pool.open');
-  assert.deepEqual(found, [{ chord: 'Mod+P', commandId: 'pool.open', scope: 'window' }]);
-  assert.deepEqual(CUBASE_PRESET.filter((b) => b.chord === 'Mod+P').map((b) => [b.scope, b.commandId]), [['window', 'pool.open']]);
+test('Ctrl+P (Cmd+P on macOS) opens the Media tab, Cubase\'s Open Pool key (m5b-ui-media; UI redesign UR-5, 10.8, 1)', () => {
+  const found = CUBASE_PRESET.filter((b) => b.commandId === 'media.open');
+  assert.deepEqual(found, [{ chord: 'Mod+P', commandId: 'media.open', scope: 'window' }]);
+  assert.deepEqual(CUBASE_PRESET.filter((b) => b.chord === 'Mod+P').map((b) => [b.scope, b.commandId]), [['window', 'media.open']]);
+  // The Pool's command is gone (the Media tab replaced the Pool).
+  assert.ok(!CUBASE_PRESET.some((b) => (b.commandId as string) === 'pool.open'));
+  assert.ok(!(COMMAND_IDS as readonly string[]).includes('pool.open'));
+  assert.ok((COMMAND_IDS as readonly string[]).includes('media.open'));
   // The other P keys keep their commands.
   const others: Array<[string, string]> = [
     ['P', 'transport.locatorsToSelection'],
