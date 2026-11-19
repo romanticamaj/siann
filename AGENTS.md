@@ -50,6 +50,7 @@ Key internal documents:
 - [Windows setup](docs/setup/windows.md)
 - [Milestone runbook](docs/harness/runbook.md)
 - [Harness agent rules](docs/harness/agent-rules.md)
+- [Session handoff](docs/harness/handoff.md): where the last session stopped and how to resume
 
 ## Architecture & Implementation Boundaries
 
