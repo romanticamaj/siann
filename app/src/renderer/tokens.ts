@@ -217,7 +217,6 @@ export const TOKENS = {
   "hold-transport-record-h": "28px",
   "hold-zone-button-channel-w": "26px",
   "hold-zone-button-channel-h": "24px",
-  "hold-composer-h": "54px",
   "hold-inspector-routing-h": "91px",
   "hold-tool-2-w": "27.172px",
   "hold-tool-6-w": "27.172px",

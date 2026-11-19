@@ -16,7 +16,7 @@ import * as path from 'node:path';
 import type { ClipRect, Viewport } from '../../../src/renderer/timeline/geometry';
 import { trackColourIndex } from '../../../src/renderer/timeline/track-colour';
 import { engineClient } from './engine-client';
-import { sessionText } from './fidelity-text';
+import { mockupZhTable, sessionText } from './fidelity-text';
 import { Agent, exeFromEnv, hash8 } from './seed';
 
 const REPO = path.resolve(__dirname, '..', '..', '..', '..');
@@ -334,6 +334,12 @@ export async function stageSession(app: ElectronApplication, page: Page, notes: 
   await expect(page.getByTestId(`plan-state-${hash8(stale)}`)).toHaveAttribute('data-badge', 'stale');
   // The Plans button counts the one validated plan, as the mockup's does.
   await expect(page.getByTestId('plans-count')).toHaveText('1');
+  // m5b-ui-composer: the box at the tab's foot reads the mockup's text, with no request shown.
+  const composerText = 'Ask mix-assistant for a change…';
+  const placeholder = locale.startsWith('zh') ? (mockupZhTable(fs.readFileSync(MOCKUP_HTML, 'utf8'))[composerText] ?? composerText) : composerText;
+  await expect(page.locator('[data-part="composer"] textarea')).toBeEnabled();
+  await expect(page.locator('[data-part="composer"] textarea')).toHaveAttribute('placeholder', placeholder);
+  await expect(page.locator('.requests')).toHaveCount(0);
 
   // The mockup's selection: Vox Lead, and its clip at bar 9.
   await page.getByTestId(`track-header-${TRACK_IDS[4]!}`).click({ position: { x: 30, y: 30 } });

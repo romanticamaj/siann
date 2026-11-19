@@ -36,7 +36,7 @@
 // The Meter tab (m5b-ui-meter) is the right zone's second tab: its panel draws
 // the master from the MeterStore the mixer draws from, made here once.
 
-import { useCallback, useEffect, useRef, useState, useSyncExternalStore } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react';
 
 import { localeStore } from './i18n/t';
 import type { CommandRegistry } from './keys/commands';
@@ -45,6 +45,7 @@ import type { EngineStatusSource } from './model/engine-status';
 import type { GestureController } from './model/gesture-controller';
 import type { PeaksCache } from './model/peaks-cache';
 import type { AgentStore } from './model/agents';
+import type { RequestStore } from './model/request-store';
 import { capabilitySelector } from './model/capabilities';
 import type { PlanStore } from './model/plan-store';
 import type { ReviewStore } from './model/review-store';
@@ -90,6 +91,8 @@ export interface AppProps {
   readonly plans: PlanStore;
   // The agents the engine lists (m5b-ui-plan-metadata: the Plans tab's agent row).
   readonly agents?: AgentStore;
+  // The requests to the agent (m5b-ui-composer: the Plans tab's "ask the agent" box).
+  readonly requests?: RequestStore;
   // The plan review and its ghosts (m5b-ui-ghosts).
   readonly review: ReviewStore;
   readonly engineStatus: EngineStatusSource;
@@ -122,6 +125,7 @@ export function App({
   peaks,
   plans,
   agents,
+  requests,
   review,
   engineStatus,
   layout,
@@ -152,6 +156,9 @@ export function App({
   );
   const [meterStore] = useState(() => new MeterStore(realtime));
   const [tracks, setTracks] = useState<TrackSelection>(NO_TRACKS);
+  // The selected clips, sent with a request from the "ask the agent" box (m5b-ui-composer).
+  const [clips, setClips] = useState<readonly string[]>([]);
+  const selection = useMemo(() => ({ tracks: tracks.ids, clips }), [tracks.ids, clips]);
   const order = () => client.model.getSnapshot()?.trackOrder ?? [];
   // A clip selected selects its track.
   const selectClip = useCallback(
@@ -248,6 +255,7 @@ export function App({
                 onSelectTrack={onSelectTrack}
                 platform={platform}
                 onSelect={selectClip}
+                onSelectClips={setClips}
                 onHooks={onTimelineHooks}
                 onLocate={locate}
                 loopClick={loopClick}
@@ -264,7 +272,7 @@ export function App({
               <Mixer client={client} gestures={gestures} realtime={realtime} selectedTrackId={tracks.primary} onMeterHooks={onMeterHooks} racks={racks} meterStore={meterStore} />
             </Counted>
           }
-          right={<PlanPanel key={epoch} client={client} plans={plans} agents={agents} review={review} reconnects={reconnects} commands={commands} />}
+          right={<PlanPanel key={epoch} client={client} plans={plans} agents={agents} requests={requests} selection={selection} review={review} reconnects={reconnects} commands={commands} />}
           rightMedia={<MediaTab key={epoch} client={client} media={media} />}
           rightMeter={<MeterPanel client={client} realtime={realtime} store={meterStore} />}
           rightHead={<HearingSwitch client={client} plans={plans} />}

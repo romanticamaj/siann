@@ -328,12 +328,11 @@
   --hold-zone-button-channel-w: calc(26px * var(--scale));
   --hold-zone-button-channel-h: calc(24px * var(--scale));
   /* The Plans tab's (m5-ui-port-plans; UI redesign 10.10, P1-13 notes): the
-     composer with its bottom margin (m5b-ui-composer). The Media tab landed
-     with m5b-ui-media and the Meter tab with m5b-ui-meter (--tab-media-empty-w
-     and --tab-meter-empty-w above). The agent row, the plan's title and its intent
-     landed with m5b-ui-plan-metadata: shell.css sizes their empty boxes by a
+     Media tab landed with m5b-ui-media and the Meter tab with m5b-ui-meter
+     (--tab-media-empty-w and --tab-meter-empty-w above). The agent row, the
+     plan's title and its intent landed with m5b-ui-plan-metadata, and the
+     composer with m5b-ui-composer: shell.css sizes their empty boxes by a
      calc() of the tokens the shared rules size them with. */
-  --hold-composer-h: calc(54px * var(--scale));
   --hold-inspector-routing-h: calc(91px * var(--scale));
   --hold-tool-2-w: calc(27.172px * var(--scale));
   --hold-tool-6-w: calc(27.172px * var(--scale));

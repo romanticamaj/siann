@@ -421,7 +421,6 @@ test('the Plans tab\'s absent parts keep their boxes through hold tokens applied
   const shell = read('app', 'renderer', 'shell.css');
   // The part, its sides, and whether a value is set again per Chinese locale.
   const holds = {
-    composer: [['h'], false],
   };
   for (const [part, [sides, perLocale]] of Object.entries(holds)) {
     assert.equal(MANIFEST.gates[ruleOf(part).gate], 'pending', `${part} is pending`);
@@ -1319,6 +1318,40 @@ test("the plan metadata's gate is report, its holds are gone, and shell.css size
   assert.match(shell, /\.card-h p\[data-part="plan-intent"\]\s*\{[^}]*min-height:\s*calc\(\s*2 \* 1\.45 \* var\(--fs-11h\)\s*\)/);
   // The history rows are unmasked (UI redesign 10.7, 3).
   assert.ok(!MANIFEST.pixels.dynamic.some((pattern) => /plan-history/.test(pattern)), 'no plan-history mask');
+});
+
+// ---- m5b-ui-composer: the "ask the agent" box (UI redesign 4.4, 3.0)
+
+test("the composer's gate is report, its hold is gone, and shell.css sizes its empty box by a calc() of tokens", () => {
+  assert.equal(MANIFEST.gates['m5b-ui-composer'], 'report');
+  assert.equal(ruleOf('composer').gate, 'm5b-ui-composer');
+  const tokens = read('app', 'renderer', 'tokens.css');
+  assert.ok(!tokens.includes('--hold-composer-h'), '--hold-composer-h is deleted');
+  assert.doesNotMatch(read('app', 'src', 'renderer', 'tokens.ts'), /hold-composer/, 'tokens.ts is regenerated');
+  const shell = read('app', 'renderer', 'shell.css').replace(/\/\*[\s\S]*?\*\//g, '');
+  assert.ok(!shell.includes('.hold-composer'), 'no .hold-composer rule');
+  // The mockup's one-line box with its bottom margin: the send control, the
+  // padding, the border and the margin the shared .composer rule gives it.
+  const rule = /(?:^|\})\s*\.composer-empty\s*\{([^}]*)\}/.exec(shell);
+  assert.ok(rule, 'shell.css has a .composer-empty rule of its own');
+  const height = /(?:^|;)\s*height:\s*([^;]+)/.exec(rule[1])?.[1].trim();
+  assert.match(height ?? '', /^calc\(\s*var\(--composer-send\) \+ 2 \* var\(--space-9q\) \+ 2 \* var\(--hairline\) \+ var\(--space-2h\)\s*\)$/, '.composer-empty height');
+  assert.doesNotMatch(rule[1], /\d(px|rem|em)|--hold-/, '.composer-empty names tokens only');
+  // The app-only rules of the box (its field, its growth, the request rows) are shell.css's, never app/renderer/ui's.
+  for (const file of fs.readdirSync(path.join(ROOT, 'app', 'renderer', 'ui'))) {
+    assert.doesNotMatch(read('app', 'renderer', 'ui', file), /composer-empty|composer textarea|\.requests?\b/, `ui/${file} is unchanged`);
+  }
+  assert.match(shell, /\.composer textarea\s*\{/, 'the field reset is in shell.css');
+  // The box rests at one line, grows with its text to four lines, then scrolls
+  // (UI redesign 4.4); app/test/e2e/composer.spec.ts measures it in the window.
+  const field = /(?:^|\})\s*\.composer textarea\s*\{([^}]*)\}/.exec(shell);
+  assert.ok(field, 'shell.css has a .composer textarea rule');
+  const decl = (name) => new RegExp(`(?:^|;)\\s*${name}\\s*:\\s*([^;]+);`).exec(field[1])?.[1].trim();
+  assert.equal(decl('line-height'), '1.45', 'the field line height');
+  assert.match(decl('min-height') ?? '', /^calc\(\s*1\.45 \* var\(--fs-11h\)\s*\)$/, 'rests at one line');
+  assert.match(decl('max-height') ?? '', /^calc\(\s*4 \* 1\.45 \* var\(--fs-11h\)\s*\)$/, 'grows to at most four lines');
+  assert.equal(decl('field-sizing'), 'content', 'grows with its text');
+  assert.equal(decl('overflow-y'), 'auto', 'scrolls past four lines');
 });
 
 // ---- m5b-ui-ghosts (UI redesign 4.2, 10.4): the ghosts, the proposal pill and

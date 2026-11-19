@@ -69,7 +69,7 @@ import {
 
 import { useT } from '../i18n/t';
 import type { CommandId, CommandRegistry, ZoneScope } from '../keys/commands';
-import { isTextField, resolveKey } from '../keys/dispatcher';
+import { composingKey, isTextField, resolveKey } from '../keys/dispatcher';
 import { CUBASE_PRESET } from '../keys/preset-cubase';
 import { capabilitySelector } from '../model/capabilities';
 import { FOCUS_COMMANDS, focusMove, ringStep, type FocusPlace } from '../keys/zone-focus';
@@ -587,6 +587,11 @@ export function Shell({
     const listener = (preset: typeof CUBASE_PRESET) => (event: KeyboardEvent) => {
       if (event.defaultPrevented) {
         note(preset, event, null, false, true);
+        return;
+      }
+      // An input method's key (Escape or Tab during a composition) moves no focus.
+      if (composingKey(event)) {
+        note(preset, event, null, false, false);
         return;
       }
       const binding = resolveKey(
