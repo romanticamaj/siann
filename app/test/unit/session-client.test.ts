@@ -805,7 +805,7 @@ const ENVIRONMENT = {
 };
 const ENGINE_ABOUT = { name: 'siann-engine', version: '0.3.0', license: 'GPL-2.0-or-later', source: { url: 'https://example.invalid/siann', commit: 'f'.repeat(40), dirty: true } };
 const ENGINE_STATUS = {
-  device: { id: 'fake', sampleRate: 44100, bufferFrames: 256, inputLatencyFrames: 0, outputLatencyFrames: 256 },
+  device: { id: 'fake', sampleRate: 44100, bufferFrames: 256, inputLatencyFrames: 0, outputLatencyFrames: 256, input: { id: 'fake', channels: 2, latencyFrames: 256 } },
   playing: false,
   xruns: '0',
 };
@@ -821,7 +821,8 @@ test('(20) the fidelity environment answers the device of engine.status and the 
     source: { url: 'https://example.invalid/siann', commit: ENVIRONMENT.engineAbout.source.commit, dirty: false },
   });
   const status = (await withEnv.client.request('engine.status', {})) as typeof ENGINE_STATUS;
-  assert.deepEqual(status.device, ENVIRONMENT.device);
+  // The engine's fields the environment does not name stay: the open input (m5b-ui-recording).
+  assert.deepEqual(status.device, { ...ENVIRONMENT.device, input: ENGINE_STATUS.device.input });
   assert.equal(status.xruns, '0', 'the rest of the answer is the engine\'s');
   assert.equal(status.playing, false);
 

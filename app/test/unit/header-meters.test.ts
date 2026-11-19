@@ -224,3 +224,50 @@ test('no React and no literal colour: the surface reads tokens.ts and imports no
   assert.match(source, /TOKENS\['meter-0'\]/);
   assert.match(source, /TOKENS\['header-meter-scale-w'\]/);
 });
+
+// m5b-ui-recording (UI redesign 3.5): an armed track's header meter reads its
+// input meter (input:<trackId>, protocol-events-v1 "meters.legend") while the
+// legend has it, and its track meter otherwise.
+test('an armed track\'s well reads input:<trackId> while the legend has it (m5b-ui-recording)', () => {
+  const surface = fakeCanvas();
+  const realtime = realtimeOf();
+  const frames = manualFrames();
+  let armed: readonly string[] = ['a'];
+  const meters = new HeaderMeters({ canvas: surface.canvas, realtime: realtime.client, frames, size: surface.size, pixelRatio: () => 1, armed: () => armed });
+  meters.addSlot(slot('track:a', { x: 0, y: 0, width: 100, height: 2 }).value);
+  meters.start();
+  // The track plays nothing; its input is at -30 dBFS: half the well.
+  realtime.emit({ 'track:a': [0], 'input:a': [dB(-30)] });
+  frames.flush();
+  assert.equal(surface.canvas.dataset.lit, '1');
+  const width = surface.fills.reduce((sum, f) => sum + f.w, 0);
+  assert.ok(Math.abs(width - 50) <= 1, `the input's bar: ${width}`);
+  // Disarmed: the track's meter again (silent).
+  armed = [];
+  realtime.emit({ 'track:a': [0], 'input:a': [dB(-30)] });
+  frames.flush();
+  assert.equal(surface.canvas.dataset.lit, '0');
+  // Armed, but the legend has no input meter yet: the track's meter.
+  armed = ['a'];
+  realtime.emit({ 'track:a': [dB(-6)] });
+  frames.flush();
+  assert.equal(surface.canvas.dataset.lit, '1');
+});
+
+// m5b-ui-recording (protocol-engine-v0 "Monitoring"): a monitored, unarmed
+// track's well reads its track meter, which carries the monitored input,
+// as its strip does while the transport is stopped (mixer-meters).
+test('a monitored, unarmed track\'s well reads track:<trackId>, as its strip does', () => {
+  const surface = fakeCanvas();
+  const realtime = realtimeOf();
+  const frames = manualFrames();
+  const meters = new HeaderMeters({ canvas: surface.canvas, realtime: realtime.client, frames, size: surface.size, pixelRatio: () => 1, armed: () => [] });
+  meters.addSlot(slot('track:a', { x: 0, y: 0, width: 100, height: 2 }).value);
+  meters.start();
+  // The monitored input at -30 dBFS through the track's strip: half the well.
+  realtime.emit({ 'track:a': [dB(-30)], 'input:a': [dB(-12)] });
+  frames.flush();
+  assert.equal(surface.canvas.dataset.lit, '1');
+  const width = surface.fills.reduce((sum, f) => sum + f.w, 0);
+  assert.ok(Math.abs(width - 50) <= 1, `the track's bar, not the input's: ${width}`);
+});

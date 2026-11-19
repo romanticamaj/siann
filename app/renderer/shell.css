@@ -22,7 +22,7 @@
 /* The app's overlays, which the mockup does not draw, keep the plain text
    styles of the page before the port: every zone takes base.css's body text,
    as the mockup does. */
-.toasts, .about-panel, .confirm-dialog, .studio-setup, .start-view, .time-format-menu, .grid-type-menu, .event-display-menu, .click-level {
+.toasts, .about-panel, .confirm-dialog, .studio-setup, .start-view, .time-format-menu, .grid-type-menu, .event-display-menu, .click-level, .record-options, .pending-takes {
   line-height: var(--line-height);
   letter-spacing: normal;
   font-variant-numeric: tabular-nums;
@@ -50,6 +50,9 @@ button:disabled { color: var(--tx-4); cursor: default; }
    (m5b-ui-project): aria-disabled, so it still takes the click, and drawn as
    a disabled one. */
 button[aria-disabled="true"] { color: var(--tx-4); cursor: default; }
+/* Record too (m5b-ui-recording): the shared .tbtn.rec red (0,2,0) outweighs
+   the two rules above, so a disabled Record is dimmed by its own state. */
+.tbtn.rec[aria-disabled="true"], .tbtn.rec:disabled { color: var(--tx-4); }
 button:where(:not(.tbtn, .iconbtn, .aibtn, .about, .tab, .msr, .pk, .b, .btn, .t, .hrow, .field, .add, .tog, .go))[aria-pressed="true"] { background: var(--bg-5); border-color: var(--tx-3); }
 /* A ported button: Chromium's button rules undone (padding, border,
    background, and the letter spacing and case it resets, both compared
@@ -163,12 +166,11 @@ code, dd { font-family: var(--font-mono); }
 .tb-left:has(> [data-part="branch-chip"]) > .session { flex-shrink: 0; }
 [data-part="branch-chip"] > span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 /* The boxes of the parts still pending (spec 3.0; --hold-* tokens): the
-   Record button and the Channel zone button. */
-.hold-transport-record, .hold-zone-button-channel { display: block; flex: none; }
-.hold-transport-record { width: var(--hold-transport-record-w); height: var(--hold-transport-record-h); }
-.hold-zone-button-channel { width: var(--hold-zone-button-channel-w); height: var(--hold-zone-button-channel-h); }
-/* The boxes of parts that have landed but are absent here: cycle and the
-   click group on an engine without them (a .tbtn's and a .tgroup's size),
+   Channel zone button. */
+.hold-zone-button-channel { display: block; flex: none; width: var(--hold-zone-button-channel-w); height: var(--hold-zone-button-channel-h); }
+/* The boxes of parts that have landed but are absent here: cycle, Record
+   (m5b-ui-recording) and the click group on an engine without them (a
+   .tbtn's and a .tgroup's size),
    the locator cell of a session without locators (an empty .cell of the
    display, --display-locators-empty-w wide), undo and redo on an engine
    without them (an icon button's), and the DSP load on an engine without
@@ -187,6 +189,26 @@ code, dd { font-family: var(--font-mono); }
 .lcd .cell[data-part="display-locators"] { min-width: var(--display-locators-empty-w); }
 .undo-empty { width: var(--icon-button); height: var(--icon-button); }
 .transport-hold, .undo-empty, .dsp-load-empty, .tab-meter-empty, [class^="hold-"] { pointer-events: none; }
+/* Recording (m5b-ui-recording): Record pressed, in the record colours the
+   shared rules give a lit record enable (.msr.r.on). */
+.tbtn.rec[aria-pressed="true"] { color: var(--rec-ink); background: var(--rec); border-color: var(--rec-line); }
+/* The record options (Record's right-click; UI redesign 10.11, 17): the
+   metronome level's chrome, one option per row. */
+.record-options {
+  position: fixed;
+  z-index: 30;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space);
+  padding: calc(var(--space) * 2);
+  background: var(--bg-3);
+  border: var(--divider-w) solid var(--line-2);
+  border-radius: var(--radius-m);
+  white-space: nowrap;
+}
+.record-option { display: flex; align-items: center; gap: var(--space); }
+.record-bars { width: 6ch; min-height: var(--control-h); padding: 0 var(--space); background: var(--bg-2); color: inherit; font: inherit; border: var(--hairline) solid var(--line-2); border-radius: var(--radius-s); }
+.record-bars-unit { color: var(--tx-3); }
 /* Playing: the start button pressed. */
 .tbtn.play[aria-pressed="true"] { box-shadow: 0 0 var(--space-3h) var(--play-a350), inset 0 var(--hairline) 0 var(--white-a350), 0 0 0 var(--hairline) var(--play-line); }
 /* The position field over the position cell (Shift+P). */
@@ -382,6 +404,15 @@ button.media-remove { min-height: 0; padding: 0 var(--space-1h); font-size: var(
 }
 .media-placeholder-name { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .media-placeholder-bar { display: block; height: var(--space-half); background: var(--ai); }
+/* The pending takes (m5b-ui-recording): the About panel's dialog chrome
+   (below), one take per row with Keep and Discard. */
+.pending-takes-title { margin: 0 0 calc(var(--space) * 2); font-size: var(--fs-plan); font-weight: 600; }
+.pending-takes-intro { margin: 0 0 calc(var(--space) * 3); }
+.pending-takes-list { margin: 0 0 calc(var(--space) * 4); padding: 0; list-style: none; display: flex; flex-direction: column; gap: var(--space); }
+.pending-take { display: flex; align-items: center; gap: calc(var(--space) * 2); }
+.pending-take-name { flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.pending-take .danger { background: var(--err); border-color: var(--err); color: var(--bg-0); }
+.pending-takes-buttons { display: flex; justify-content: flex-end; }
 /* Shift+Delete's confirmation: the About panel's dialog chrome (below). */
 .confirm-dialog-message { margin: 0 0 calc(var(--space) * 4); }
 .confirm-dialog-buttons { display: flex; gap: calc(var(--space) * 2); justify-content: flex-end; }
@@ -469,13 +500,14 @@ button.media-remove { min-height: 0; padding: 0 var(--space-1h); font-size: var(
 .track-resize { position: absolute; left: 0; right: 0; bottom: 0; height: var(--space-5q); cursor: ns-resize; }
 /* The mini meters: one canvas over the column, painting only inside the wells. */
 .track-meters { position: absolute; inset: 0; width: 100%; height: 100%; pointer-events: none; z-index: 1; }
-/* At the narrow end the header keeps colour, name, M and S (spec 2.3). The
-   empty boxes of record, read and write (.r1's fourth child on) go with the
+/* At the narrow end the header keeps colour, name, M and S (spec 2.3). Record
+   enable (m5b-ui-recording; the strip, the Inspector and R still arm) and the
+   empty boxes of read and write (.r1's fourth child on) go with the
    number and the second row, as small windows take a held box away (spec
    3.0); M and S keep theirs. The head keeps the add button and drops the
    count, which needs about 175 px. */
 @container (max-width: 200px) {
-  .th .idx, .th .r2, .th .r1 > .msr-box:nth-child(n+4), .corner .cnt { display: none; }
+  .th .idx, .th .r2, .th .r1 > .msr-box:nth-child(n+4), .th .r1 > [data-part-of="record"], .corner .cnt { display: none; }
   .th { grid-template-columns: var(--track-colour-w) minmax(0, 1fr); }
 }
 .divider-tracklist { width: var(--divider-w); cursor: ew-resize; }
@@ -499,6 +531,23 @@ button.media-remove { min-height: 0; padding: 0 var(--space-1h); font-size: var(
    mockup; UI redesign 3.0). */
 .inspector-hold.inserts { height: calc(var(--section-head-h) + var(--hairline) + var(--space-7q) + var(--space-9q) + 3 * var(--control-h) + 2 * var(--space)); }
 .inspector-hold.sends, .inspector-hold.automation, .inspector-hold.notepad { height: calc(var(--section-head-h) + var(--hairline)); }
+/* The In row (m5b-ui-recording) at its place in the Routing section's box:
+   below the section's head and the body's top padding, inside its sides, as
+   sec('Routing') draws its first .irow (UI redesign 3.4). The native select
+   lies over the .pick, invisible, so the .pick is what shows and a click on
+   it opens the list. */
+.inspector-hold.routing > .irow { margin: calc(var(--section-head-h) + var(--space-7q)) var(--space-2) 0; }
+.irow .pick { position: relative; min-width: 0; }
+.irow .pick-name { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.irow .pick-select { position: absolute; inset: 0; width: 100%; height: 100%; opacity: 0; cursor: pointer; }
+.irow .pick-select:disabled { cursor: default; }
+.irow .pick:has(.pick-select:focus-visible) { outline: var(--space-half) solid var(--focus-ring); outline-offset: var(--hairline); }
+/* A lit monitor (m5b-ui-recording; UI redesign 3.5): the shared rules light
+   M, S, record and read only, and the mockup never draws monitor lit, so its
+   look is this app-only rule on existing tokens, selected by the button's
+   data-part so the button keeps the mockup's class list (shell.css names no
+   .msr selector). */
+.i-btns > [data-part="inspector-monitor"].on { background: var(--bg-5); color: var(--tx-1); border-color: var(--tx-3); }
 /* The e box sits at the end of the row, as the mockup puts e. */
 .i-btns > .msr-box:last-child { margin-left: auto; }
 /* An unlisted slider keeps its column. */
@@ -751,7 +800,7 @@ button.media-remove { min-height: 0; padding: 0 var(--space-1h); font-size: var(
 .statusbar .about:hover:not(:disabled) { color: var(--tx-2); }
 .about-summary { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
 .about-tail { flex: none; white-space: pre; }
-.about-panel, .confirm-dialog, .studio-setup {
+.about-panel, .confirm-dialog, .studio-setup, .pending-takes {
   width: min(var(--dialog-w), calc(100vw - var(--dialog-margin)));
   max-height: calc(100vh - var(--dialog-margin));
   overflow: auto;
@@ -763,7 +812,7 @@ button.media-remove { min-height: 0; padding: 0 var(--space-1h); font-size: var(
   font-size: var(--fs-body);
   white-space: normal;
 }
-.about-panel::backdrop, .confirm-dialog::backdrop, .studio-setup::backdrop { background: var(--scrim); }
+.about-panel::backdrop, .confirm-dialog::backdrop, .studio-setup::backdrop, .pending-takes::backdrop { background: var(--scrim); }
 .about-panel h2, .studio-setup h2 { margin: 0 0 calc(var(--space) * 2); font-size: var(--fs-plan); font-weight: 600; }
 .about-panel-line { margin: 0 0 calc(var(--space) * 3); overflow-wrap: anywhere; user-select: text; }
 .about-panel h3, .studio-setup h3 { margin: 0 0 var(--space); font-size: var(--fs-small); font-weight: 600; color: var(--tx-2); }
@@ -966,7 +1015,10 @@ button.ghost[data-ghost-mode="solid"] { outline-style: solid; }
    first. */
 @media (max-width: 1300px) {
   .topbar { grid-template-columns: auto auto minmax(0, 1fr); }
-  [data-part="branch-chip"], .hold-transport-record, .dsp, .dsp-load-empty { display: none; }
+  [data-part="branch-chip"], .dsp, .dsp-load-empty { display: none; }
+  /* Record's box on an engine without features.recording goes as its hold
+     did; a working Record button is never hidden (m5b-ui-recording). */
+  [data-part="transport-buttons"] > .transport-hold-tbtn:last-child { display: none; }
   .tb-left:has(> [data-part="branch-chip"]) > .session { flex-shrink: 1; }
 }
 @media (max-width: 1100px) {

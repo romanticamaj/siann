@@ -18,6 +18,13 @@
 //   Loop Selection (Alt+P) sends, in order, session.set_locators for the
 //   selection, transport.set_cycle {enabled: true}, transport.locate to the
 //   left locator and transport.play (spec 3.2).
+// - Punch, pre-roll and count-in (m5b-ui-recording; spec 3.1; 10.11, 17 and
+//   18; protocol-engine-v0.md, "Punch, pre-roll and count-in") are three more
+//   states of the same store, from the same answers and transport.changed
+//   (null on an engine before m5b-engine-punch-count-in); the controller
+//   sends transport.set_punch {in, out} with both flags, and
+//   transport.set_preroll / set_count_in {enabled, bars?} with bars an
+//   integer clamped to 1..8. I and O toggle the punch in and out.
 // - bindLoopClickCommands registers the window-scope keys of the Cubase
 //   preset: each declines (the key keeps its default) when it would send
 //   nothing.
@@ -39,19 +46,62 @@ export interface ClickState {
   readonly gainMilliDb: number;
 }
 
+export interface PunchState {
+  readonly in: boolean;
+  readonly out: boolean;
+}
+
+export interface BarsOption {
+  readonly enabled: boolean;
+  readonly bars: number;
+}
+
 export interface TransportState {
   readonly cycle: boolean;
   readonly click: ClickState;
+  // m5b-engine-punch-count-in: absent where the answer has no such field (an
+  // engine before it), null where the field is malformed.
+  readonly punch?: PunchState | null;
+  readonly preroll?: BarsOption | null;
+  readonly countIn?: BarsOption | null;
 }
 
-// {cycle, click: {enabled, gainMilliDb}} out of engine.status, a transport
-// method's result or a transport.changed event; null when it has neither.
+export const MIN_BARS = 1;
+export const MAX_BARS = 8;
+
+// A bar count the engine takes: an integer in [1, 8].
+export function clampBars(bars: number): number {
+  if (!Number.isFinite(bars)) return MIN_BARS;
+  return Math.min(MAX_BARS, Math.max(MIN_BARS, Math.round(bars)));
+}
+
+function parsePunch(value: unknown): PunchState | null {
+  const raw = value as Record<string, unknown> | null | undefined;
+  if (!raw || typeof raw !== 'object' || typeof raw.in !== 'boolean' || typeof raw.out !== 'boolean') return null;
+  return Object.freeze({ in: raw.in, out: raw.out });
+}
+
+function parseBars(value: unknown): BarsOption | null {
+  const raw = value as Record<string, unknown> | null | undefined;
+  if (!raw || typeof raw !== 'object' || typeof raw.enabled !== 'boolean' || !Number.isInteger(raw.bars)) return null;
+  return Object.freeze({ enabled: raw.enabled, bars: raw.bars as number });
+}
+
+// {cycle, click: {enabled, gainMilliDb}, punch, preroll, countIn} out of
+// engine.status, a transport method's result or a transport.changed event;
+// null when it has neither cycle nor the click.
 export function parseTransportState(value: unknown): TransportState | null {
   if (value === null || typeof value !== 'object') return null;
   const raw = value as Record<string, unknown>;
   const click = raw.click as Record<string, unknown> | null | undefined;
   if (typeof raw.cycle !== 'boolean' || !click || typeof click.enabled !== 'boolean' || !Number.isInteger(click.gainMilliDb)) return null;
-  return Object.freeze({ cycle: raw.cycle, click: Object.freeze({ enabled: click.enabled, gainMilliDb: click.gainMilliDb as number }) });
+  return Object.freeze({
+    cycle: raw.cycle,
+    click: Object.freeze({ enabled: click.enabled, gainMilliDb: click.gainMilliDb as number }),
+    ...('punch' in raw ? { punch: parsePunch(raw.punch) } : {}),
+    ...('preroll' in raw ? { preroll: parseBars(raw.preroll) } : {}),
+    ...('countIn' in raw ? { countIn: parseBars(raw.countIn) } : {}),
+  });
 }
 
 export interface TransportStateSource {
@@ -127,13 +177,7 @@ export class TransportStateStore implements TransportStateSource {
   }
 
   #set(next: TransportState | null): void {
-    const same =
-      next === this.#snapshot ||
-      (next !== null &&
-        this.#snapshot !== null &&
-        next.cycle === this.#snapshot.cycle &&
-        next.click.enabled === this.#snapshot.click.enabled &&
-        next.click.gainMilliDb === this.#snapshot.click.gainMilliDb);
+    const same = next === this.#snapshot || (next !== null && this.#snapshot !== null && JSON.stringify(next) === JSON.stringify(this.#snapshot));
     if (same) return;
     this.#snapshot = next;
     for (const listener of [...this.#listeners]) listener();
@@ -169,9 +213,20 @@ export function loopClickGates(can: CapabilitySelector): { locators: boolean; cy
   };
 }
 
+// The record options (m5b-ui-recording): each needs its method and feature.
+export function recordOptionGates(can: CapabilitySelector): { punch: boolean; preroll: boolean; countIn: boolean } {
+  return {
+    punch: can.has('transport.set_punch') && can.feature('punch'),
+    preroll: can.has('transport.set_preroll') && can.feature('preroll'),
+    countIn: can.has('transport.set_count_in') && can.feature('countIn'),
+  };
+}
+
 export class LoopClickController {
   readonly #options: LoopClickOptions;
   #selection: (() => SelectionSpan) | null = null;
+  // The punch flags of a transport.set_punch in flight.
+  #punchSent: { in: boolean; out: boolean } | null = null;
 
   constructor(options: LoopClickOptions) {
     this.#options = options;
@@ -252,6 +307,67 @@ export class LoopClickController {
     if (!Number.isInteger(gainMilliDb) || gainMilliDb < MIN_CLICK_GAIN || gainMilliDb > MAX_CLICK_GAIN) return false;
     if (gainMilliDb === state.click.gainMilliDb) return false;
     void this.#transport('transport.set_click', { enabled: state.click.enabled, gainMilliDb });
+    return true;
+  }
+
+  recordOptionGates(): { punch: boolean; preroll: boolean; countIn: boolean } {
+    return recordOptionGates(this.#options.capabilities());
+  }
+
+  // Punch in and out (I, O): transport.set_punch with both flags. A request
+  // in flight is what the next toggle builds on (I then O in quick succession
+  // must not send back the flag I just changed); the display still shows only
+  // what the engine said.
+  setPunch(punchIn: boolean, punchOut: boolean): boolean {
+    const punch = this.#punchBasis();
+    if (!punch || !this.recordOptionGates().punch || !this.deviceReady()) return false;
+    if (punch.in === punchIn && punch.out === punchOut) return false;
+    const sent = { in: punchIn, out: punchOut };
+    this.#punchSent = sent;
+    void this.#transport('transport.set_punch', sent).finally(() => {
+      if (this.#punchSent === sent) this.#punchSent = null;
+    });
+    return true;
+  }
+
+  togglePunchIn(): boolean {
+    const punch = this.#punchBasis();
+    return punch ? this.setPunch(!punch.in, punch.out) : false;
+  }
+
+  togglePunchOut(): boolean {
+    const punch = this.#punchBasis();
+    return punch ? this.setPunch(punch.in, !punch.out) : false;
+  }
+
+  #punchBasis(): { in: boolean; out: boolean } | null {
+    return this.#punchSent ?? this.state.getSnapshot()?.punch ?? null;
+  }
+
+  setPreroll(enabled: boolean): boolean {
+    return this.#bars('preroll', enabled, null);
+  }
+
+  setPrerollBars(bars: number): boolean {
+    const now = this.state.getSnapshot()?.preroll;
+    return now ? this.#bars('preroll', now.enabled, bars) : false;
+  }
+
+  setCountIn(enabled: boolean): boolean {
+    return this.#bars('countIn', enabled, null);
+  }
+
+  setCountInBars(bars: number): boolean {
+    const now = this.state.getSnapshot()?.countIn;
+    return now ? this.#bars('countIn', now.enabled, bars) : false;
+  }
+
+  #bars(which: 'preroll' | 'countIn', enabled: boolean, bars: number | null): boolean {
+    const now = this.state.getSnapshot()?.[which];
+    if (!now || !this.recordOptionGates()[which] || !this.deviceReady()) return false;
+    const next = bars === null ? null : clampBars(bars);
+    if (now.enabled === enabled && (next === null || next === now.bars)) return false;
+    void this.#transport(which === 'preroll' ? 'transport.set_preroll' : 'transport.set_count_in', next === null ? { enabled } : { enabled, bars: next });
     return true;
   }
 
@@ -350,6 +466,8 @@ export function bindLoopClickCommands(commands: CommandRegistry, controller: Loo
     commands.register('window', 'transport.toRightLocator', () => controller.goToRight()),
     commands.register('window', 'transport.setLeftLocator', setAt('left')),
     commands.register('window', 'transport.setRightLocator', setAt('right')),
+    commands.register('window', 'transport.punchIn', () => controller.togglePunchIn()),
+    commands.register('window', 'transport.punchOut', () => controller.togglePunchOut()),
   ];
   return () => offs.forEach((off) => off());
 }

@@ -648,7 +648,8 @@ test('volume, pan, mute and solo from the Inspector make one revision each, and 
   const landed = ids.filter((id) => gateOf(id) === 'report');
   const pending = ids.filter((id) => gateOf(id) === 'pending');
   // inspector-inserts landed with m5b-ui-inserts-master (its gate report, its section in the window).
-  expect(pending.sort()).toEqual(['inspector-automation', 'inspector-edit', 'inspector-monitor', 'inspector-notepad', 'inspector-read', 'inspector-record', 'inspector-routing', 'inspector-sends', 'inspector-write']);
+  // inspector-record and inspector-monitor landed with m5b-ui-recording.
+  expect(pending.sort()).toEqual(['inspector-automation', 'inspector-edit', 'inspector-notepad', 'inspector-read', 'inspector-routing', 'inspector-sends', 'inspector-write']);
   expect(landed).toContain('inspector-inserts');
   expect(landed.filter((id) => !shown.includes(id))).toEqual([]);
   expect(pending.filter((id) => shown.includes(id))).toEqual([]);

@@ -40,6 +40,8 @@ import type { PickerController } from '../../src/renderer/mixer/picker';
 import { parseEngineStatus } from '../../src/renderer/model/engine-status';
 import type { PluginActions } from '../../src/renderer/model/plugin-actions';
 import { Inspector } from '../../src/renderer/shell/Inspector';
+import { RecordContext } from '../../src/renderer/shell/record-context';
+import { recordHost } from './support/record-host';
 import { translator } from '../../src/renderer/i18n/t';
 import { PlanStore } from '../../src/renderer/model/plan-store';
 import { namesFromSnapshot } from '../../src/renderer/plans/describe';
@@ -81,11 +83,15 @@ const gestures = {} as unknown as GestureController;
 // The Inspector's rows, as the zone body holds them (a #root of its children).
 function render(tracks: TrackEntity[], options: { trackId?: string | null; caps?: Capabilities | null; locale?: Locale; slots?: readonly PluginSlotEntity[]; ghosts?: readonly Ghost[] } = {}): Element {
   const trackId = options.trackId === undefined ? (tracks[0]?.id ?? null) : options.trackId;
+  const caps = options.caps === undefined ? FULL : options.caps;
+  const client = fakeClient(tracks, [], options.slots ?? []);
   const node: ReactNode = (
-    <CapabilitiesContext.Provider value={options.caps === undefined ? FULL : options.caps}>
-      <GhostContext.Provider value={{ ghosts: options.ghosts ?? [], outline: null, pin: () => undefined }}>
-        <Inspector client={fakeClient(tracks, [], options.slots ?? [])} gestures={gestures} trackId={trackId} />
-      </GhostContext.Provider>
+    <CapabilitiesContext.Provider value={caps}>
+      <RecordContext.Provider value={recordHost(client.model.getSnapshot(), caps)}>
+        <GhostContext.Provider value={{ ghosts: options.ghosts ?? [], outline: null, pin: () => undefined }}>
+          <Inspector client={client} gestures={gestures} trackId={trackId} />
+        </GhostContext.Provider>
+      </RecordContext.Provider>
     </CapabilitiesContext.Provider>
   );
   const before = localeStore();
@@ -156,7 +162,7 @@ test('the track block: the swatch in the track colour, the name, mono or stereo,
   assert.equal(text(find(find(render([{ ...vox(), channels: 2 }]), byClass('i-name')), (el) => el.tag === 'small')), 'Stereo');
 });
 
-test('the buttons: M and S as .msr.m and .msr.s with .on from the track, then the boxes of record, monitor, read, write and e', () => {
+test('the buttons: M and S as .msr.m and .msr.s with .on from the track, record and monitor (m5b-ui-recording), then the boxes of read, write and e', () => {
   for (const [mute, solo] of [[false, false], [true, false], [false, true]] as const) {
     const btns = find(render([{ ...vox(), mute, solo }]), byClass('i-btns'));
     const mBtns = find(mockupZone(), byClass('i-btns'));
@@ -169,8 +175,12 @@ test('the buttons: M and S as .msr.m and .msr.s with .on from the track, then th
     assert.deepEqual(classes(s!).sort(), ['msr', 's', ...(solo ? ['on'] : [])].sort());
     assert.equal(s!.attrs['aria-pressed'], String(solo));
     assert.equal(text(s!), 'S');
-    assert.equal(boxes.length, 5);
-    for (const box of boxes) {
+    // Record enable and monitor landed with m5b-ui-recording (recording-port.test.tsx).
+    const [record, monitor, ...rest] = boxes;
+    assert.equal(record!.attrs['data-part'], 'inspector-record');
+    assert.equal(monitor!.attrs['data-part'], 'inspector-monitor');
+    assert.equal(rest.length, 3);
+    for (const box of rest) {
       assertEmptyBox(box, 'a pending button');
       assert.ok(!classes(box).includes('msr'), 'a box is not drawn as a button');
     }
@@ -242,8 +252,14 @@ test('the four pending sections keep their rows as empty boxes, the open one and
   assert.equal(holds.length, 4);
   assert.equal(mockup.length, 4);
   for (const [i, hold] of holds.entries()) {
-    assertEmptyBox(hold, `section ${i + 1}`);
     const id = mockup[i]!.attrs['data-part']!;
+    // Routing's box holds the In row (m5b-ui-recording) until m5b-ui-sends-buses ports the section around it.
+    if (id === 'inspector-routing') {
+      assert.deepEqual(elements(hold).map((el) => el.attrs['data-testid']), ['inspector-in-row'], 'the In row alone');
+      for (const name of ['role', 'tabindex', 'data-part', 'aria-hidden']) assert.ok(!(name in hold.attrs), `the Routing box: no ${name}`);
+    } else {
+      assertEmptyBox(hold, `section ${i + 1}`);
+    }
     assert.ok(pending(id), `${id} is pending`);
     // Its box: the section's name, shut when the mockup draws it shut.
     const name = id.replace(/^inspector-/, '');
@@ -269,7 +285,7 @@ test('the ids are the mockup\'s minus the pending parts\', and no pending id is 
   const app = render([vox()]);
   const ids = (root: Element) => findAll(root, byAttr('data-part')).map((el) => el.attrs['data-part']!).sort();
   assert.deepEqual(ids(app), ids(mockupZone()).filter((id) => !pending(id)));
-  assert.deepEqual(ids(app), ['inspector-agent-changes', 'inspector-buttons', 'inspector-head', 'inspector-inserts', 'inspector-mute', 'inspector-name', 'inspector-pan', 'inspector-solo', 'inspector-tabs', 'inspector-track', 'inspector-volume'].sort());
+  assert.deepEqual(ids(app), ['inspector-agent-changes', 'inspector-buttons', 'inspector-head', 'inspector-inserts', 'inspector-monitor', 'inspector-mute', 'inspector-name', 'inspector-pan', 'inspector-record', 'inspector-solo', 'inspector-tabs', 'inspector-track', 'inspector-volume'].sort());
 });
 
 test('with no track selected, or a track gone, the zone shows its head and foot and nothing between them', () => {
@@ -291,7 +307,12 @@ test('a selection change shows the other track', () => {
 });
 
 test('reduced capabilities remove the controls, and their boxes stay', () => {
-  const noMuteSolo: Capabilities = { ...FULL, commands: (FULL.commands ?? []).filter((c) => c !== 'track.set_mute' && c !== 'track.set_solo') };
+  // Without mute, solo and recording (m5b-ui-recording) every button of the row is a box.
+  const noMuteSolo: Capabilities = {
+    ...FULL,
+    commands: (FULL.commands ?? []).filter((c) => c !== 'track.set_mute' && c !== 'track.set_solo'),
+    features: { ...FULL.features, recording: false, monitoring: false },
+  };
   const btns = find(render([vox()], { caps: noMuteSolo }), byClass('i-btns'));
   assert.equal(findAll(btns, (el) => el.tag === 'button').length, 0);
   assert.equal(elements(btns).length, 7);

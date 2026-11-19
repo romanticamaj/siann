@@ -130,7 +130,7 @@ test('each component of M5 has the port feature that owns its parts', () => {
   for (const [id, gate] of Object.entries(owner)) assert.equal(ruleOf(id).gate, gate, id);
   for (const gate of PORTS) assert.ok(Object.values(owner).includes(gate), gate);
   // Parts of a later feature inside a ported component stay that feature's, pending.
-  for (const [id, gate] of Object.entries({ 'tool-2': 'm6a-ui-tools', 'info-fade-in': 'm5b-ui-fades', 'marker-head': 'm5b-ui-markers', 'track-2-record': 'm5b-ui-recording', 'inspector-notepad': 'm5b-ui-notepad' })) {
+  for (const [id, gate] of Object.entries({ 'tool-2': 'm6a-ui-tools', 'info-fade-in': 'm5b-ui-fades', 'marker-head': 'm5b-ui-markers', 'inspector-notepad': 'm5b-ui-notepad' })) {
     assert.equal(ruleOf(id).gate, gate, id);
     assert.equal(MANIFEST.gates[gate], 'pending', gate);
   }
@@ -144,6 +144,9 @@ test('each component of M5 has the port feature that owns its parts', () => {
   // The proposal pill stays m5b-ui-ghosts', which landed it (report).
   assert.equal(ruleOf('proposal-pill').gate, 'm5b-ui-ghosts');
   assert.equal(MANIFEST.gates['m5b-ui-ghosts'], 'report');
+  // The record buttons and the monitor stay m5b-ui-recording's, which landed them (report).
+  for (const id of ['track-2-record', 'strip-3-record', 'inspector-record', 'inspector-monitor', 'transport-record']) assert.equal(ruleOf(id).gate, 'm5b-ui-recording', id);
+  assert.equal(MANIFEST.gates['m5b-ui-recording'], 'report');
 });
 
 test('a feature that owns parts names its gate in its acceptance, asks for a side-by-side screenshot and never for enforce', () => {
@@ -445,9 +448,13 @@ test('the chrome\'s gate is report, and the boxes of its absent parts are held b
   assert.ok(!Object.values(MANIFEST.gates).includes('enforce'), 'no gate is enforce');
   const tokens = read('app', 'renderer', 'tokens.css');
   const holds = {
-    'transport-record': ['w', 'h'],
     'zone-button-channel': ['w', 'h'],
   };
+  // Record landed (m5b-ui-recording): its hold tokens are gone, and on an
+  // engine without features.recording its box is the .tbtn box of the landed
+  // transport (UI redesign 3.0; 10.11, 19).
+  assert.equal(MANIFEST.gates[ruleOf('transport-record').gate], 'report');
+  assert.doesNotMatch(tokens, /--hold-transport-record-/);
   for (const [part, sides] of Object.entries(holds)) {
     assert.equal(MANIFEST.gates[ruleOf(part).gate], 'pending', `${part} is pending`);
     for (const side of sides) assert.match(tokens, new RegExp(`--hold-${part}-${side}:\\s*calc\\([\\d.]+px \\* var\\(--scale\\)\\);`), `--hold-${part}-${side}`);
@@ -795,9 +802,11 @@ test('the small-window breakpoints of shell.css are the ones spec 2.4 and 3.0 de
   const widths = [...css.matchAll(/@media \(max-width: (\d+)px\)/g)].map((m) => Number(m[1]));
   assert.deepEqual([...new Set(widths)].sort((a, b) => b - a), [1300, 1100]);
   for (const width of widths) assert.match(s24, new RegExp(`Under ${width} px wide`), `${width} px in 2.4`);
-  // 1300 px: the transport leaves the centre and the three side holds go.
+  // 1300 px: the transport leaves the centre and the side holds go; the
+  // landed Record button stays (m5b-ui-recording) and shell-layout.spec checks it.
   assert.match(s24, /Under 1300 px wide[^\n]*the transport is no longer centred/);
   for (const part of ['branch chip', 'DSP load', 'Record button']) assert.match(s24, new RegExp(`Under 1300 px wide[^\n]*${part}`), part);
+  assert.match(s24, /Under 1300 px wide[^\n]*`m5b-ui-recording`, which lands it, keeps it under 1300 px[^\n]*`shell-layout\.spec`/);
   // 1100 px: the brand goes too; the session name shortens instead of going.
   assert.match(s24, /Under 1100 px wide[^\n]*the brand/);
   assert.match(s24, /session name[^\n]*(ellipsis|shortens)/);
@@ -818,7 +827,10 @@ test('the small-window breakpoints of shell.css are the ones spec 2.4 and 3.0 de
     return '';
   };
   assert.match(block(1300), /\.topbar \{ grid-template-columns: auto auto minmax\(0, 1fr\); \}/);
-  assert.match(block(1300), /\[data-part="branch-chip"\], \.hold-transport-record, \.dsp, \.dsp-load-empty \{ display: none; \}/);
+  assert.match(block(1300), /\[data-part="branch-chip"\], \.dsp, \.dsp-load-empty \{ display: none; \}/);
+  // A working Record button is never hidden; its box on an engine without recording goes as the hold did.
+  assert.doesNotMatch(block(1300), /transport-record/);
+  assert.match(block(1300), /\[data-part="transport-buttons"\] > \.transport-hold-tbtn:last-child \{ display: none; \}/);
   assert.match(block(1100), /\.brand \{ display: none; \}/);
   assert.match(block(1100), /\.lcd \.cell\[data-part="display-signature"\]/);
 });

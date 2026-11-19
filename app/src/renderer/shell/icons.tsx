@@ -149,6 +149,14 @@ const PATHS = {
     </>
   ),
   grid: <path d="M2.5 5.5h11M2.5 10.5h11M5.5 2.5v11M10.5 2.5v11" />,
+  // Record and monitor (m5b-ui-recording; mockup.html, P.rec and P.mon).
+  rec: <circle cx="8" cy="8" r="4.2" fill="currentColor" stroke="none" />,
+  mon: (
+    <>
+      <path d="M2.5 9.5v-3h2.2L8 3.8v8.4L4.7 9.5z" />
+      <path d="M10.5 6a3 3 0 0 1 0 4M12.3 4.3a5.4 5.4 0 0 1 0 7.4" />
+    </>
+  ),
   follow: (
     <>
       <path d="M2.5 8h7" />

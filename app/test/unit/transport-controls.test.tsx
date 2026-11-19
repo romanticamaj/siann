@@ -297,12 +297,13 @@ test('without the E-1 methods none of the controls is in the DOM and their boxes
       assert.ok(!markup.includes(`data-testid="${id}"`) && !markup.includes(`data-part="${id}"`), `${id} absent`);
     }
   }
-  // With the rest of the transport there, three empty boxes hold the places.
+  // With the rest of the transport there, three empty boxes hold the places,
+  // and Record's (m5b-ui-recording: no record host here) a .tbtn's.
   const markup = render(WITHOUT_E1, WITH_DEVICE, { state: ON, snapshot: withLocators('768000', '1152000') });
   const holds = [...markup.matchAll(HOLDS)].map((m) => m[0]);
   assert.deepEqual(
     holds.map((h) => /class="([^"]+)"/.exec(h)![1]),
-    ['transport-hold transport-hold-tbtn', 'cell display-locators-empty', 'transport-hold transport-hold-tgroup'],
+    ['transport-hold transport-hold-tbtn', 'transport-hold transport-hold-tbtn', 'cell display-locators-empty', 'transport-hold transport-hold-tgroup'],
   );
   for (const hold of holds) {
     assert.match(hold, /aria-hidden="true"/, hold);
@@ -311,8 +312,10 @@ test('without the E-1 methods none of the controls is in the DOM and their boxes
   // Each sits where the mockup draws its part: the cycle's between start and stop,
   // the locators' between the display and the tempo, the click's after the tempo.
   const at = (needle: string) => markup.indexOf(needle);
-  const [cycle, locators, clickHold] = [...markup.matchAll(HOLDS)].map((m) => m.index!);
+  const [cycle, record, locators, clickHold] = [...markup.matchAll(HOLDS)].map((m) => m.index!);
   assert.ok(at('data-part="transport-start"') < cycle! && cycle! < at('data-part="transport-stop"'));
+  // Record's (m5b-ui-recording), after start and before the display.
+  assert.ok(at('data-part="transport-play"') < record! && record! < at('data-part="display"'));
   assert.ok(at('data-part="display"') < locators! && locators! < at('data-part="display-tempo"'));
   assert.ok(at('data-part="display-tempo"') < clickHold!);
 });

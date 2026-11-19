@@ -1065,6 +1065,52 @@ test('UX screenshot tour', async () => {
   await page.getByTestId('picker-close').click();
   await expect(page.getByTestId('plugin-picker')).toBeHidden();
 
+  // ---- 35 and 36 (m5b-ui-recording; UI redesign 3.1, 3.5; 10.11, 16 and 17):
+  // the fake device with its input (its outputs loop back), Vox Lead on Mono
+  // In 1 and armed, a recording in progress; then the record options panel
+  // with punch in and out and a one-bar count-in.
+  const recorder = await engineClient(page);
+  await recorder.call('engine.select_device', { id: 'fake', inputId: 'fake' });
+  await expect.poll(async () => ((await recorder.call('engine.status')).device as { input: unknown } | null)?.input ?? null).not.toBeNull();
+  await recorder.call('command.execute', { commands: [{ op: 'track.set_input', trackId: 'trk_voxlead', input: { port: 0, channels: 1 } }] });
+  await page.getByTestId('track-record-trk_voxlead').click();
+  await expect(page.getByTestId('track-record-trk_voxlead')).toHaveAttribute('aria-pressed', 'true');
+  await page.getByTestId('transport-record').click();
+  await expect(page.getByTestId('transport-record')).toHaveAttribute('aria-pressed', 'true');
+  await expect
+    .poll(async () => page.evaluate(() => ((window as unknown as { __siannTimeline?: { recordingClips(): Array<{ columns: number }> } }).__siannTimeline?.recordingClips() ?? []).filter((c) => c.columns > 4).length), { timeout: 20_000 })
+    .toBe(1);
+  await shoot(
+    page,
+    'Recording in progress',
+    'Vox Lead armed (its record enable lit on the header, the strip and the Inspector, whose In row reads Mono In 1) and Record pressed: a red clip grows on its lane from the take\'s first frame to the playhead with the live waveform of its input meter (input:trk_voxlead), drawn on the overlay at display rate with no React commit; the header and strip meters of the armed track read its input. The fake device\'s input is the loopback of what plays.',
+    { number: 35 },
+  );
+  await page.getByTestId('transport-stop').click();
+  await expect(page.getByTestId('transport-record')).toHaveAttribute('aria-pressed', 'false');
+  await page.getByTestId('transport-record').click({ button: 'right' });
+  const options = page.getByTestId('record-options');
+  await expect(options).toBeVisible();
+  // The box shows the engine's state, so it turns once the answer is in.
+  await options.getByTestId('record-option-punch-in').click();
+  await expect(options.getByTestId('record-option-punch-in')).toBeChecked();
+  // The box shows the engine's state, so it turns once the answer is in.
+  await options.getByTestId('record-option-punch-out').click();
+  await expect(options.getByTestId('record-option-punch-out')).toBeChecked();
+  // The box shows the engine's state, so it turns once the answer is in.
+  await options.getByTestId('record-option-count-in').click();
+  await expect(options.getByTestId('record-option-count-in')).toBeChecked();
+  await expect.poll(async () => (await recorder.call('engine.status')).punch).toEqual({ in: true, out: true });
+  await expect.poll(async () => ((await recorder.call('engine.status')).countIn as { enabled: boolean }).enabled).toBe(true);
+  await shoot(
+    page,
+    'Punch and count-in on',
+    'A right-click on Record opened the record options panel (app-only, styled in shell.css on existing tokens; UI redesign 10.11, 17): punch in and punch out at the locators (I and O), pre-roll and count-in with their bar counts (1 to 8), each showing the engine\'s state from transport.changed; Record\'s tooltip names the options that are on. The mockup draws no such panel, so the review reads this state alone.',
+    { number: 36 },
+  );
+  await page.keyboard.press('Escape');
+  recorder.close();
+
   // ---- 29 and 30 (m5b-ui-project): the start view, on a launch of its own
   // without SIANN_SESSION_DIR and with a recent list whose last bundle is
   // gone, then Studio Setup from the Studio menu. The mockup draws neither:

@@ -56,6 +56,7 @@ import {
   dialog,
   ipcMain,
   Menu,
+  powerSaveBlocker,
   protocol,
   session,
   type IpcMainEvent,
@@ -65,10 +66,12 @@ import { spawn } from 'node:child_process';
 import * as fs from 'node:fs';
 import * as path from 'node:path';
 
+import { isDevtoolsOrReloadKey } from './blocked-keys';
 import { engineArgs, engineTestArgs, fidelityEnvironmentArgs, pluginRegistryFile, testCapabilitiesArgs } from './engine-args';
 import { focusFirstWindow } from './focus';
 import { chosenPaths, mediaDialogOptions, mediaFormats, mediaLabel } from './media';
 import { menuTemplate, parseMenuModel, type MenuModel } from './menu';
+import { IPC_RECORDING, PowerSaveHandler } from './power-save';
 import { addRecent, bundleName, isBundlePath, launchSession, recentFile, scratchBundle, serializeRecent, type ProjectsFs } from './projects';
 import { rendererRequestPath } from './serve';
 import { DEFAULT_BACKOFF, EngineSupervisor, type Backoff, type EngineGaveUp, type EngineReady } from './supervisor';
@@ -266,6 +269,16 @@ function notifyRenderer(): void {
 
 supervisor.on('ready', notifyRenderer);
 supervisor.on('exit', notifyRenderer);
+
+// The power-save blocker while recording (m5b-ui-recording; UI redesign 3.5):
+// held from the renderer's start of a recording to its end, the window's
+// close or the engine's exit.
+const powerSave = new PowerSaveHandler(powerSaveBlocker);
+supervisor.on('exit', () => powerSave.release('engine'));
+ipcMain.on(IPC_RECORDING, (event, value: unknown) => {
+  if (!fromApp(event) || typeof value !== 'boolean') return;
+  powerSave.recording(value);
+});
 supervisor.on('protocol-error', notifyRenderer);
 supervisor.on('gave-up', (info: EngineGaveUp) => {
   notifyRenderer();
@@ -352,13 +365,6 @@ ipcMain.on(IPC_MENU_SET, (event, value: unknown) => {
 });
 
 
-// F12 and Ctrl/Cmd+Shift+I (devtools), Ctrl/Cmd+R (and with Shift) and F5 (reload).
-function isDevtoolsOrReloadKey(input: Electron.Input): boolean {
-  const key = input.key.toLowerCase();
-  const command = input.control || input.meta;
-  return key === 'f12' || key === 'f5' || (command && input.shift && key === 'i') || (command && key === 'r');
-}
-
 function denyPermissions(): void {
   const { defaultSession } = session;
   defaultSession.setPermissionRequestHandler((_webContents, _permission, callback) => callback(false));
@@ -407,6 +413,7 @@ function createWindow(): void {
   });
   mainWindow.on('closed', () => {
     mainWindow = null;
+    powerSave.release('window');
   });
   void mainWindow.loadURL(APP_URL);
 }

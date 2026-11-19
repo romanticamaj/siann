@@ -71,6 +71,7 @@ import { RealtimeClient, type RealtimeSocket } from './model/realtime-client';
 import { UndoHistory } from './model/undo-history';
 import { SessionClient, type AnsweredRequest, type EngineEndpoint, type SentRequest, type SocketLike, type TestEnvironment } from './model/session-client';
 import { LoopClickController, TransportStateStore, clientCapabilities } from './model/loop-click';
+import { RecordController, RecordStore, earlyEndLine } from './model/record';
 import { capabilitySelector, type Capabilities } from './model/capabilities';
 import { ProjectController, SavedMark, type ShellPort, type ShellProjectState } from './model/project';
 import { StudioSetupController } from './model/studio-setup';
@@ -108,6 +109,8 @@ declare global {
       };
       // Importing audio (m5b-ui-media): the shell's file dialog and a dropped file's path.
       media?: MediaBridge;
+      // The power-save blocker while recording (m5b-ui-recording).
+      power?: { recording(on: boolean): void };
       // The application menu (m5b-ui-project): its model out, its clicks in.
       menu?: {
         set(model: MenuModel): void;
@@ -248,6 +251,41 @@ const loopClick = new LoopClickController({
   toasts,
   locale: () => locales.getSnapshot(),
 });
+
+// Recording (m5b-ui-recording): the record state (engine.status, record.changed,
+// the results), its actions, a toast for an early end, and the shell's
+// power-save blocker from the start of a recording to its end (a plain tab
+// has no bridge and holds none).
+const nameOf = (trackId: string) => (client.model.getSnapshot()?.entities[`track:${trackId}`] as { name?: string } | undefined)?.name ?? trackId;
+const recordStore = new RecordStore(client, {
+  onEarlyEnd: (take) => {
+    const name = nameOf(take.trackId);
+    toasts.push(earlyEndLine(take, name, translator(locales.getSnapshot())), (locale) => earlyEndLine(take, name, translator(locale)));
+  },
+});
+const recordController = new RecordController({
+  client,
+  model: client.model,
+  store: recordStore,
+  status: engineStatus,
+  capabilities: clientCapabilities(client),
+  toasts,
+  locale: () => locales.getSnapshot(),
+  onTransportResult: (result) => transportState.apply(result),
+  // The edit guard (UI redesign 4.5 C5): starting Record, the input, the monitor and Keep wait for main.
+  blocked: () => structuralBlocked(plans.getSnapshot().heard),
+});
+const record = { controller: recordController, status: engineStatus };
+const powerBridge = bridge?.power;
+if (powerBridge) {
+  let held = false;
+  recordStore.subscribe(() => {
+    const recording = recordStore.getSnapshot()?.recording === true;
+    if (recording === held) return;
+    held = recording;
+    powerBridge.recording(recording);
+  });
+}
 
 // Importing audio (m5b-ui-media): media.import jobs for the drop and the Media
 // tab's Import; the drop and Import exist only with the preload bridge.
@@ -414,6 +452,7 @@ const app = (
     studioSetup={studioSetup}
     inserts={inserts}
     media={media}
+    record={record}
   />
 );
 createRoot(container).render(

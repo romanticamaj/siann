@@ -36,6 +36,8 @@ import type { Snapshot } from '../../src/renderer/model/read-model';
 import type { RealtimeClient } from '../../src/renderer/model/realtime-client';
 import type { SessionClient } from '../../src/renderer/model/session-client';
 import { CapabilitiesContext } from '../../src/renderer/shell/Capable';
+import { RecordContext } from '../../src/renderer/shell/record-context';
+import { recordHost } from './support/record-host';
 import { GhostContext, type GhostView } from '../../src/renderer/plans/ghost-context';
 import type { Ghost } from '../../src/renderer/plans/ghosts';
 import { byAttr, byClass, classes, elements, find, findAll, loadMockup, parse, sig, styleOf, text, type Element } from './support/mockup';
@@ -87,9 +89,12 @@ function withSlots(snap: Snapshot, slots: readonly PluginSlotEntity[]): Snapshot
 
 function render(tracks: TrackEntity[], options: RenderOptions = {}): Element {
   const snap = withSlots(snapshotOf(tracks.map((t) => t.id), tracks, [], []), options.slots ?? []);
+  const caps = options.caps === undefined ? FULL : options.caps;
   const node: ReactNode = (
-    <CapabilitiesContext.Provider value={options.caps === undefined ? FULL : options.caps}>
-      <Mixer client={fakeClient(snap)} gestures={gestures} realtime={realtime} selectedTrackId={options.selected ?? null} racks={options.racks} />
+    <CapabilitiesContext.Provider value={caps}>
+      <RecordContext.Provider value={recordHost(snap, caps)}>
+        <Mixer client={fakeClient(snap)} gestures={gestures} realtime={realtime} selectedTrackId={options.selected ?? null} racks={options.racks} />
+      </RecordContext.Provider>
     </CapabilitiesContext.Provider>
   );
   const before = localeStore();
@@ -209,7 +214,7 @@ test('the fader area: the scale at the taper\'s positions, the fader with its un
   for (const ch of elements(meter!)) assert.deepEqual(ch.children, []);
 });
 
-test('the readout holds the level and the peak value; the second button row is an empty box', () => {
+test('the readout holds the level and the peak value; the second button row holds the boxes of R and W and record enable', () => {
   const strip = strips(render([kick(), snare()]))[1]!;
   const rows = elements(strip);
   const readout = rows[4]!;
@@ -218,7 +223,15 @@ test('the readout holds the level and the peak value; the second button row is a
   assert.equal(text(level!), '-2.5 dB');
   assert.equal(peak!.tag, 'button');
   assert.ok(classes(peak!).includes('pk'));
-  assertEmptyBox(rows[5]!, 'the automation row');
+  // R and W are m6a-ui-automation's (empty boxes); record enable landed with m5b-ui-recording.
+  const [r, w, record] = elements(rows[5]!);
+  assertEmptyBox(r!, 'R');
+  assertEmptyBox(w!, 'W');
+  assert.deepEqual(classes(record!).sort(), ['msr', 'r']);
+  assert.equal(record!.attrs['data-part-of'], 'record');
+  // Without features.recording the row is an empty box, as in M5.
+  const bare = strips(render([kick(), snare()], { caps: { ...FULL, features: { ...FULL.features, recording: false } } }))[1]!;
+  assertEmptyBox(elements(bare)[5]!, 'the automation row without recording');
 });
 
 test('the selected track\'s strip is .sel', () => {

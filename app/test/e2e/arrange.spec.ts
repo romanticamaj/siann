@@ -872,11 +872,12 @@ test('the track list boundary drags within 140-420, never collapses, takes the k
   await expect(page.getByTestId('track-mute-trk_a')).toBeVisible();
   await expect(page.getByTestId('track-solo-trk_a')).toBeVisible();
   // At the minimum the header shows colour, name, M and S (spec 2.3): the name
-  // is not cut, and the empty boxes of record, read and write go with the
-  // number and the second row (spec 3.0), so they take none of its width.
+  // is not cut, and record enable (m5b-ui-recording) and the empty boxes of
+  // read and write go with the number and the second row (spec 3.0), so they
+  // take none of its width.
   const narrow = await page.getByTestId('track-header-trk_a').evaluate((th) => {
     const name = th.querySelector<HTMLElement>('.r1 > .name')!;
-    const holds = [...th.querySelectorAll<HTMLElement>('.r1 > .msr-box')].map((el) => el.getBoundingClientRect().width);
+    const holds = [...th.querySelectorAll<HTMLElement>('.r1 > .msr-box, .r1 > [data-part-of="record"]')].map((el) => el.getBoundingClientRect().width);
     return { client: name.clientWidth, scroll: name.scrollWidth, holds };
   });
   expect(narrow.scroll).toBeGreaterThan(0);
@@ -903,9 +904,9 @@ test('the track list boundary drags within 140-420, never collapses, takes the k
   expect(fit.count).toBe(0);
   await separator.dblclick();
   await expect.poll(width).toBe(216);
-  // At the default width the three boxes keep their space (spec 3.0).
+  // At the default width record enable and the two boxes keep their space (spec 3.0).
   expect(await page.getByTestId('track-header-trk_a').evaluate((th) =>
-    [...th.querySelectorAll<HTMLElement>('.r1 > .msr-box')].filter((el) => el.getBoundingClientRect().width > 0).length)).toBe(3);
+    [...th.querySelectorAll<HTMLElement>('.r1 > .msr-box, .r1 > [data-part-of="record"]')].filter((el) => el.getBoundingClientRect().width > 0).length)).toBe(3);
   // and the count is back, inside the head.
   expect(await page.getByTestId('track-list').evaluate((list) => {
     const cnt = list.querySelector<HTMLElement>('.corner .cnt')!.getBoundingClientRect();
@@ -1405,7 +1406,9 @@ test('every landed id of the track list is in the window and no pending one is, 
   });
   const landed = ids.filter((id) => gateOf(id) === 'report');
   const pending = ids.filter((id) => gateOf(id) === 'pending');
-  for (const id of ['marker-head', 'track-1-record', 'track-1-read', 'track-1-write']) expect(pending).toContain(id);
+  for (const id of ['marker-head', 'track-1-read', 'track-1-write']) expect(pending).toContain(id);
+  // Record enable landed with m5b-ui-recording.
+  expect(landed).toContain('track-1-record');
   // The ghost track landed with m5b-ui-ghosts and is drawn for a reviewable plan only: none here.
   expect(landed).toContain('track-ghost');
   for (const id of landed.filter((id) => !/ghost/.test(id))) expect(shown, id).toContain(id);
@@ -1415,7 +1418,7 @@ test('every landed id of the track list is in the window and no pending one is, 
   await expect(page.locator('.headers > .corner > .add + .cnt')).toHaveCount(1);
   await expect(page.locator('.headers > div[aria-hidden="true"]:not([class])')).toHaveCount(1);
   await expect(page.locator('.th > .col + .idx + .body > .r1 + .r2')).toHaveCount(3);
-  await expect(page.locator('.th .r1 > .name + .msr.m + .msr.s + .msr-box + .msr-box + .msr-box')).toHaveCount(3);
+  await expect(page.locator('.th .r1 > .name + .msr.m + .msr.s + .msr.r + .msr-box + .msr-box')).toHaveCount(3);
   await expect(page.locator('.th .r2 > .db.num + .pan.num + .hmeter')).toHaveCount(3);
   await expect(page.getByTestId('track-header-trk_b')).toHaveClass(/(^| )muted( |$)/);
   // The muted header dims as the shared rule does: its name and second row at 45 %, not the whole header.

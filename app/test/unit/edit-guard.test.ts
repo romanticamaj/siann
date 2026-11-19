@@ -42,6 +42,9 @@ test('the table of structural ops', () => {
     'media.rename',
     'media.remove',
     'transport.record',
+    // m5b-ui-recording (10.11, 22): the input and the monitor commit onto main, as track.set_mute does.
+    'track.set_input',
+    'track.set_monitor',
     // m5b-ui-inserts-master: an insert, its removal and its bypass commit onto main.
     'plugin.instantiate',
     'plugin.insert',
@@ -51,7 +54,7 @@ test('the table of structural ops', () => {
   // A plugin's editor window, the registry and an approval change no session.
   for (const op of ['plugin.open_editor', 'plugin.close_editor', 'plugin.registry', 'plugin.approve', 'master.set_gain']) assert.equal(isStructural(op), false, op);
   for (const op of structural) assert.equal(isStructural(op), true, op);
-  const free = ['session.set_locators', 'session.set_tempo', 'tempo.set', 'session.undo', 'session.redo', 'gesture.begin', 'gesture.update', 'gesture.end', 'gesture.cancel', 'transport.locate', 'transport.play', 'audition.hear', 'proposal.merge'];
+  const free = ['session.set_locators', 'session.set_tempo', 'tempo.set', 'session.undo', 'session.redo', 'gesture.begin', 'gesture.update', 'gesture.end', 'gesture.cancel', 'transport.locate', 'transport.play', 'audition.hear', 'proposal.merge', 'record.arm'];
   for (const op of free) assert.equal(isStructural(op), false, op);
 });
 

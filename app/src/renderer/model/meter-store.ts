@@ -12,7 +12,10 @@
 // one starts from silence; an
 // entity missing from the newest frame, and every entity of a frame whose
 // transport is stopped (the engine then repeats its last readings), reads as
-// silence.
+// silence, but the input meters (input:<trackId>) and the track meters of the
+// tracks that monitor (track:<trackId>; monitor input, or auto and armed),
+// which the engine measures live while stopped (protocol-engine-v0,
+// "Monitoring"; m5b-ui-recording).
 
 import { PeakHold } from '../mixer/peak-hold';
 import type { MeterFrame, MeterLegend } from './meter-frames';
@@ -52,8 +55,15 @@ function channelPeak(peaks: readonly number[], channel: 0 | 1): number {
   return peak;
 }
 
+export interface MeterStoreOptions {
+  // The ids of the tracks that monitor their input (record.ts monitoredTracks):
+  // their track meters stay live while the transport is stopped.
+  readonly monitored?: () => readonly string[];
+}
+
 export class MeterStore {
   readonly #source: MeterSource;
+  readonly #monitored: () => readonly string[];
   readonly #ballistics = new PeakHold(0);
   // Per channel: index 2 * entity + channel.
   readonly #channels = new PeakHold(0);
@@ -67,8 +77,9 @@ export class MeterStore {
   peak = new Float32Array(0);
   rms = new Float32Array(0);
 
-  constructor(source: MeterSource) {
+  constructor(source: MeterSource, options: MeterStoreOptions = {}) {
     this.#source = source;
+    this.#monitored = options.monitored ?? (() => []);
   }
 
   // The meters.legend epoch the arrays follow.
@@ -127,11 +138,20 @@ export class MeterStore {
     this.rms.fill(0);
     this.#channelPeak.fill(0);
     this.#playing = frame?.playing === true;
-    // Stopped, the engine repeats its last readings; nothing is metered then.
-    if (!frame || frame.epoch !== this.#epoch || !frame.playing) return true;
+    // Stopped, the engine repeats its last readings; nothing is metered then,
+    // but the input meters of armed tracks (input:<trackId>, m5b-ui-recording),
+    // which the engine measures whether the transport plays or not, and the
+    // track meters of monitoring tracks, whose graph runs while stopped.
+    if (!frame || frame.epoch !== this.#epoch) return true;
+    const live = frame.playing;
+    const monitored = live ? null : this.#monitored();
     for (const entry of frame.entries) {
       const index = entry.entityIndex;
       if (index >= this.peak.length) continue;
+      if (monitored) {
+        const ref = this.#entities[index]!;
+        if (!ref.startsWith('input:') && !(ref.startsWith('track:') && monitored.includes(ref.slice('track:'.length)))) continue;
+      }
       let peak = 0;
       let rms = 0;
       for (const value of entry.peak) if (value > peak) peak = value;

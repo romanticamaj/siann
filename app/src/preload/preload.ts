@@ -2,8 +2,9 @@
 // engine's {port, token} and change notifications, the shell's project
 // record and folder dialogs, and the application menu's two directions
 // (m5b-ui-project), the audio file dialog and a dropped file's path
-// (m5b-ui-media), nothing else. The MCP token never leaves the main
-// process.
+// (m5b-ui-media), and a recording's start and end for the power-save
+// blocker (m5b-ui-recording), nothing else. The MCP token never leaves the
+// main process.
 
 import { contextBridge, ipcRenderer, webUtils } from 'electron';
 
@@ -109,6 +110,13 @@ contextBridge.exposeInMainWorld('siann', {
       } catch {
         return '';
       }
+    },
+  },
+  // The power-save blocker while recording (m5b-ui-recording): the renderer
+  // says when a recording starts and ends.
+  power: {
+    recording: (on: boolean): void => {
+      if (typeof on === 'boolean') ipcRenderer.send('siann:power:recording', on);
     },
   },
   // The application menu (m5b-ui-project): the renderer's model out, the

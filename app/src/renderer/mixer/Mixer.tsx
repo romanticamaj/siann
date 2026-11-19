@@ -24,12 +24,14 @@ import { useT } from '../i18n/t';
 import type { GestureController } from '../model/gesture-controller';
 import { MeterStore } from '../model/meter-store';
 import type { RealtimeClient } from '../model/realtime-client';
+import { monitoredTracks } from '../model/record';
 import type { SessionClient } from '../model/session-client';
 import { KnobGradient } from './Knob';
 import { MeterBoard } from './meter-board';
 import { MetersContext } from './meters-context';
 import type { MeterTestHooks } from './MixerMeters';
 import { GhostStrip, MasterStrip, Strip } from './Strip';
+import { useRecordHost } from '../shell/record-context';
 import { ReviewContext, useGhostView } from '../plans/ghost-context';
 
 export interface MixerProps {
@@ -57,7 +59,16 @@ export function Mixer({ client, gestures, realtime, selectedTrackId = null, onMe
     () => client.getState().legend?.entities.includes('master') === true,
     () => client.getState().legend?.entities.includes('master') === true,
   );
-  const [board] = useState(() => new MeterBoard(meterStore ?? new MeterStore(realtime), realtime.loudness ?? null));
+  const record = useRecordHost();
+  const recordRef = useRef(record);
+  recordRef.current = record;
+  // The armed tracks' strips read their input meter; the monitoring tracks'
+  // track meters stay live while stopped (m5b-ui-recording).
+  const [board] = useState(() => {
+    const armed = () => recordRef.current?.controller.store.getSnapshot()?.armed ?? [];
+    const monitored = () => monitoredTracks(client.model.getSnapshot()?.tracks ?? [], armed());
+    return new MeterBoard(meterStore ?? new MeterStore(realtime, { monitored }), realtime.loudness ?? null, armed);
+  });
   const view = useGhostView();
   const review = useContext(ReviewContext);
   const container = useRef<HTMLElement | null>(null);

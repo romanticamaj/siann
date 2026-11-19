@@ -32,6 +32,7 @@
 import { formatLufs, formatPeakDb } from '../format';
 import type { LoudnessField, LoudnessReadings } from '../model/loudness-store';
 import type { MeterStore } from '../model/meter-store';
+import { armedMeterRef } from '../model/record';
 import { TOKENS } from '../tokens';
 import { FLOOR_DB } from './peak-hold';
 import { milliDbToPosition } from './taper';
@@ -97,6 +98,9 @@ export interface MixerMetersOptions {
   readonly pixelRatio?: () => number;
   // The canvas's CSS size.
   readonly size?: () => { width: number; height: number };
+  // The armed tracks' ids (m5b-ui-recording): their strips read their input
+  // meter, input:<trackId>, while the legend has it.
+  readonly armed?: () => readonly string[];
 }
 
 export interface MeterTestHooks {
@@ -160,6 +164,7 @@ export class MixerMeters {
   readonly #hidden: () => boolean;
   readonly #pixelRatio: () => number;
   readonly #size: () => { width: number; height: number };
+  readonly #armed: () => readonly string[];
   #canvas: CanvasLike | null;
   readonly #entries = new Set<Entry>();
   readonly #peaks = new Set<Peak>();
@@ -179,6 +184,7 @@ export class MixerMeters {
     this.#hidden = options.hidden ?? (() => document.hidden);
     this.#pixelRatio = options.pixelRatio ?? (() => window.devicePixelRatio || 1);
     this.#size = options.size ?? (() => ({ width: 0, height: 0 }));
+    this.#armed = options.armed ?? (() => []);
   }
 
   get running(): boolean {
@@ -368,9 +374,13 @@ export class MixerMeters {
     entry.target.textContent = text;
   }
 
+  #ref(ref: string): string {
+    return armedMeterRef(ref, this.#armed(), (r) => this.#store.indexOf(r) >= 0);
+  }
+
   #drawChannel(context: Context2DLike, entry: Entry, rect: SlotRect): void {
     const store = this.#store;
-    const index = store.indexOf(entry.slot.ref);
+    const index = store.indexOf(this.#ref(entry.slot.ref));
     if (index < 0) return;
     const at = 2 * index + (entry.slot.channel === 1 ? 1 : 0);
     const bottom = rect.y + rect.height;
@@ -391,7 +401,7 @@ export class MixerMeters {
   }
 
   #writePeak(peak: Peak): void {
-    const index = this.#store.indexOf(peak.ref);
+    const index = this.#store.indexOf(this.#ref(peak.ref));
     const text = formatPeakDb(index < 0 ? 0 : this.#store.max[index]!);
     if (text !== peak.shown) {
       peak.shown = text;

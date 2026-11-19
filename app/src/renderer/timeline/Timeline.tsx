@@ -81,6 +81,8 @@ import { acceptedFormats, MEDIA_ROW_TYPE, splitDrop, type DroppedFile } from '..
 import type { Placeholder } from '../model/media-import';
 import type { MediaHost } from '../media/MediaTab';
 import { CapabilitiesContext } from '../shell/Capable';
+import { RecordingFeed } from '../model/record-clip';
+import { useRecordHost } from '../shell/record-context';
 import type { TrackSelectMode } from './selection';
 import { IDLE_STATE, TimelineCanvas, type TimelineTestHooks } from './TimelineCanvas';
 import { Toolbar } from './Toolbar';
@@ -322,6 +324,7 @@ export function Timeline({
   // The event display's context menu (where it opened).
   const [displayMenu, setDisplayMenu] = useState<{ x: number; y: number } | null>(null);
   const can = useCapabilities();
+  const recordStore = useRecordHost()?.controller.store ?? null;
   const capabilities = useContext(CapabilitiesContext);
   const canRef = useRef(can);
   canRef.current = can;
@@ -363,6 +366,9 @@ export function Timeline({
     const container = displayRef.current;
     if (!content || !overlay || !container) return undefined;
     const heights = () => (sessionId !== null ? layout.getSnapshot().layout.trackHeights[sessionId] : undefined) ?? EMPTY_HEIGHTS;
+    // The red clips of a recording (m5b-ui-recording): the record state, the
+    // input meters of the realtime frames, the document's committed clips.
+    const feed = recordStore ? new RecordingFeed(recordStore, realtime ?? null, client.model) : null;
     const surface = new TimelineCanvas({
       content,
       overlay,
@@ -418,6 +424,7 @@ export function Timeline({
         const key = GLUE_REFUSED[reason];
         toastsRef.current?.push(translator(localeStore().getSnapshot())(key), (locale) => translator(locale)(key));
       },
+      ...(feed ? { recording: feed } : {}),
     });
     surface.setSnap(layout.getSnapshot().layout.snap);
     const offAutoScroll = layout.subscribe(() => surface.setAutoScroll(layout.getSnapshot().layout.autoScroll));
@@ -431,9 +438,10 @@ export function Timeline({
       offHeights();
       offAutoScroll();
       surface.destroy();
+      feed?.destroy();
       setTimeline(null);
     };
-  }, [client, peaks, realtime, layout, sessionId, onHooks, platform, loopClick, review]);
+  }, [client, peaks, realtime, layout, sessionId, onHooks, platform, loopClick, review, recordStore]);
 
   useEffect(() => {
     timeline?.setSnap(snap);

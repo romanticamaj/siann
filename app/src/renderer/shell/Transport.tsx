@@ -57,6 +57,10 @@
 //   `.lcd .cell` with a `.lbl` over a `.val.sm` whose separators are `<em>`.
 //   Until m5-ui-alignment-chrome ports the position display into one `.lcd`,
 //   the locator cell has an `.lcd` of its own.
+// - Record (m5b-ui-recording; spec 3.1; 10.11, 17 to 19) is the mockup's
+//   `.tbtn.rec` after start, pressed while recording, with the record options
+//   panel on its right-click (shell/Recording.tsx). On an engine without
+//   features.recording its box is a `.tbtn`'s (.transport-hold-tbtn).
 
 import { useCallback, useEffect, useRef, useState, useSyncExternalStore, type KeyboardEvent, type MouseEvent } from 'react';
 
@@ -79,6 +83,9 @@ import { Counted } from './Counted';
 import { Icon } from './icons';
 import type { LayoutStore } from './layout-store';
 import { Hold } from './Hold';
+import { recordGates } from '../model/record';
+import { useRecordHost } from './record-context';
+import { RecordButton } from './Recording';
 
 const DEFAULT_RATE = 48000;
 const TRANSPORT_METHODS = ['transport.play', 'transport.stop', 'transport.locate'];
@@ -264,6 +271,8 @@ function TransportBar({ client, realtime, engineStatus, layout, commands, transp
   const cycleAvailability = useTransportAvailability(client, engineStatus, 'transport.noDeviceCycle');
   const clickAvailability = useTransportAvailability(client, engineStatus, 'transport.noDeviceClick');
   const gates = loopClick.gates();
+  const record = useRecordHost();
+  const recordHost = record && recordGates(useCapabilities()).record ? record : null;
   const { cycle, click, gain } = useTransportState(loopClick);
   const locatorText = useLocatorText(client);
   // The click level control (right-click on the metronome), where it opened.
@@ -421,7 +430,7 @@ function TransportBar({ client, realtime, engineStatus, layout, commands, transp
         >
           <Icon name="play" />
         </button>
-        <Hold className="hold-transport-record" />
+        {recordHost ? <RecordButton host={recordHost} loopClick={loopClick} onStudioSetup={onStudioSetup} /> : <Hold className="transport-hold transport-hold-tbtn" />}
       </div>
       <div
         className="lcd"

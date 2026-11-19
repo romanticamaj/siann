@@ -127,6 +127,10 @@ export const COMMAND_IDS = [
   // a plan is auditioned, and run the selected plan's primary action.
   'audition.flip',
   'plans.primary',
+  'track.recordEnable',
+  'transport.record',
+  'transport.punchIn',
+  'transport.punchOut',
 ] as const;
 export type CommandId = (typeof COMMAND_IDS)[number];
 

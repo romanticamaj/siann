@@ -19,11 +19,13 @@ export class MeterBoard implements MetersRegistry {
   readonly #slots = new Set<HTMLElement>();
   #observer: ResizeObserver | null = null;
 
-  constructor(store: MeterStore, loudness: LoudnessReadings | null = null) {
+  // armed: the armed tracks' ids, whose strips read their input meter (m5b-ui-recording).
+  constructor(store: MeterStore, loudness: LoudnessReadings | null = null, armed: () => readonly string[] = () => []) {
     this.meters = new MixerMeters({
       store,
       loudness,
       size: () => ({ width: this.#container?.scrollWidth ?? 0, height: this.#container?.clientHeight ?? 0 }),
+      armed,
     });
   }
 
