@@ -347,11 +347,11 @@
     {"id": "m5b-engine-track-notes", "title": "Engine: a notes field on the track, with its command", "wave": 3, "dependsOn": [],
      "specRefs": ["UI redesign: Usable release (UR-17)", "siann-model (pure C++)", "Commands and jobs"],
      "acceptance": [
-       "A command track.set_notes {trackId, notes} stores plain text on the track (at most 16,384 UTF-8 bytes; invalid_notes beyond that or for invalid UTF-8) as one revision: journaled, undoable, announced by session.changed, reachable from plans and MCP, and shown by plan.preview. An empty string removes the field.",
+       "A command track.set_notes {trackId, notes} stores plain text on the track (at most 16,384 UTF-8 bytes; invalid_notes beyond that, for invalid UTF-8, for a control character other than tab, LF and CR, or for a display-unsafe character, the rule of a plan's intent) as one revision: journaled, undoable, announced by session.changed, reachable from plans and MCP, and shown by plan.preview. An empty string removes the field.",
        "The field is optional on the track entity, added as the media name was: absent until first set, so an existing bundle opens unchanged and every recorded hash is kept.",
-       "Notes survive save and reopen and a journal replay; the Node plan hasher (src/hash/plan-hash.js), the read model and its fixture generator learn the field.",
+       "Notes survive save and reopen and a journal replay; the Node plan hasher (src/hash/plan-hash.js), the read model and its fixture generator accept the field (the hasher is generic over steps: a track.set_notes case in fixtures/plan/plan-hash.json, checked by Node and native).",
        "engine.capabilities lists the command; docs/schemas describe it; command tests cover validation, undo and replay.",
-       "Tour states changed: none (no UI)."
+       "Tour states changed: none (no UI). A plan step that sets notes is described in the three catalogs by its track's name (set and removed), never quoting the notes (app/src/renderer/plans/describe.ts)."
      ]},
     {"id": "m5b-ui-meter", "title": "DSP load in the top bar, short-term loudness on the master strip, and the Meter tab", "wave": 3, "dependsOn": ["m5b-engine-load-loudness"],
      "specRefs": ["UI redesign: Usable release (UR-14)", "UI redesign: 3.4", "UI redesign: 5.3", "UI redesign: 2.1"],

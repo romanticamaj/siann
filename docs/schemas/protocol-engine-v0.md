@@ -64,6 +64,23 @@ Fades are document data, set with the command `clip.set_fade {clipId, fadeIn?, f
 
 The clip entity carries `fadeIn` and `fadeOut` only while their length is not 0, so a clip without fades hashes as before. `clip.trim` to a length shorter than the two fades shortens them in the same revision (the fade in keeps its length first, the fade out takes the rest; a side shortened to 0 is removed). Offline and realtime renders apply the same gain curve (architecture spec, "siann-graph and siann-engine"). `engine.capabilities` lists `clip.set_fade` in `commands` and reports `features.clipFades: true`.
 
+### Track notes (m5b-engine-track-notes, UI redesign UR-17)
+
+A track's notes are document data, set with the command `track.set_notes {trackId, notes}` through `command.execute`, a plan or MCP `execute`; there is no method, no feature flag and no MCP tool of its own. `notes` is plain text of at most 16,384 UTF-8 bytes, stored byte for byte (tab, LF and CR kept, nothing normalised); another control character or a bidi formatting character (the display-unsafe set of plan metadata) is refused; `""` removes the field. A notes edit during playback does not recompile the graph. The command declares exactly `{track:<id>}` and is one revision, journaled and undoable (undo of the first set removes the field); `session.changed` lists `track:<id>` as `modified`, and `plan.preview` shows the track without `notes` before and with it after (or the reverse for `""`).
+
+| Input | Code |
+|---|---|
+| `notes` longer than 16,384 bytes, not well-formed UTF-8 (RFC 3629), or with a control character other than tab, LF and CR (C0, DEL, C1) or a display-unsafe character (U+061C, U+200E, U+200F, U+202A to U+202E, U+2066 to U+2069, U+2028, U+2029) | `invalid_notes` |
+| `notes` not a string (`null` included), `notes` or `trackId` missing, another field | `invalid_params` |
+| no track `trackId` | `not_found` |
+
+```json
+{"method": "command.execute", "params": {"commands": [{"op": "track.set_notes", "trackId": "trk_1",
+  "notes": "Verse: double it.\nKeep the breaths."}]}}
+```
+
+The track entity (`siann.entity.track.v1`) carries `notes` only while it is set, so a track without notes hashes as before and every earlier bundle opens with its recorded hashes. `engine.capabilities` and `command.list` list `track.set_notes` in `commands`.
+
 ## engine.status
 
 Params `{}`. Result:

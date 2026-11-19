@@ -49,6 +49,7 @@ if(SIANN_BUILD_TESTS)
     tests/mcp_e2e_test.cpp
     tests/gesture_methods_test.cpp
     tests/record_methods_test.cpp
+    tests/track_notes_test.cpp
   )
   # The IXWebSocket client drives the loopback tests; the realtime tests run
   # the graph driver on a ManualAudioDevice with the allocation guard. The

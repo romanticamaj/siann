@@ -61,6 +61,9 @@ export interface TrackEntity {
   // absent while empty, the output while the track feeds the master.
   readonly sends?: readonly string[];
   readonly output?: { readonly busId: string };
+  // Plain text, 1 to 16,384 UTF-8 bytes (m5b-engine-track-notes); absent while
+  // the track has none (track.set_notes with "" removes it).
+  readonly notes?: string;
 }
 
 export interface ClipPosition {

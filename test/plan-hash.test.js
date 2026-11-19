@@ -76,6 +76,22 @@ test('a clip.set_fade step and its fade fields are part of the plan hash', () =>
   assert.notEqual(planHash({ ...c.plan, steps: [inOnly] }), c.planHash);
 });
 
+// m5b-engine-track-notes: track.set_notes is an ordinary step; the notes text,
+// byte for byte, is part of the hash, and "" (the removal) hashes as a string.
+test('a track.set_notes step and its text are part of the plan hash', () => {
+  const c = byName.track_notes_steps;
+  assert.ok(c, 'the fixture has track_notes_steps');
+  assert.deepEqual(c.plan.steps.map((step) => [step.op, step.notes]), [
+    ['track.set_notes', 'Verse: double it.\n副歌 louder'],
+    ['track.set_notes', ''],
+  ]);
+  assert.equal(planHash(c.plan), c.planHash);
+  const other = { ...c.plan.steps[0], notes: 'Verse: double it.\r\n副歌 louder' };
+  assert.notEqual(planHash({ ...c.plan, steps: [other, c.plan.steps[1]] }), c.planHash);
+  const { notes, ...noText } = c.plan.steps[1];
+  assert.notEqual(planHash({ ...c.plan, steps: [c.plan.steps[0], noText] }), c.planHash);
+});
+
 test('planHash does not modify its input', () => {
   const plan = structuredClone(byName.lifecycle_fields_ignored.plan);
   const before = JSON.stringify(plan);

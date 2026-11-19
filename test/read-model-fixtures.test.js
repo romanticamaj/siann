@@ -167,6 +167,33 @@ test('the fade steps set and remove the fades of clp_1 and hash with src/hash', 
   assert.equal(sha256Jcs(clp1(steps[1])), sha256Jcs(masterEnd.document.clips.find((c) => c.id === 'clp_1')));
 });
 
+// m5b-engine-track-notes: the notes part continues the master steps; notes ""
+// removes the field and returns the track and the document to their hashes.
+test('the notes steps set and remove the notes of trk_1 and hash with src/hash', () => {
+  const { steps, before, text } = fixture.notes;
+  const masterEnd = fixture.master.steps[fixture.master.steps.length - 1];
+  assert.equal(before.documentHash, masterEnd.documentHash);
+  assert.deepEqual(steps.map((s) => s.event.changedIds), [
+    [{ ref: 'track:trk_1', change: 'modified' }],
+    [{ ref: 'track:trk_1', change: 'modified' }],
+  ]);
+  const trk1 = (step) => step.document.tracks.find((t) => t.id === 'trk_1');
+  assert.match(text, /\n/);
+  assert.equal(trk1(steps[0]).notes, text);
+  assert.equal('notes' in trk1(steps[1]), false);
+  let seq = Number(masterEnd.event.seq);
+  for (const step of steps) {
+    seq += 1;
+    assert.equal(step.event.seq, String(seq));
+    assert.equal(hashDocument(step.document), step.documentHash);
+    assert.equal(step.event.documentHash, step.documentHash);
+    assert.deepEqual(step.fetch.result.entities, [{ ref: 'track:trk_1', entity: trk1(step) }]);
+  }
+  assert.notEqual(steps[0].documentHash, before.documentHash);
+  assert.equal(steps[1].documentHash, before.documentHash);
+  assert.equal(sha256Jcs(trk1(steps[1])), sha256Jcs(masterEnd.document.tracks.find((t) => t.id === 'trk_1')));
+});
+
 // m5b-engine-plan-metadata: a plan.changed with the plan metadata and the
 // rejection note, and an agent.changed, right after the base sync. The read model
 // does not model either: it advances lastSeq past them (app/test/unit/

@@ -442,6 +442,8 @@ export const en = {
   'step.setMonitorOff': 'Turn monitoring off on {track}',
   'step.setMonitorAuto': 'Set {track} to auto monitoring',
   'step.setMonitorInput': 'Monitor the input of {track}',
+  'step.setTrackNotes': 'Edit the notes of {track}',
+  'step.clearTrackNotes': 'Clear the notes of {track}',
   'step.explodeTrack': 'Split {track} into one track per channel',
   'step.placeClip': 'Place a clip on {track} at {time}',
   'step.placeMedia': 'Place {media} on {track} at {time}',

@@ -397,6 +397,8 @@ export const zhHans: Catalog = {
   'step.setMonitorOff': '关闭 {track} 的监听',
   'step.setMonitorAuto': '将 {track} 设为自动监听',
   'step.setMonitorInput': '监听 {track} 的输入',
+  'step.setTrackNotes': '编辑 {track} 的记事本',
+  'step.clearTrackNotes': '清除 {track} 的记事本',
   'step.explodeTrack': '将 {track} 按声道拆成多条音轨',
   'step.placeClip': '在 {track} 的 {time} 放置一个片段',
   'step.placeMedia': '在 {track} 的 {time} 放置 {media}',

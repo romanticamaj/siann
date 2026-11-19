@@ -507,6 +507,26 @@ Prepared trackSetInput(const Document& doc, const Command& command) {
     });
 }
 
+// A track's notes (m5b-engine-track-notes): plain text stored byte for byte;
+// "" removes the field, so the track hashes as it did before it had notes. Over
+// kMaxTrackNotesBytes, malformed UTF-8, a control character other than tab, LF
+// and CR or a display-unsafe character is invalid_notes; a non-string (null
+// included), a missing or an extra field is invalid_params.
+Prepared trackSetNotes(const Document& doc, const Command& command) {
+    return editTrack(doc, command, [](Track& t, FieldReader& r) {
+        std::string notes = r.string("notes");
+        if (notes.empty()) {
+            t.notes.reset();
+            return;
+        }
+        if (!model::isValidTrackNotes(notes)) {
+            throw CommandError("invalid_notes", "track notes are at most 16384 bytes of well-formed UTF-8 without a control character "
+                               "other than tab, LF and CR or a text-direction control");
+        }
+        t.notes = std::move(notes);
+    });
+}
+
 // A track's monitoring mode (m5b-engine-monitoring): {trackId, monitor: "off" |
 // "auto" | "input"}, one edit of the track. Any other value, a missing or an
 // extra field is invalid_params (the field reader's ModelError).
@@ -800,6 +820,7 @@ const std::map<std::string, Handler, std::less<>>& registry() {
          [](const Document& d, const Command& c) {
              return editTrack(d, c, [](Track& t, FieldReader& r) { t.mute = r.boolean("mute"); });
          }},
+        {"track.set_notes", &trackSetNotes},
         {"track.set_pan",
          [](const Document& d, const Command& c) {
              return editTrack(d, c, [](Track& t, FieldReader& r) {

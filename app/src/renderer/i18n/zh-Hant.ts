@@ -397,6 +397,8 @@ export const zhHant: Catalog = {
   'step.setMonitorOff': '關閉 {track} 的監聽',
   'step.setMonitorAuto': '將 {track} 設為自動監聽',
   'step.setMonitorInput': '監聽 {track} 的輸入',
+  'step.setTrackNotes': '編輯 {track} 的記事本',
+  'step.clearTrackNotes': '清除 {track} 的記事本',
   'step.explodeTrack': '將 {track} 依聲道拆成多條音軌',
   'step.placeClip': '在 {track} 的 {time} 放置一個片段',
   'step.placeMedia': '在 {track} 的 {time} 放置 {media}',
