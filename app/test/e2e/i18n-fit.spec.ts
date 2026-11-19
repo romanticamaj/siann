@@ -284,7 +284,14 @@ test('no labelled control overflows or wraps its label in any locale at either w
     await expect(page.locator('html')).toHaveAttribute('data-locale', locale);
     for (const size of SIZES) {
       await resize(size);
-      if (!(await page.getByTestId('media-tab').isVisible())) await page.keyboard.press('ControlOrMeta+KeyP');
+      // The shell lays out the new size a commit after the window has it (its
+      // data-viewport); probe the right zone only then, or the probe reads the
+      // last size's layout (at 1024 px the tab still shown, about to go with
+      // the drawer) and skips the key. Ctrl+P opens the tab, never closes it,
+      // so a press while the zone is still opening is harmless.
+      await expect(page.getByTestId('shell')).toHaveAttribute('data-viewport', `${size.width}x${size.height}`);
+      const shown = (await page.getByTestId('zone-right').getAttribute('data-visible')) === 'true' && (await page.getByTestId('media-tab').isVisible());
+      if (!shown) await page.keyboard.press('ControlOrMeta+KeyP');
       await expect(page.getByTestId('media-tab')).toBeVisible();
       await expect(page.getByTestId('media-row-med_seed')).toBeVisible();
       for (const entry of await overflowing(MEDIA)) failures.push(`${locale} ${size.width}x${size.height} (Media tab): ${entry}`);
