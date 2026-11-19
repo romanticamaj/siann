@@ -380,7 +380,15 @@ export async function stageSession(app: ElectronApplication, page: Page, notes: 
   await expect(page.getByTestId('toast')).toHaveCount(0);
   // Live values inside enforced boxes, masked in pixels only: the widths of the
   // mockup's "0 xruns" and "r39" need one xrun digit and two revision digits.
-  await expect(page.getByTestId('xruns')).toHaveText('0');
+  // The count is whatever engine.status reports, not zero: the fake device's
+  // real-time thread can miss a deadline on a loaded runner (Windows CI did).
+  await expect(page.getByTestId('xruns')).toHaveText(/^\d$/);
+  await expect
+    .poll(async () => {
+      const status = await engine.call('engine.status');
+      return (await page.getByTestId('xruns').textContent()) === status.xruns;
+    })
+    .toBe(true);
   await expect(page.getByTestId('revision')).toHaveText(/^r\d\d$/);
   await expect(page.getByTestId('device')).toHaveText('ASIO · Scarlett 4i4 · 48 kHz / 128 · 5.3 ms');
   // The pointer rests on step 3 of the plan, which the mockup draws hovered
