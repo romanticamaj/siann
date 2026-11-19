@@ -5,6 +5,12 @@
 // engine.capabilities lists the method, then every ENGINE_STATUS_POLL_MS on
 // the injected scheduler. The answer is forgotten when the engine goes away
 // (null: unknown), and an answer from an earlier connection is dropped.
+//
+// The DSP load (m5b-ui-meter; protocol-engine-v0.md, load {average, peak})
+// changes with every poll, so it is not part of the snapshot React reads
+// (spec 5.6: no commit while playing): getLoad() and subscribeLoad() publish
+// it on a channel of its own, for the top bar to write through refs, and only
+// for an engine that lists features.load.
 
 import type { T } from '../i18n/t';
 import type { SessionClient } from './session-client';
@@ -87,9 +93,24 @@ export function pluginOf(status: EngineStatus | null, slotId: string): PluginSta
   return status?.plugins.find((p) => p.slotId === slotId) ?? null;
 }
 
+// engine.status's load: fractions of the device period (can exceed 1).
+export interface EngineLoad {
+  readonly average: number;
+  readonly peak: number;
+}
+
+// The load channel, apart from the snapshot (no React subscription).
+export interface EngineLoadSource {
+  getLoad(): EngineLoad | null;
+  subscribeLoad(listener: () => void): () => void;
+}
+
 export interface EngineStatusSource {
   getSnapshot(): EngineStatus | null;
   subscribe(listener: () => void): () => void;
+  // The load channel (m5b-ui-meter); absent on a source that has none.
+  getLoad?(): EngineLoad | null;
+  subscribeLoad?(listener: () => void): () => void;
 }
 
 const finite = (value: unknown): number | null => (typeof value === 'number' && Number.isFinite(value) ? value : null);
@@ -115,6 +136,16 @@ export function parseEngineStatus(value: unknown): EngineStatus | null {
   const error = raw.deviceError as { code?: unknown } | null | undefined;
   const deviceError = error && typeof error.code === 'string' ? Object.freeze({ code: error.code }) : null;
   return Object.freeze({ device, deviceError, xruns: typeof raw.xruns === 'string' ? raw.xruns : null, plugins: parsePlugins(raw.plugins) });
+}
+
+// load {average, peak} of an engine.status answer, or null without one.
+export function parseEngineLoad(value: unknown): EngineLoad | null {
+  if (value === null || typeof value !== 'object') return null;
+  const load = (value as Record<string, unknown>).load;
+  if (load === null || typeof load !== 'object') return null;
+  const average = finite((load as Record<string, unknown>).average);
+  const peak = finite((load as Record<string, unknown>).peak);
+  return average === null || peak === null ? null : Object.freeze({ average, peak });
 }
 
 // The status bar's device segment, the mockup's "type · name · kHz / buffer
@@ -157,13 +188,15 @@ export interface EngineStatusStoreOptions {
   readonly intervalMs?: number;
 }
 
-export class EngineStatusStore implements EngineStatusSource {
+export class EngineStatusStore implements EngineStatusSource, EngineLoadSource {
   readonly #client: SessionClient;
   readonly #schedule: (fn: () => void, ms: number) => () => void;
   readonly #interval: number;
   readonly #listeners = new Set<() => void>();
+  readonly #loadListeners = new Set<() => void>();
   readonly #off: () => void;
   #snapshot: EngineStatus | null = null;
+  #load: EngineLoad | null = null;
   // The connection being polled (the client's connection count), or null.
   #polling: number | null = null;
   #timer: (() => void) | null = null;
@@ -192,10 +225,26 @@ export class EngineStatusStore implements EngineStatusSource {
     };
   }
 
+  getLoad(): EngineLoad | null {
+    return this.#load;
+  }
+
+  subscribeLoad(listener: () => void): () => void {
+    this.#loadListeners.add(listener);
+    return () => {
+      this.#loadListeners.delete(listener);
+    };
+  }
+
   destroy(): void {
     this.#off();
     this.#stop();
     this.#listeners.clear();
+    this.#loadListeners.clear();
+  }
+
+  #listsLoad(): boolean {
+    return this.#client.getState().capabilities?.features?.load === true;
   }
 
   #pollable(): boolean {
@@ -208,7 +257,10 @@ export class EngineStatusStore implements EngineStatusSource {
     const state = this.#client.getState();
     if (!this.#pollable()) {
       this.#stop();
-      if (state.status !== 'connected') this.#set(null);
+      if (state.status !== 'connected') {
+        this.#set(null);
+        this.#setLoad(null);
+      }
       return;
     }
     if (this.#polling === state.connections) return;
@@ -227,7 +279,9 @@ export class EngineStatusStore implements EngineStatusSource {
     const current = () => this.#polling === connection;
     this.#client.request('engine.status', {}).then(
       (result) => {
-        if (current()) this.#set(parseEngineStatus(result));
+        if (!current()) return;
+        this.#set(parseEngineStatus(result));
+        this.#setLoad(this.#listsLoad() ? parseEngineLoad(result) : null);
       },
       () => undefined,
     ).finally(() => {
@@ -246,5 +300,13 @@ export class EngineStatusStore implements EngineStatusSource {
     if (snapshot && this.#snapshot && JSON.stringify(snapshot) === JSON.stringify(this.#snapshot)) return;
     this.#snapshot = snapshot;
     for (const listener of [...this.#listeners]) listener();
+  }
+
+  // The load channel's own: a load that reads the same tells nobody.
+  #setLoad(load: EngineLoad | null): void {
+    const before = this.#load;
+    if (load === before || (load && before && load.average === before.average && load.peak === before.peak)) return;
+    this.#load = load;
+    for (const listener of [...this.#loadListeners]) listener();
   }
 }

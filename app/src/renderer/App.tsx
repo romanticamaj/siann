@@ -32,8 +32,11 @@
 // window keeps of the old session: the track selection, and the timeline and
 // the Plans tab are mounted again, so their clip selection, zoom and plan
 // selection start afresh; a reconnect still clears the selections only.
+//
+// The Meter tab (m5b-ui-meter) is the right zone's second tab: its panel draws
+// the master from the MeterStore the mixer draws from, made here once.
 
-import { useCallback, useEffect, useRef, useState, useSyncExternalStore } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react';
 
 import { localeStore } from './i18n/t';
 import type { CommandRegistry } from './keys/commands';
@@ -42,6 +45,7 @@ import type { EngineStatusSource } from './model/engine-status';
 import type { GestureController } from './model/gesture-controller';
 import type { PeaksCache } from './model/peaks-cache';
 import type { AgentStore } from './model/agents';
+import type { RequestStore } from './model/request-store';
 import { capabilitySelector } from './model/capabilities';
 import type { PlanStore } from './model/plan-store';
 import type { ReviewStore } from './model/review-store';
@@ -50,6 +54,7 @@ import type { SessionClient } from './model/session-client';
 import type { LoopClickController } from './model/loop-click';
 import type { ProjectController, SavedMark } from './model/project';
 import { studioSetupAvailable, type StudioSetupController } from './model/studio-setup';
+import { MeterStore } from './model/meter-store';
 import type { UndoHistory } from './model/undo-history';
 import type { TransportController } from './model/transport';
 import { pluginsListed } from './mixer/inserts';
@@ -65,6 +70,7 @@ import { PlanPanel } from './plans/PlanPanel';
 import { CapabilitiesContext } from './shell/Capable';
 import { Counted } from './shell/Counted';
 import { Inspector } from './shell/Inspector';
+import { MeterPanel } from './shell/MeterPanel';
 import type { LayoutStore } from './shell/layout-store';
 import { Shell } from './shell/Shell';
 import { StartView } from './shell/StartView';
@@ -73,6 +79,7 @@ import { TimeFormatContext } from './shell/time-format';
 import type { ToastStore } from './shell/toast-store';
 import { NO_TRACKS, pruneTracks, selectTrack, type TrackSelectMode, type TrackSelection } from './timeline/selection';
 import { Timeline } from './timeline/Timeline';
+import { MediaTab, type MediaHost } from './media/MediaTab';
 import type { TimelineTestHooks } from './timeline/TimelineCanvas';
 import type { MeterTestHooks } from './mixer/MixerMeters';
 
@@ -84,6 +91,8 @@ export interface AppProps {
   readonly plans: PlanStore;
   // The agents the engine lists (m5b-ui-plan-metadata: the Plans tab's agent row).
   readonly agents?: AgentStore;
+  // The requests to the agent (m5b-ui-composer: the Plans tab's "ask the agent" box).
+  readonly requests?: RequestStore;
   // The plan review and its ghosts (m5b-ui-ghosts).
   readonly review: ReviewStore;
   readonly engineStatus: EngineStatusSource;
@@ -105,6 +114,8 @@ export interface AppProps {
   readonly studioSetup: StudioSetupController;
   // The insert racks' plugin actions, picker and slot states (m5b-ui-inserts-master).
   readonly inserts?: InsertsHost;
+  // Importing audio and the Media tab (m5b-ui-media).
+  readonly media?: MediaHost | null;
 }
 
 export function App({
@@ -114,6 +125,7 @@ export function App({
   peaks,
   plans,
   agents,
+  requests,
   review,
   engineStatus,
   layout,
@@ -130,6 +142,7 @@ export function App({
   saved,
   studioSetup,
   inserts,
+  media = null,
 }: AppProps) {
   const capabilities = useSyncExternalStore(
     (listener) => client.subscribe(listener),
@@ -141,7 +154,11 @@ export function App({
     () => announceArrivals(plans, toasts, () => localeStore().getSnapshot(), () => capabilitySelector(client.getState().capabilities)),
     [plans, toasts, client],
   );
+  const [meterStore] = useState(() => new MeterStore(realtime));
   const [tracks, setTracks] = useState<TrackSelection>(NO_TRACKS);
+  // The selected clips, sent with a request from the "ask the agent" box (m5b-ui-composer).
+  const [clips, setClips] = useState<readonly string[]>([]);
+  const selection = useMemo(() => ({ tracks: tracks.ids, clips }), [tracks.ids, clips]);
   const order = () => client.model.getSnapshot()?.trackOrder ?? [];
   // A clip selected selects its track.
   const selectClip = useCallback(
@@ -199,6 +216,7 @@ export function App({
   const locate = useCallback((frames: string) => void transport.locate(frames), [transport]);
   const timeFormat = useSyncExternalStore(layout.subscribe, () => layout.getSnapshot().layout.timeFormat);
   const racks = useSyncExternalStore(layout.subscribe, () => layout.getSnapshot().layout.racks);
+  const openMedia = useCallback(() => void commands.run('window', 'media.open'), [commands]);
   const trackName = useCallback((id: string) => (client.model.select(`track:${id}`) as { name?: string } | undefined)?.name ?? id, [client]);
   return (
     <CapabilitiesContext.Provider value={capabilities}>
@@ -237,21 +255,26 @@ export function App({
                 onSelectTrack={onSelectTrack}
                 platform={platform}
                 onSelect={selectClip}
+                onSelectClips={setClips}
                 onHooks={onTimelineHooks}
                 onLocate={locate}
                 loopClick={loopClick}
                 reconnects={reconnects}
                 review={review}
                 toasts={toasts}
+                media={media}
+                onOpenMedia={openMedia}
               />
             </Counted>
           }
           lower={
             <Counted id="mixer">
-              <Mixer client={client} gestures={gestures} realtime={realtime} selectedTrackId={tracks.primary} onMeterHooks={onMeterHooks} racks={racks} />
+              <Mixer client={client} gestures={gestures} realtime={realtime} selectedTrackId={tracks.primary} onMeterHooks={onMeterHooks} racks={racks} meterStore={meterStore} />
             </Counted>
           }
-          right={<PlanPanel key={epoch} client={client} plans={plans} agents={agents} review={review} reconnects={reconnects} commands={commands} />}
+          right={<PlanPanel key={epoch} client={client} plans={plans} agents={agents} requests={requests} selection={selection} review={review} reconnects={reconnects} commands={commands} />}
+          rightMedia={<MediaTab key={epoch} client={client} media={media} />}
+          rightMeter={<MeterPanel client={client} realtime={realtime} store={meterStore} />}
           rightHead={<HearingSwitch client={client} plans={plans} />}
           startView={startView ? <StartView project={project} /> : null}
           studioSetup={<StudioSetup open={setupOpen} controller={studioSetup} engineStatus={engineStatus} sessionRate={sessionRate} onClose={closeSetup} />}

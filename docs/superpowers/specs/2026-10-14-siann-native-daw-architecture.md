@@ -3909,13 +3909,35 @@ MySong.siann/                    a directory
   siann-protocol consistency rules). Positions are audio-domain sample frames as
   decimal strings; a drag snaps to a non-negative position and a trim to
   `[0, media.frames]` with a length of at least one frame.
-- Placing a clip chooses a media entity of the document in the Pool, a window
-  of its own opened with `Ctrl+P` or from the event display's context menu that
-  lists the media by name and arms placing (UI redesign spec 10.8, 1; the Media
-  tab of m5b-ui-media replaces it and keeps `Ctrl+P`); importing a file from the
-  UI is not part of m5-timeline. The engine side,
-  `media.import` (Jobs v0, import) and `session.create` (Protocol v0 item 27),
-  exists since m5b-engine-project-media; the UI that drives it is M5b's.
+- Media (m5b-ui-media; UI redesign UR-5, 3.2): the right zone's Media tab lists
+  the document's media by name with length, channels, sample rate and use
+  count, filtered by a search field; `Ctrl+P` and the event display's context
+  menu open it (it replaced the Pool window of m5-ui-port-toolbar). Dragging a
+  row to the event display places a clip (`clip.place`, one revision), a
+  double-click renames (`media.rename`) and Remove (`media.remove`) is enabled
+  only for media no clip uses. Files dropped from the OS on the event display,
+  or chosen by the tab's Import (the shell's file dialog), each start one
+  `media.import {path, clientImportId}` job, polled with `job.status`, the
+  path coming from the preload bridge (`webUtils.getPathForFile`), never from
+  the renderer; a file whose extension `features.mediaImport.formats` does not
+  list is refused before any request. While a file imports a placeholder shows
+  its name and progress; a failed job removes it and raises a toast with the
+  engine's code. The placements of one drop are sent after every import of the
+  drop is `done` or `failed`, in drop order, one `command.execute` per file
+  (`track.add` named after the media when the file lands below the last track,
+  and `clip.place` at the snapped drop position) with `expectedRevision` the
+  head once the read model reached the job's revision, so N undos remove the N
+  clips and the media stay. Content the session already holds ends `existing`
+  with no revision, and its clip is placed with the `mediaId` the job returns.
+  Import and the drop exist only with the preload bridge (not in a plain
+  browser tab) and only while the engine lists `media.import`; without it
+  nothing of the Media tab is in the DOM and its box stays empty (UI redesign
+  3.0). While a proposal is heard the edit guard holds all of it (UI redesign
+  4.5 C5): a drop on the event display sends nothing and raises a toast with
+  the guard's reason, Import, a row's drag, rename and Remove are disabled with
+  that reason, and an import that began with main heard places no clip. The
+  engine side, `media.import` (Jobs v0, import) and `session.create` (Protocol
+  v0 item 27), exists since m5b-engine-project-media.
 - Projects and audio setup (m5b-ui-project; UI redesign UR-4): New
   (`session.create {path}` on a folder the shell's save dialog names), Open
   (`session.open {path}`), the last ten bundles and Save (`session.save`) are

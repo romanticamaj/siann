@@ -1,10 +1,11 @@
 // The preload bridge (contextIsolation on, sandboxed): the renderer gets the
 // engine's {port, token} and change notifications, the shell's project
 // record and folder dialogs, and the application menu's two directions
-// (m5b-ui-project), nothing else. The MCP token never leaves the main
+// (m5b-ui-project), the audio file dialog and a dropped file's path
+// (m5b-ui-media), nothing else. The MCP token never leaves the main
 // process.
 
-import { contextBridge, ipcRenderer } from 'electron';
+import { contextBridge, ipcRenderer, webUtils } from 'electron';
 
 // The renderer arguments main.ts adds under SIANN_SHELL_TEST=1.
 const TEST_HOOKS_ARG = '--siann-test-hooks';
@@ -93,6 +94,21 @@ contextBridge.exposeInMainWorld('siann', {
         const state = projectState(value);
         if (state) callback(state);
       });
+    },
+  },
+  // Importing audio (m5b-ui-media): the shell's file dialog for the Media
+  // tab's Import, and the path of a file dropped on the window.
+  media: {
+    choose: async (request: { formats: readonly string[]; label: string }): Promise<string[]> => {
+      const chosen: unknown = await ipcRenderer.invoke('siann:media:choose', request);
+      return Array.isArray(chosen) ? chosen.filter((entry): entry is string => typeof entry === 'string' && entry.length > 0) : [];
+    },
+    pathForFile: (file: File): string => {
+      try {
+        return webUtils.getPathForFile(file);
+      } catch {
+        return '';
+      }
     },
   },
   // The application menu (m5b-ui-project): the renderer's model out, the

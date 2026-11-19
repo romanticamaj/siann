@@ -24,7 +24,8 @@
 // window.siannTest.languages, when the test pinned them, stands in for
 // navigator.languages, window.__siannClient hands the e2e tests the session
 // client's log of requests refused as disconnected, of requests sent and of
-// the engine's answers, window.siannTest.capabilities, when the test gave
+// the engine's answers, window.__siannLoad the DSP load last polled
+// (m5b-ui-meter), window.siannTest.capabilities, when the test gave
 // SIANN_TEST_CAPABILITIES, is the engine.capabilities answer the session
 // client uses instead of the engine's (m5-ui-loop-click),
 // window.siannTest.environment, when the fidelity run gave
@@ -57,11 +58,12 @@ import { createLocaleStore, htmlLang, type LocaleStorage, type LocaleStore } fro
 import { reconnectedMessage } from './i18n/messages';
 import { installLocaleStore, translator } from './i18n/t';
 import { ConnectionPhaseStore } from './model/connection-phase';
-import { EngineStatusStore } from './model/engine-status';
+import { EngineStatusStore, type EngineLoad } from './model/engine-status';
 import { GestureController } from './model/gesture-controller';
 import { PeaksCache } from './model/peaks-cache';
 import { BranchSnapshotStore } from './model/branch-snapshot';
 import { AgentStore } from './model/agents';
+import { RequestStore } from './model/request-store';
 import { PlanStore } from './model/plan-store';
 import { ReviewStore } from './model/review-store';
 import type { Ghost } from './plans/ghosts';
@@ -83,6 +85,10 @@ import { PickerController } from './mixer/picker';
 import { PluginActions } from './model/plugin-actions';
 import { createFrameRecorder, installFrameMarks, readyLineAt, type FrameTestHooks } from './perf/frame-marks';
 import type { TimelineTestHooks } from './timeline/TimelineCanvas';
+import type { MediaBridge } from './model/media-bridge';
+import { structuralBlocked } from './model/edit-guard';
+import { MediaImporter, type ImportResult } from './model/media-import';
+import type { MediaHost } from './media/MediaTab';
 
 declare global {
   interface Window {
@@ -100,6 +106,8 @@ declare global {
         opened(path: string): void;
         onChange(callback: (state: ShellProjectState) => void): void;
       };
+      // Importing audio (m5b-ui-media): the shell's file dialog and a dropped file's path.
+      media?: MediaBridge;
       // The application menu (m5b-ui-project): its model out, its clicks in.
       menu?: {
         set(model: MenuModel): void;
@@ -129,6 +137,9 @@ declare global {
       answered(): ReadonlyArray<AnsweredRequest>;
     };
     __siannMeters?: MeterTestHooks;
+    // The import's placeholders as shown and its jobs' results (m5b-ui-media).
+    __siannMedia?: { seen(): ReadonlyArray<{ name: string; progress: number | null }>; results(): readonly ImportResult[] };
+    __siannLoad?: () => EngineLoad | null;
     // The plan review's ghosts as the window draws them (m5b-ui-ghosts).
     __siannGhosts?: { list(): readonly Ghost[]; ticked(): number[] | null; outline(): number | null };
     // The frame marks' recorder (perf scenario, test hook only).
@@ -193,6 +204,9 @@ branches.attach(client);
 // The agents the engine lists (m5b-ui-plan-metadata): engine.status, then agent.changed.
 const agents = new AgentStore();
 agents.attach(client);
+// The requests to the agent the "ask the agent" box shows (m5b-ui-composer): agent.requests, then agent.request_changed.
+const requests = new RequestStore();
+requests.attach(client);
 // The plan under review, its preview and its ghosts (m5b-ui-ghosts).
 const review = new ReviewStore({ client, plans, branches });
 if (testHooks) {
@@ -207,6 +221,8 @@ if (testHooks) {
 }
 const engineStatus = new EngineStatusStore({ client, schedule });
 if (testHooks) window.__siannClient = { refused: () => client.refused(), sent: () => client.sent(), answered: () => client.answered() };
+// The DSP load the store last polled (m5b-ui-meter).
+if (testHooks) window.__siannLoad = () => engineStatus.getLoad();
 
 const connection = new ConnectionPhaseStore(client, { schedule });
 const toasts = new ToastStore({ schedule });
@@ -232,6 +248,12 @@ const loopClick = new LoopClickController({
   toasts,
   locale: () => locales.getSnapshot(),
 });
+
+// Importing audio (m5b-ui-media): media.import jobs for the drop and the Media
+// tab's Import; the drop and Import exist only with the preload bridge.
+const importer = new MediaImporter({ client, schedule, toasts, locale: () => locales.getSnapshot(), blocked: () => structuralBlocked(plans.getSnapshot().heard) });
+const media: MediaHost = { bridge: bridge?.media ?? null, importer, toasts };
+if (testHooks) window.__siannMedia = { seen: () => importer.seen(), results: () => importer.results() };
 
 // The insert racks (m5b-ui-inserts-master): the plugin methods, the picker an empty slot opens, and engine.status for each slot's state.
 const pluginActions = new PluginActions({ client, toasts, locale: () => locales.getSnapshot() });
@@ -374,6 +396,7 @@ const app = (
     peaks={peaks}
     plans={plans}
     agents={agents}
+    requests={requests}
     review={review}
     engineStatus={engineStatus}
     layout={layout}
@@ -390,6 +413,7 @@ const app = (
     saved={saved}
     studioSetup={studioSetup}
     inserts={inserts}
+    media={media}
   />
 );
 createRoot(container).render(

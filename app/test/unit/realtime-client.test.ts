@@ -277,3 +277,61 @@ test('reconnects with the command socket and closes with it', async () => {
   await until(() => r.session.getState().status === 'connected', 'connected again');
   assert.equal(r.meters.length, 2);
 });
+
+// m5b-ui-meter (UI redesign 5.3; protocol-events-v1.md, "Loudness frame"): the
+// SLUD frame that follows each SMTR frame on the same socket reaches the
+// client's LoudnessStore and its loudness listeners, and is no meter frame.
+const SLUD = readFixture<{ loudnessFrames: Array<{ hex: string }> }>('protocol', 'loudness-frames.json').loudnessFrames;
+const PROGRAMME = hexBytes(SLUD[0]!.hex); // -22.5, -23.25, -23
+const STOPPED = hexBytes(SLUD[1]!.hex); // -inf, -inf, -14.125
+const loudnessOf = (r: Rig) => [r.realtime.loudness.momentary, r.realtime.loudness.shortTerm, r.realtime.loudness.integrated];
+
+test('a SLUD frame reaches the loudness store and its listeners, and is no meter frame', async () => {
+  const r = rig();
+  const socket = await connected(r);
+  let meterHeard = 0;
+  let loudnessHeard = 0;
+  r.realtime.subscribe(() => (meterHeard += 1));
+  const off = r.realtime.subscribeLoudness(() => (loudnessHeard += 1));
+  socket.deliverBinary(STEREO);
+  socket.deliverBinary(PROGRAMME);
+  assert.equal(r.realtime.frameCount(), 1, 'the SLUD frame is not counted as a meter frame');
+  assert.equal(meterHeard, 1);
+  assert.equal(loudnessHeard, 1);
+  assert.equal(r.realtime.latest()?.entries.length, 2, 'the meter frame is unchanged');
+  assert.deepEqual(r.realtime.meter('master')?.peak, [0.5, 0.25]);
+  assert.deepEqual(loudnessOf(r), [-22.5, -23.25, -23]);
+  socket.deliverBinary(STOPPED);
+  assert.deepEqual(loudnessOf(r), [-Infinity, -Infinity, -14.125]);
+  assert.equal(loudnessHeard, 2);
+  // A malformed SLUD (24 bytes) is ignored.
+  socket.deliverBinary(PROGRAMME.slice(0, 24));
+  assert.equal(loudnessHeard, 2);
+  assert.equal(r.realtime.loudness.integrated, -14.125);
+  off();
+  socket.deliverBinary(PROGRAMME);
+  assert.equal(loudnessHeard, 2);
+});
+
+test('loudness is cleared to minus infinity on disconnect, and a stale channel\'s frame is dropped', async () => {
+  const r = rig();
+  const first = await connected(r);
+  first.deliverBinary(PROGRAMME);
+  assert.deepEqual(loudnessOf(r), [-22.5, -23.25, -23]);
+  let heard = 0;
+  r.realtime.subscribeLoudness(() => (heard += 1));
+  r.command[0]!.serverClose();
+  assert.deepEqual(loudnessOf(r), [-Infinity, -Infinity, -Infinity]);
+  assert.equal(heard, 1, 'the listeners hear the clear');
+  r.scheduler.fire(250);
+  await until(() => r.command.length === 2, 'a new command socket');
+  r.command[1]!.onopen?.();
+  await until(() => r.meters.length === 2, 'a new realtime socket');
+  const second = r.meters[1]!;
+  second.onopen?.();
+  // The closed channel's socket delivers late: dropped.
+  first.deliverBinary(PROGRAMME);
+  assert.equal(r.realtime.loudness.integrated, -Infinity, 'the stale channel is dropped');
+  second.deliverBinary(PROGRAMME);
+  assert.equal(r.realtime.loudness.integrated, -23);
+});

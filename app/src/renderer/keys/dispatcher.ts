@@ -99,6 +99,14 @@ export function isTextField(target: EventTarget | null): boolean {
   }
 }
 
+// A key that belongs to an input-method composition (m5b-ui-composer; UI
+// redesign 4.4): the Enter that confirms Chinese input, the Escape that
+// cancels it. Chromium marks it isComposing, or reports keyCode 229 (Process)
+// for it; the shell's listeners leave it to the input method.
+export function composingKey(event: { readonly isComposing?: boolean; readonly keyCode?: number }): boolean {
+  return event.isComposing === true || event.keyCode === 229;
+}
+
 export function platformOf(navigatorPlatform: string): 'mac' | 'other' {
   return /^Mac|iPhone|iPad/i.test(navigatorPlatform) ? 'mac' : 'other';
 }

@@ -13,7 +13,7 @@ import assert from 'node:assert/strict';
 
 import { translator } from '../../src/renderer/i18n/t';
 import type { Capabilities } from '../../src/renderer/model/capabilities';
-import { ENGINE_STATUS_POLL_MS, EngineStatusStore, parseEngineStatus, statusFields } from '../../src/renderer/model/engine-status';
+import { ENGINE_STATUS_POLL_MS, EngineStatusStore, parseEngineLoad, parseEngineStatus, statusFields } from '../../src/renderer/model/engine-status';
 import { SessionClient } from '../../src/renderer/model/session-client';
 import { FakeScheduler, FakeSocket, settle, until } from './support/fakes';
 
@@ -192,4 +192,92 @@ test('engine.status plugins[] by slot: state, owner and the error code and messa
   assert.equal(lookup.plugin('slt_2')?.error?.code, 'plugin_not_approved');
   assert.equal(lookup.plugin('slt_9'), null);
   lookup.destroy();
+});
+
+// m5b-ui-meter (UR-14, acceptance 1; protocol-engine-v0.md: load {average,
+// peak}): the DSP load changes every poll, so it stays out of the snapshot
+// React reads (spec 5.6: no commit while playing) and is published on a
+// channel of its own, only to an engine that lists features.load.
+const WITH_LOAD: Capabilities = { methods: ['engine.capabilities', 'engine.status'], features: { load: true } };
+
+function loadSetup(capabilities: Capabilities) {
+  const scheduler = new FakeScheduler();
+  const sockets: FakeSocket[] = [];
+  const answer: { load: unknown } = { load: { average: 0.12, peak: 0.31 } };
+  const client = new SessionClient({
+    createSocket: (url) => {
+      const socket = new FakeSocket(url);
+      engine(socket, capabilities, () => ({ ...device('0'), ...(answer.load === undefined ? {} : { load: answer.load }) }));
+      sockets.push(socket);
+      return socket;
+    },
+    currentEndpoint: async () => ({ port: 1, token: 'tok' }),
+    schedule: scheduler.schedule,
+  });
+  const store = new EngineStatusStore({ client, schedule: scheduler.schedule });
+  return { scheduler, sockets, client, store, answer };
+}
+
+test('parseEngineLoad reads load {average, peak}, and nothing else', () => {
+  assert.deepEqual(parseEngineLoad({ load: { average: 0.12, peak: 0.31 } }), { average: 0.12, peak: 0.31 });
+  assert.deepEqual(parseEngineLoad({ load: { average: 1.4, peak: 2 } }), { average: 1.4, peak: 2 }, 'past the deadline is kept');
+  assert.equal(parseEngineLoad({ load: null }), null);
+  assert.equal(parseEngineLoad({ xruns: '0' }), null, 'no field');
+  assert.equal(parseEngineLoad({ load: { average: 'x', peak: 0 } }), null);
+  assert.equal(parseEngineLoad({ load: { average: 0.1 } }), null);
+  assert.equal(parseEngineLoad('nonsense'), null);
+  // The snapshot does not carry it.
+  assert.ok(!('load' in (parseEngineStatus({ ...device('0'), load: { average: 0.1, peak: 0.2 } }) as object)));
+});
+
+test('the store publishes the load on its own channel, and a poll that changes only the load tells no snapshot listener', async () => {
+  const { scheduler, sockets, client, store, answer } = loadSetup(WITH_LOAD);
+  assert.equal(store.getLoad(), null);
+  client.connect({ port: 1, token: 'tok' });
+  sockets[0]!.onopen?.();
+  await until(() => store.getLoad() !== null, 'the first load');
+  assert.deepEqual(store.getLoad(), { average: 0.12, peak: 0.31 });
+  const snapshot = store.getSnapshot();
+  let snapshots = 0;
+  let loads = 0;
+  store.subscribe(() => (snapshots += 1));
+  const off = store.subscribeLoad(() => (loads += 1));
+  answer.load = { average: 0.5, peak: 0.75 };
+  scheduler.fire(ENGINE_STATUS_POLL_MS);
+  await until(() => store.getLoad()?.average === 0.5, 'the polled load');
+  await settle();
+  assert.equal(loads, 1);
+  assert.equal(snapshots, 0, 'the zero-commit rule: the snapshot did not change');
+  assert.equal(store.getSnapshot(), snapshot);
+  // The same load again: nobody is told.
+  scheduler.fire(ENGINE_STATUS_POLL_MS);
+  await until(() => sockets[0]!.requests('engine.status').length === 3, 'the third poll');
+  await settle();
+  assert.equal(loads, 1);
+  // A poll without the field: the load is unknown.
+  answer.load = undefined;
+  scheduler.fire(ENGINE_STATUS_POLL_MS);
+  await until(() => store.getLoad() === null, 'no load field');
+  assert.equal(loads, 2);
+  // Gone with the engine.
+  answer.load = { average: 0.2, peak: 0.3 };
+  scheduler.fire(ENGINE_STATUS_POLL_MS);
+  await until(() => store.getLoad() !== null, 'the load again');
+  sockets[0]!.serverClose();
+  assert.equal(store.getLoad(), null, 'unknown while disconnected');
+  off();
+  store.destroy();
+});
+
+test('without features.load the store publishes no load, though engine.status answers one', async () => {
+  const { sockets, client, store } = loadSetup(WITH_STATUS);
+  let loads = 0;
+  store.subscribeLoad(() => (loads += 1));
+  client.connect({ port: 1, token: 'tok' });
+  sockets[0]!.onopen?.();
+  await until(() => store.getSnapshot() !== null, 'the first engine.status');
+  await settle();
+  assert.equal(store.getLoad(), null);
+  assert.equal(loads, 0);
+  store.destroy();
 });

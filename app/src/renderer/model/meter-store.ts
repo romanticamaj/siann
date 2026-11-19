@@ -62,6 +62,8 @@ export class MeterStore {
   #entities: readonly string[] = [];
   #frames = 0;
   #playing = false;
+  // The animation frame the ballistics last advanced in (two surfaces share a store).
+  #advancedIn: number | null = null;
   peak = new Float32Array(0);
   rms = new Float32Array(0);
 
@@ -142,8 +144,14 @@ export class MeterStore {
     return true;
   }
 
-  // Applies the ballistics to every meter with the frame's time delta.
-  advance(dtSeconds: number): void {
+  // Applies the ballistics to every meter with the frame's time delta. With
+  // `frame` (the animation frame's timestamp) a second call in the same frame
+  // does nothing: the MixConsole and the Meter tab draw from one store.
+  advance(dtSeconds: number, frame?: number): void {
+    if (frame !== undefined) {
+      if (frame === this.#advancedIn) return;
+      this.#advancedIn = frame;
+    }
     for (let i = 0; i < this.peak.length; i += 1) this.#ballistics.step(i, this.peak[i]!, dtSeconds);
     for (let i = 0; i < this.#channelPeak.length; i += 1) this.#channels.step(i, this.#channelPeak[i]!, dtSeconds);
   }

@@ -33,10 +33,16 @@ const SAME_AS_ENGLISH: ReadonlySet<Key> = new Set<Key>([
   // The saved mark, a bullet, and Studio Setup's sample rate in Hz (m5b-ui-project).
   'session.unsavedMark',
   'setup.rateValue',
+  // The Media tab's sample rate in kHz (m5b-ui-media).
+  'media.rate',
   // The agent's transport is the protocol's name, MCP in every locale (the mockup's).
   'agent.transport.mcp',
   // A history row's "N steps · agent": the mockup's separator in every locale.
   'history.summaryBy',
+  // The DSP load's label and the loudness units: the mockup's, in every locale (m5b-ui-meter).
+  'topbar.dsp',
+  'strip.loudnessShortTerm',
+  'meter.lufs',
 ]);
 
 // The parameters each function message is called with. Strings are sentinels
@@ -47,6 +53,7 @@ const SENTINELS: Partial<Record<Key, Record<string, string | number>>> = {
   'toast.planArrived': { steps: 7 },
   'confirm.removeTracks': { count: 7 },
   'tracklist.count': { tracks: 7, clips: 17 },
+  'media.inUse': { count: 7 },
 };
 
 // Simplified / Traditional pairs (spec 6.3 and the glossary of 6.5).
@@ -91,6 +98,21 @@ test('every catalog has the English key set at runtime too', () => {
   for (const [name, catalog] of [...CHINESE, ['pseudo', pseudoCatalog(en)] as const]) {
     assert.deepEqual(Object.keys(catalog).sort(), [...KEYS].sort(), name);
   }
+});
+
+// m5b-ui-meter (acceptance 5): the DSP load, the master's loudness row, the
+// Meter tab and its panel. The Chinese terms are provisional until the
+// zh-glossary-m5b gate; the tab's label is the mockup's (電平表).
+test('the DSP load, the loudness row and the Meter tab have their strings in the three catalogs', () => {
+  const keys = ['topbar.dsp', 'topbar.dspLoad', 'topbar.dspPeak', 'strip.loudnessShortTerm', 'tab.meter', 'meter.master', 'meter.momentary', 'meter.shortTerm', 'meter.integrated', 'meter.lufs', 'meter.peak', 'meter.reset', 'meter.masterPeak'];
+  for (const [name, catalog] of [['en', en] as const, ...CHINESE]) {
+    for (const key of keys) assert.ok(key in catalog, `${name} ${key}`);
+  }
+  assert.equal(en['topbar.dsp'], 'DSP');
+  assert.equal(en['strip.loudnessShortTerm'], 'LUFS-S');
+  assert.equal(en['tab.meter'], 'Meter');
+  assert.equal(zhHant['tab.meter'], '電平表');
+  assert.deepEqual(placeholders(en['topbar.dspPeak']), ['percent']);
 });
 
 test('no catalog value is empty', () => {
@@ -186,8 +208,8 @@ test('the locator, cycle and metronome words are in every catalog (m5-ui-loop-cl
   for (const catalog of [en, zhHant, zhHans]) assert.equal(catalog['transport.clickLevelValue'], '{db} dB');
 });
 
-test('the toolbar, info line and Pool words are in every catalog, the mockup\'s in en and zh-TW (m5-ui-port-toolbar)', () => {
-  const keys = ['snap.typeGrid', 'pool.title', 'pool.open', 'pool.menu', 'pool.empty', 'toolbar.autoScrollTitle', 'info.volume'] as const;
+test('the toolbar and info line words are in every catalog, the mockup\'s in en and zh-TW (m5-ui-port-toolbar)', () => {
+  const keys = ['snap.typeGrid', 'toolbar.autoScrollTitle', 'info.volume'] as const;
   for (const key of keys) {
     for (const [name, catalog] of [['zh-Hant', zhHant], ['zh-Hans', zhHans]] as const) {
       assert.equal(typeof catalog[key], 'string', `${name} ${key}`);
@@ -209,7 +231,6 @@ test('the toolbar, info line and Pool words are in every catalog, the mockup\'s 
     assert.equal(en[key], english, key);
     assert.equal(zhHant[key], traditional, key);
   }
-  assert.equal(en['pool.open'], 'Open Pool');
   assert.equal(en['toolbar.autoScrollTitle'], 'Auto-Scroll (F)');
   // The old toolbar's words are gone: no Delete clip button, the gain field is the volume field.
   for (const gone of ['timeline.deleteClip', 'timeline.mediaPool', 'info.gain']) assert.ok(!(gone in en), gone);
@@ -298,4 +319,32 @@ test('the words of glue, erase, the snap types, the repeat dialog and the info l
   }
   // The snap field's word for Grid stays the mockup's.
   assert.equal(zhHant['snap.typeGrid'], '格線');
+});
+
+// m5b-ui-media: the Media tab replaced the Pool, so the pool.* strings are
+// gone and every media.* string is in the three catalogs, translated, with
+// the mockup's tab label in en and zh-TW.
+test('the Media tab and import words are in every catalog and the Pool\'s are gone (m5b-ui-media)', () => {
+  const keys = Object.keys(en).filter((key) => key.startsWith('media.')) as Key[];
+  for (const key of [
+    'media.tab', 'media.search', 'media.import', 'media.remove', 'media.inUse', 'media.empty', 'media.noMatch',
+    'media.colName', 'media.colLength', 'media.colChannels', 'media.colRate', 'media.colUses',
+    'media.open', 'media.menu', 'media.rename', 'media.importing', 'media.importFailed', 'media.refused',
+  ]) assert.ok(keys.includes(key as Key), key);
+  // The sample rate's unit reads the same in every locale.
+  const same = new Set<string>(['media.rate']);
+  for (const key of keys) {
+    for (const [name, catalog] of [['zh-Hant', zhHant], ['zh-Hans', zhHans]] as const) {
+      assert.ok(['string', 'function'].includes(typeof catalog[key]), `${name} ${key}`);
+      if (!same.has(key)) assert.notEqual(catalog[key], en[key], `${name} ${key} is translated`);
+    }
+  }
+  assert.equal(en['media.tab'], 'Media');
+  assert.equal(zhHant['media.tab'], '媒體');
+  for (const catalog of [en, zhHant, zhHans]) {
+    assert.ok(!Object.keys(catalog).some((key) => key.startsWith('pool.')), 'no pool.* key');
+    assert.match(String(catalog['media.importFailed']), /\{name\}/);
+    assert.match(String(catalog['media.importFailed']), /\{code\}/);
+    assert.match(String(catalog['media.refused']), /\{name\}/);
+  }
 });

@@ -469,6 +469,9 @@ function prepareBundle(): string {
     const file = path.join(audio, `${name}.wav`);
     writeWav(file, stem.seconds, stem.sample);
     cli('import', bundle, file, '--media-id', `med_${slug(name).replace(/-/g, '')}`);
+    // Named as the Media tab's import names a file (m5b-ui-media): the clips
+    // of states 01, 02, 06, 10, 11, 12 and 25 are titled with it.
+    cliExec(bundle, { op: 'media.rename', mediaId: `med_${slug(name).replace(/-/g, '')}`, name: `${name}.wav` });
   }
   let clipNumber = 0;
   for (const track of TRACKS) {
@@ -530,7 +533,7 @@ test('UX screenshot tour', async () => {
   await resize(WIDE);
   await expect(page.getByTestId('status')).toHaveAttribute('data-status', 'connected');
   await expect(page.getByTestId('about-track-count')).toHaveText('0');
-  await shoot(page, 'Empty session', 'First launch on an empty session directory: the engine created a new session with no tracks, clips or plans.');
+  await shoot(page, 'Empty session', 'First launch on an empty session directory: the engine created a new session with no tracks, clips or plans. The Plans tab is open: the agent row reads "No agent connected" and, at the foot of the tab, the "ask the agent" box is disabled, its tooltip giving the reason (m5b-ui-composer).');
   await app!.close();
   app = undefined;
 
@@ -544,7 +547,7 @@ test('UX screenshot tour', async () => {
   await waveformsDrawn();
   watcher = await engineClient(page, { events: true });
   const summary = 'Kick 0 dB, Snare -2.5 dB, Bass -4 dB, Keys -8 dB pan L35, Vox Lead +1.5 dB solo, Vox BG -9 dB pan R40, FX -12 dB muted';
-  await shoot(page, 'Session loaded', `A 7-track session (${summary}); 10 clips with waveforms from the engine's peaks. Transport stopped.`);
+  await shoot(page, 'Session loaded', `A 7-track session (${summary}); 10 clips with waveforms from the engine's peaks. Transport stopped. The Plans tab is open: the agent row reads "No agent connected" and, at the tab's foot, the "ask the agent" box is disabled, its tooltip giving the reason (m5b-ui-composer).`);
   await shoot(page, 'Session loaded full page', 'The same state as the whole page: since m5-ui-shell the page never scrolls, so this is the window.', { fullPage: true });
 
   // m5b-ui-inserts-master: Vox Lead gets the test plugin as an insert (approved
@@ -703,7 +706,7 @@ test('UX screenshot tour', async () => {
   await shoot(
     page,
     'Plan submitted with diff',
-    `An MCP agent submitted a 5-step mix plan (${hash8(mixHash)}): a toast says a plan arrived and the Plans button counts it. The Plans tab is the mockup's (m5-ui-port-plans): the tab row with the hearing switch, the plan as its card (a Needs review badge, when it arrived, its base revision and short hash; the count chips +1 track, 3 mix, 1 edit; m5b-ui-plan-metadata: the agent row heads the tab, "ux-tour · MCP", connected, its last tool in user wording ("submitted a plan"), and the plan, submitted without a title, leads its card with its first step while its intent box stays empty; the composer's box is left empty until m5b-ui-composer), the steps numbered from 1 and all ticked under "Steps · 5 of 5 selected" and its Select none link, each in the mockup's wording with the old value struck and the new one emphasised (dB, L/C/R pan, names, no ids), and the three actions: Audition, the violet primary "Approve 5 of 5" and the icon-only Reject. Each step's raw JSON and entity diff are behind a click on its text. Since m5b-ui-ghosts the plan's ghosts are drawn in place (UI redesign 4.2): the proposed Pad as a dashed header, a hatched lane under the last one and a dashed strip labelled NEW · STEP 1 before the master; the Vox BG fader's ghost cap joined to its cap with both values and its step badge, the violet tick on the Keys pan knob, the dashed ring on FX's M and both names of the rename; the toolbar ends with the proposal pill naming the plan (its first step and the step count) with its Ghosts toggle.`,
+    `An MCP agent submitted a 5-step mix plan (${hash8(mixHash)}): a toast says a plan arrived and the Plans button counts it. The Plans tab is the mockup's (m5-ui-port-plans): the tab row with the hearing switch, the plan as its card (a Needs review badge, when it arrived, its base revision and short hash; the count chips +1 track, 3 mix, 1 edit; m5b-ui-plan-metadata: the agent row heads the tab, "ux-tour · MCP", connected, its last tool in user wording ("submitted a plan"), and the plan, submitted without a title, leads its card with its first step while its intent box stays empty; at the tab's foot the "ask the agent" box (m5b-ui-composer), enabled, its placeholder naming the agent: "Ask ux-tour for a change…"), the steps numbered from 1 and all ticked under "Steps · 5 of 5 selected" and its Select none link, each in the mockup's wording with the old value struck and the new one emphasised (dB, L/C/R pan, names, no ids), and the three actions: Audition, the violet primary "Approve 5 of 5" and the icon-only Reject. Each step's raw JSON and entity diff are behind a click on its text. Since m5b-ui-ghosts the plan's ghosts are drawn in place (UI redesign 4.2): the proposed Pad as a dashed header, a hatched lane under the last one and a dashed strip labelled NEW · STEP 1 before the master; the Vox BG fader's ghost cap joined to its cap with both values and its step badge, the violet tick on the Keys pan knob, the dashed ring on FX's M and both names of the rename; the toolbar ends with the proposal pill naming the plan (its first step and the step count) with its Ghosts toggle.`,
   );
   await shoot(page, 'Plan submitted full page', 'The same state as the whole page (the window: the page never scrolls), with the plan\'s ghosts and the proposal pill.', { fullPage: true });
 
@@ -793,7 +796,7 @@ test('UX screenshot tour', async () => {
   await shoot(
     page,
     'Engine disconnected',
-    `The engine process was killed; status "${down}" while the shell waits ${RESTART_MS / 1000} s to restart it. A full-width banner under the top bar says the engine is disconnected; the agent row reads "No agent connected" (the agents are forgotten with the engine); the four zones are dimmed and inert, so no control can send a request (the top bar's zone buttons and the status bar stay live).`,
+    `The engine process was killed; status "${down}" while the shell waits ${RESTART_MS / 1000} s to restart it. A full-width banner under the top bar says the engine is disconnected; the agent row reads "No agent connected" (the agents are forgotten with the engine) and the "ask the agent" box is disabled with its reason; the four zones are dimmed and inert, so no control can send a request (the top bar's zone buttons and the status bar stay live).`,
   );
   await expect(page.getByTestId('status')).toHaveAttribute('data-status', 'connected', { timeout: RESTART_MS + 30_000 });
   // The toast is shot while it shows (it dismisses itself after a few seconds).
@@ -807,7 +810,7 @@ test('UX screenshot tour', async () => {
   await shoot(
     page,
     'Engine reconnected',
-    `The shell restarted the engine on the same bundle and the renderer reconnected to a new session. The banner is gone, the zones are live again, the clip selection is cleared, and a toast names the recovered revision ("${toastText}"). The new engine has no agent yet: the agent row reads "No agent connected".`,
+    `The shell restarted the engine on the same bundle and the renderer reconnected to a new session. The banner is gone, the zones are live again, the clip selection is cleared, and a toast names the recovered revision ("${toastText}"). The new engine has no agent yet: the agent row reads "No agent connected" and the "ask the agent" box at the tab's foot is disabled, its tooltip giving the reason, until state 26 connects an agent.`,
   );
 
   // ---- 25 (m5-ui-edit-basics; 23 and 24 are m5-ui-loop-click's): the
@@ -879,22 +882,22 @@ test('UX screenshot tour', async () => {
     { number: 24 },
   );
 
-  // ---- 31 (m5-ui-port-toolbar; 26 until m5b-ui-ghosts renumbered it, UI
-  // redesign 10.11, 8): the Pool, opened with Ctrl+P (Cmd+P on
-  // macOS) over the project zone: the session's media by name, a click arms
-  // placing. The mockup has no Pool, so the review reads this state alone.
+  // ---- 31 (m5b-ui-media; the Pool's state until the Media tab replaced it,
+  // UI redesign 10.11, 8): the Media tab with imported files, opened with
+  // Ctrl+P (Cmd+P on macOS). The mockup draws the tab but not its content, so
+  // the review reads this state alone.
   await page.keyboard.press('Escape');
   await page.keyboard.press('ControlOrMeta+KeyP');
-  await expect(page.getByTestId('media-pool')).toBeVisible();
-  const poolItems = await page.locator('[data-testid^="pool-"]').count();
+  await expect(page.getByTestId('media-tab')).toBeVisible();
+  const mediaItems = await page.locator('[data-testid^="media-row-"]').count();
   await shoot(
     page,
-    'Pool open',
-    `The Pool (Cubase's, UI redesign 10.8), opened with Ctrl+P (Cmd+P on macOS; the event display's context menu has Open Pool too): an app-only window over the project zone listing the session's ${poolItems} media by name (the media id when there is none); a click on one arms placing and the next click in the event display places it. Escape closes it; the resting window does not show it.`,
+    'Media tab with imported files',
+    `The right zone's Media tab (UR-5), opened with Ctrl+P (Cmd+P on macOS; the event display's context menu opens it too): the session's ${mediaItems} imported files by name with their length, channels, sample rate and use count, a search field and Import (the shell's file dialog). A row drags to the event display to place a clip, a double-click renames it, and Remove is enabled only for media no clip uses. Files dropped from the desktop on the event display import and land at the drop position.`,
     { number: 31 },
   );
-  await page.keyboard.press('Escape');
-  await expect(page.getByTestId('media-pool')).toHaveCount(0);
+  await page.getByTestId('tab-right-plans').click();
+  await expect(page.getByTestId('media-tab')).toBeHidden();
 
   // ---- 32 (m5b-ui-edit-more; UI redesign 3.2): the two pieces of the Keys
   // clip split at 25 glued again with the Glue tool (4; a click on a selected
@@ -978,6 +981,26 @@ test('UX screenshot tour', async () => {
   // Discarded, so what follows is as before.
   await page.getByTestId('banner-discard').click();
   await expect(page.getByTestId('audition-banner')).toHaveCount(0);
+  // ---- 40 (m5b-ui-meter): the Meter tab while playing: the master's meters
+  // with peak hold, its peak value, momentary, short-term and integrated
+  // loudness and the reset; the top bar's DSP load and the master strip's LUFS-S.
+  await page.getByTestId('tab-right-meter').click();
+  await expect(page.getByTestId('meter-panel')).toBeVisible();
+  await page.getByTestId('transport-play').click();
+  await expect(page.getByTestId('transport-play')).toHaveAttribute('aria-pressed', 'true');
+  await expect(page.getByTestId('loudness-integrated')).toHaveText(/^[-+]?\d+\.\d$/, { timeout: 15_000 });
+  await expect(page.getByTestId('strip-master-lufs')).toHaveText(/^[-+]?\d+\.\d$/);
+  await expect(page.locator('[data-part="dsp-load"] .num')).toHaveText(/^\d+%$/);
+  await shoot(
+    page,
+    'Meter tab while playing',
+    `The right zone's Meter tab while the session plays (m5b-ui-meter): the master's two channel meters with their hold lines, the peak value (${await page.getByTestId('meter-panel-peak').textContent()}), momentary ${await page.getByTestId('loudness-momentary').textContent()}, short-term ${await page.getByTestId('loudness-short-term').textContent()} and integrated ${await page.getByTestId('loudness-integrated').textContent()} LUFS, and Reset for the integrated value; the master strip reads LUFS-S ${await page.getByTestId('strip-master-lufs').textContent()} and the top bar's DSP load ${await page.locator('[data-part="dsp-load"] .num').textContent()} (the fake device's load).`,
+    { number: 40 },
+  );
+  await page.getByTestId('transport-stop').click();
+  await expect(page.getByTestId('transport-play')).toHaveAttribute('aria-pressed', 'false');
+  await page.getByTestId('tab-right-plans').click();
+
   // ---- 41 (m5b-ui-plan-metadata): a titled plan with its intent, the agent
   // row connected. The tour's MCP client keeps its name (ux-tour).
   const titledClient = await agent();
@@ -998,6 +1021,31 @@ test('UX screenshot tour', async () => {
     'Titled plan with intent',
     `An MCP agent (clientInfo.name "ux-tour") submitted a plan with a title and an intent (${hash8(titled.hash as string)}): the agent row heads the Plans tab with the agent's name, MCP and "connected · submitted a plan" (the time in its tooltip); the card leads with the title "Lift the chorus" and the intent under it in two lines, then the count chips; the toast named the plan by its title.`,
     { number: 41 },
+  );
+
+  // ---- 42 (m5b-ui-composer): a request sent from the "ask the agent" box,
+  // taken by the agent and answered by a plan; the row reads answered and the
+  // card shows the plan it led to.
+  const composerField = page.locator('[data-part="composer"] textarea');
+  await expect(composerField).toBeEnabled();
+  await composerField.click();
+  await page.keyboard.type('Bring the backing vocals up a little');
+  await page.keyboard.press('Enter');
+  await expect(composerField).toHaveValue('');
+  const asked = (await titledClient.tool('next_request', { waitMs: 0 })).request as { id: string; text: string };
+  const answeredPlan = await titledClient.tool('submit_plan', {
+    steps: [{ op: 'track.set_gain', trackId: 'trk_voxbg', gainMilliDb: -4500 }],
+    title: 'Backing vocals up',
+    request: asked.id,
+  });
+  await expect(page.getByTestId(`request-${asked.id}`)).toHaveAttribute('data-state', 'answered');
+  await expect(page.getByTestId('plan-card')).toHaveAttribute('data-plan', hash8(answeredPlan.hash as string));
+  await scrollTo('plan-review');
+  await shoot(
+    page,
+    'Request answered by a plan',
+    `A request typed in the "ask the agent" box at the foot of the Plans tab ("${asked.text}") and sent with Enter: the agent took it with next_request and answered it with a plan (${hash8(answeredPlan.hash as string)}, submit_plan with the request). Above the box the request's row reads answered, with its dismiss control; the card shows the plan the request led to, needing review: nothing changed in the session until it is approved.`,
+    { number: 42 },
   );
 
   // ---- 34 (m5b-ui-inserts-master; UI redesign 3.4): an insert rack with a
