@@ -148,6 +148,21 @@ async function armed(): Promise<string[]> {
   return (await engine!.call('engine.status')).armed as string[];
 }
 
+// The computed colour of a token, resolved by a probe element (the form
+// getComputedStyle gives a button's colour in).
+async function tokenColor(name: string): Promise<string> {
+  return page.evaluate((token) => {
+    const probe = document.createElement('span');
+    probe.style.color = `var(${token})`;
+    document.body.appendChild(probe);
+    const color = getComputedStyle(probe).color;
+    probe.remove();
+    return color;
+  }, name);
+}
+
+const recordColor = () => page.getByTestId('transport-record').evaluate((el) => getComputedStyle(el).color);
+
 const header = (id: string) => page.getByTestId(`track-header-${id}`);
 
 async function selectTrack(id: string): Promise<void> {
@@ -220,6 +235,8 @@ test('Record is disabled with its reason: no input open opens Studio Setup; noth
   await launch({}, { input: false });
   const record = page.getByTestId('transport-record');
   await expect(record).toHaveAttribute('aria-disabled', 'true');
+  // Drawn as a disabled transport button: dimmed, not the red of .tbtn.rec.
+  expect(await recordColor()).toBe(await tokenColor('--tx-4'));
   await expect(record).toHaveAttribute('title', `${en['record.reason.noInput']}\n${en['transport.studioSetupHint']}`);
   // aria-disabled: Playwright's actionability check refuses it, a person's click does not.
   await record.click({ force: true });
@@ -227,11 +244,13 @@ test('Record is disabled with its reason: no input open opens Studio Setup; noth
   await page.keyboard.press('Escape');
   await openInput();
   await expect(record).toHaveAttribute('title', en['record.reason.nothingArmed']);
+  expect(await recordColor()).toBe(await tokenColor('--tx-4'));
   await record.click({ force: true });
   expect((await sent()).filter((r) => r.method === 'transport.record')).toEqual([]);
   // Arming enables it.
   await page.getByTestId('track-record-trk_rec').click();
   await expect(record).not.toHaveAttribute('aria-disabled', 'true');
+  expect(await recordColor()).toBe(await tokenColor('--rec'));
 });
 
 test('a recording after a one-bar count-in starts at the record position, grows a red clip with no React commit per frame, and Ctrl+Z removes it', async () => {
