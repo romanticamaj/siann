@@ -114,6 +114,17 @@ std::string withoutUnsafeCharacters(std::string_view text) {
     return out;
 }
 
+bool isWellFormedUtf8(std::string_view text) noexcept {
+    for (std::size_t at = 0; at < text.size();) {
+        const std::size_t length = decode(text, at).length;
+        if (length == 0) {
+            return false;
+        }
+        at += length;
+    }
+    return true;
+}
+
 bool isDisplaySafeName(std::string_view name) noexcept {
     return textFault(name) == TextFault::none;
 }

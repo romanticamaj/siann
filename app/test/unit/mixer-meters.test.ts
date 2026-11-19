@@ -17,6 +17,7 @@ import * as fs from 'node:fs';
 import * as path from 'node:path';
 
 import type { MeterFrame, MeterLegend } from '../../src/renderer/model/meter-frames';
+import { LoudnessStore } from '../../src/renderer/model/loudness-store';
 import { MeterStore } from '../../src/renderer/model/meter-store';
 import { monitoredTracks } from '../../src/renderer/model/record';
 import { MixerMeters } from '../../src/renderer/mixer/MixerMeters';
@@ -268,6 +269,116 @@ test('hidden: nothing requested, and a running loop stops', () => {
   setHidden(false);
   meters.onFrame();
   assert.equal(frames.queue.size, 1);
+});
+
+// m5b-ui-meter (UI redesign 5.3, UR-14): the surface writes the master's
+// loudness texts (the strip's LUFS-S; the Meter tab's momentary, short-term
+// and integrated) from the LoudnessStore in its animation frame, as it writes
+// the peak values: formatLufs, -inf for silence. A loudness change wakes a
+// stopped loop only when a written text would change.
+function loudnessSetup() {
+  const rig = setup();
+  const loudness = new LoudnessStore();
+  const meters = new MixerMeters({
+    canvas: fakeCanvas().canvas,
+    store: rig.store,
+    loudness,
+    frames: rig.frames,
+    clock: () => 0,
+    hidden: () => false,
+    pixelRatio: () => 1,
+    size: () => ({ width: 100, height: 100 }),
+  });
+  rig.meters.destroy();
+  const texts = { shortTerm: { textContent: '' as string | null }, momentary: { textContent: '' as string | null }, integrated: { textContent: '' as string | null } };
+  meters.addLoudness('shortTerm', texts.shortTerm);
+  meters.addLoudness('momentary', texts.momentary);
+  meters.addLoudness('integrated', texts.integrated);
+  return { ...rig, meters, loudness, texts };
+}
+
+test('the loudness texts are written from the LoudnessStore in the frame callback, -inf for silence', () => {
+  const { source, frames, meters, loudness, texts } = loudnessSetup();
+  // Written once when added: silence.
+  assert.deepEqual(Object.values(texts).map((t) => t.textContent), ['-inf', '-inf', '-inf']);
+  source.push([[0, 0.5]]);
+  loudness.set({ engineTimestampMicros: '1', momentary: -22.54, shortTerm: -13.84, integrated: -23 });
+  meters.onFrame();
+  assert.equal(texts.shortTerm.textContent, '-inf', 'nothing is written outside the frame callback');
+  frames.run();
+  assert.equal(texts.shortTerm.textContent, '-13.8');
+  assert.equal(texts.momentary.textContent, '-22.5');
+  assert.equal(texts.integrated.textContent, '-23.0');
+  loudness.clear();
+  frames.run();
+  assert.deepEqual(Object.values(texts).map((t) => t.textContent), ['-inf', '-inf', '-inf']);
+});
+
+test('a loudness change wakes a stopped loop only when a text would change; nothing is requested while idle or hidden', () => {
+  const { source, frames, meters, loudness, texts } = loudnessSetup();
+  source.push([], false);
+  meters.onFrame();
+  for (let i = 0; i < 60 * 30 && frames.queue.size > 0; i += 1) frames.run();
+  assert.equal(frames.queue.size, 0, 'idle');
+  const before = frames.requested;
+  // The same values: nothing to write, nothing requested.
+  meters.onLoudness();
+  assert.equal(frames.requested, before);
+  // Stopped after a programme: the integrated value holds, the others fall to -inf.
+  loudness.set({ engineTimestampMicros: '2', momentary: -Infinity, shortTerm: -Infinity, integrated: -14.125 });
+  meters.onLoudness();
+  assert.equal(frames.requested, before + 1);
+  frames.run();
+  assert.equal(texts.integrated.textContent, '-14.1');
+  assert.equal(frames.queue.size, 0, 'and the loop stops again');
+  meters.onLoudness();
+  assert.equal(frames.requested, before + 1, 'idle again');
+});
+
+test('the Meter tab\'s surface: the master\'s two channels with peak hold and clip, and its peak value, from the shared store', () => {
+  const { source, store, frames } = setup();
+  const { canvas, rects } = fakeCanvas();
+  const tab = new MixerMeters({ canvas, store, frames, clock: () => 0, hidden: () => false, pixelRatio: () => 1, size: () => ({ width: 100, height: 120 }) });
+  const peak = { textContent: '' as string | null, classList: { on: false, toggle(_name: string, force?: boolean) { this.on = force === true; return this.on; } } };
+  [10, 21].forEach((x, channel) => tab.addSlot({ ref: 'master', channel, measure: () => ({ x, y: 0, width: 9, height: 100 }) }));
+  tab.addPeak('master', peak);
+  tab.measure();
+  source.push([[0, [2, 0.25]]]); // the left channel clips
+  tab.onFrame();
+  frames.run();
+  assert.equal(bars(rects, 10).length, 1, 'the left channel\'s bar');
+  assert.equal(bars(rects, 21).length, 1, 'the right channel\'s bar');
+  assert.ok(at(rects, 10).some((r) => r.style === TOKENS['tx-0']), 'the hold line');
+  assert.ok(at(rects, 10).some((r) => r.style === TOKENS.err), 'the clip band');
+  assert.equal(peak.textContent, '+6.0');
+  assert.equal(peak.classList.on, true);
+  tab.reset('master');
+  source.push([[0, 0.25]]);
+  frames.run();
+  assert.equal(peak.classList.on, false, 'a click on the peak value resets the clip');
+  assert.equal(peak.textContent, '-12.0');
+  tab.destroy();
+});
+
+test('two surfaces over one store advance the ballistics once per animation frame', () => {
+  const source = new FakeSource();
+  const store = new MeterStore(source);
+  source.push([[0, 1]]);
+  store.sync();
+  store.advance(0, 1);
+  source.push([[0, 0]]);
+  store.sync();
+  store.advance(0.1, 2);
+  const once = store.read('master')!.level;
+  assert.ok(once < 0, 'the bar falls');
+  store.advance(0.1, 2);
+  assert.equal(store.read('master')!.level, once, 'the same frame is not advanced twice');
+  store.advance(0.1, 3);
+  assert.ok(store.read('master')!.level < once, 'the next frame is');
+  // Without a frame id every call advances, as before.
+  const before = store.read('master')!.level;
+  store.advance(0.1);
+  assert.ok(store.read('master')!.level < before);
 });
 
 test('the meter surface names its colours by token: no colour literal, and no meter value through React state', () => {

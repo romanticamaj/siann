@@ -125,6 +125,16 @@ function buildFixture() {
       ],
       writeSet: [entry('track', 'trk_1')],
     }],
+    // m5b-engine-track-notes: a track's notes set (multi-line, non-ASCII) and
+    // removed with "".
+    ['track_notes_steps', {
+      ...minimal,
+      steps: [
+        { op: 'track.set_notes', trackId: 'trk_1', notes: 'Verse: double it.\n副歌 louder' },
+        { op: 'track.set_notes', trackId: 'trk_1', notes: '' },
+      ],
+      writeSet: [entry('track', 'trk_1')],
+    }],
     // m5b-engine-clip-fades: a step that sets both fades of a clip.
     ['clip_set_fade_step', {
       schema: 'siann.plan.v1',

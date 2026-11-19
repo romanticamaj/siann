@@ -16,7 +16,7 @@ import * as path from 'node:path';
 import type { ClipRect, Viewport } from '../../../src/renderer/timeline/geometry';
 import { trackColourIndex } from '../../../src/renderer/timeline/track-colour';
 import { engineClient } from './engine-client';
-import { sessionText } from './fidelity-text';
+import { mockupZhTable, sessionText } from './fidelity-text';
 import { Agent, exeFromEnv, hash8 } from './seed';
 
 const REPO = path.resolve(__dirname, '..', '..', '..', '..');
@@ -345,6 +345,12 @@ export async function stageSession(app: ElectronApplication, page: Page, notes: 
   await expect(page.getByTestId(`plan-state-${hash8(stale)}`)).toHaveAttribute('data-badge', 'stale');
   // The Plans button counts the one validated plan, as the mockup's does.
   await expect(page.getByTestId('plans-count')).toHaveText('1');
+  // m5b-ui-composer: the box at the tab's foot reads the mockup's text, with no request shown.
+  const composerText = 'Ask mix-assistant for a change…';
+  const placeholder = locale.startsWith('zh') ? (mockupZhTable(fs.readFileSync(MOCKUP_HTML, 'utf8'))[composerText] ?? composerText) : composerText;
+  await expect(page.locator('[data-part="composer"] textarea')).toBeEnabled();
+  await expect(page.locator('[data-part="composer"] textarea')).toHaveAttribute('placeholder', placeholder);
+  await expect(page.locator('.requests')).toHaveCount(0);
 
   // Vox Lead armed (m5b-ui-recording; the inputs were set before the plans).
   await engine.call('record.arm', { trackId: TRACK_IDS[4]!, armed: true });
@@ -391,7 +397,15 @@ export async function stageSession(app: ElectronApplication, page: Page, notes: 
   await expect(page.getByTestId('toast')).toHaveCount(0);
   // Live values inside enforced boxes, masked in pixels only: the widths of the
   // mockup's "0 xruns" and "r39" need one xrun digit and two revision digits.
-  await expect(page.getByTestId('xruns')).toHaveText('0');
+  // The count is whatever engine.status reports, not zero: the fake device's
+  // real-time thread can miss a deadline on a loaded runner (Windows CI did).
+  await expect(page.getByTestId('xruns')).toHaveText(/^\d$/);
+  await expect
+    .poll(async () => {
+      const status = await engine.call('engine.status');
+      return (await page.getByTestId('xruns').textContent()) === status.xruns;
+    })
+    .toBe(true);
   await expect(page.getByTestId('revision')).toHaveText(/^r\d\d$/);
   await expect(page.getByTestId('device')).toHaveText('ASIO · Scarlett 4i4 · 48 kHz / 128 · 5.3 ms');
   // The pointer rests on step 3 of the plan, which the mockup draws hovered

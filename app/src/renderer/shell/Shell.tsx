@@ -69,7 +69,7 @@ import {
 
 import { useT } from '../i18n/t';
 import type { CommandId, CommandRegistry, ZoneScope } from '../keys/commands';
-import { isTextField, resolveKey } from '../keys/dispatcher';
+import { composingKey, isTextField, resolveKey } from '../keys/dispatcher';
 import { CUBASE_PRESET } from '../keys/preset-cubase';
 import { capabilitySelector } from '../model/capabilities';
 import { FOCUS_COMMANDS, focusMove, ringStep, type FocusPlace } from '../keys/zone-focus';
@@ -212,6 +212,8 @@ export interface ShellProps {
   readonly right: ReactNode;
   // The right zone's Media tab (m5b-ui-media), shown in place of `right` while its tab is chosen.
   readonly rightMedia?: ReactNode;
+  // The Meter tab's panel (m5b-ui-meter), shown in the right zone on that tab.
+  readonly rightMeter?: ReactNode;
   // The end of the right zone's tab row (the hearing switch, m5-ui-port-plans).
   readonly rightHead?: ReactNode;
   // The start view (m5b-ui-project), over the zones; null when it is not up.
@@ -394,6 +396,7 @@ export function Shell({
   lower,
   right,
   rightMedia = null,
+  rightMeter,
   rightHead,
   startView = null,
   studioSetup = null,
@@ -586,6 +589,11 @@ export function Shell({
         note(preset, event, null, false, true);
         return;
       }
+      // An input method's key (Escape or Tab during a composition) moves no focus.
+      if (composingKey(event)) {
+        note(preset, event, null, false, false);
+        return;
+      }
       const binding = resolveKey(
         {
           code: event.code,
@@ -673,8 +681,11 @@ export function Shell({
   // ui/right-zone.css): the Plans tab, the Media tab (m5b-ui-media; the
   // mockup's span.tab with ic('folder','s')) or, on an engine without
   // media.import, its empty box (--tab-media-empty-w, shell.css), the Meter
-  // tab's box (pending: m5b-ui-meter; UI redesign 3.0) and the hearing switch.
-  const shownRight = rightTab(state.layout, { media });
+  // tab (m5b-ui-meter: with the bars icon, on an engine that lists
+  // features.loudness, its empty box .tab-meter-empty otherwise) and the
+  // hearing switch. A stored tab the engine lacks shows Plans.
+  const meterTab = can.feature('loudness');
+  const shownRight = rightTab(state.layout, { media, meter: meterTab });
   const rightTabs = (
     <div className="p-head" role="tablist" data-part="right-tabs">
       <button
@@ -705,7 +716,22 @@ export function Shell({
       ) : (
         <Hold className="tab-media-empty" />
       )}
-      <Hold className="hold-tab-meter" />
+      {meterTab ? (
+        <button
+          type="button"
+          role="tab"
+          className={`tab${shownRight === 'meter' ? ' on' : ''}`}
+          data-testid="tab-right-meter"
+          data-part="tab-meter"
+          aria-selected={shownRight === 'meter'}
+          onClick={() => store.dispatch({ type: 'tab', zone: 'right', tab: 'meter' })}
+        >
+          <Icon name="bars" small />
+          {t('tab.meter')}
+        </button>
+      ) : (
+        <Hold className="tab-meter-empty" />
+      )}
       {rightHead}
     </div>
   );
@@ -786,7 +812,7 @@ export function Shell({
         onFocus={(z) => focusZone(z, false)}
         frameRef={frameRef('right')}
       >
-        {shownRight === 'media' ? rightMedia : right}
+        {shownRight === 'media' ? rightMedia : shownRight === 'meter' ? rightMeter : right}
       </ZoneFrame>
       <StatusBar client={client} plans={plans} engineStatus={engineStatus} saved={saved} />
       {startView}

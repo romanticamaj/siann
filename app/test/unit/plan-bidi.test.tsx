@@ -160,6 +160,8 @@ test('every name in a step sentence is its own isolate, in every locale', () => 
     { op: 'plugin.insert', trackId: 'trk_e', index: 0, slotId: 'slt_n', descriptor: { format: 'clap', uid: 'u', name: `Verb${RLO}` }, stateBlob: null },
     { op: 'media.rename', mediaId: 'med_1', name: `kick${RLO}vaw.exe` },
     { op: 'session.rename', name: `Night${RLO}` },
+    { op: 'track.set_notes', trackId: 'trk_e', notes: `cue${RLO}` },
+    { op: 'track.set_notes', trackId: 'trk_e', notes: '' },
   ];
   for (const locale of LOCALES) {
     const t = translator(locale);
@@ -171,6 +173,10 @@ test('every name in a step sentence is its own isolate, in every locale', () => 
     assert.ok(texts[0]!.includes(`\u2068${EVIL}\u2069`), `${locale}: ${texts[0]}`);
     assert.ok(texts[1]!.includes(`\u2068Lead\u2069`) && texts[1]!.includes(`\u2068Kit${RLO}\u2069`), `${locale}: ${texts[1]}`);
     assert.ok(texts[6]!.includes(`\u2068kick${RLO}vaw.exe\u2069`), `${locale}: ${texts[6]}`);
+    // A notes step names its track as an isolate and never shows the notes.
+    for (const text of [texts[8]!, texts[9]!]) {
+      assert.ok(text.includes(`\u2068${EVIL}\u2069`) && !text.includes('cue'), `${locale}: ${text}`);
+    }
   }
   const en = translator('en');
   assert.equal(describeStep(steps[0]!, en, NAMES), `Set \u2068${EVIL}\u2069 volume to ${formatMilliDb(-6000)}`);

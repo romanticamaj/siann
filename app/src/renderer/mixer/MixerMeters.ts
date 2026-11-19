@@ -20,16 +20,27 @@
 // taper, with a --hairline-1h --tx-0 hold line whose bottom edge is the hold
 // level. The latched clip is a --space-3q band in --err at the top of both
 // channels. Every colour and size is a token of tokens.ts.
+//
+// The master's loudness (m5b-ui-meter; spec 5.3): the surface writes the
+// loudness texts registered with it (the master strip's LUFS-S, the Meter
+// tab's momentary, short-term and integrated) from the LoudnessStore in the
+// same frame callback, with formatLufs. A loudness frame wakes a stopped loop
+// only when a text would change. The Meter tab runs a second MixerMeters over
+// the same MeterStore: the store advances its ballistics once per animation
+// frame (the frame's timestamp), whichever surface draws first.
 
-import { formatPeakDb } from '../format';
+import { formatLufs, formatPeakDb } from '../format';
+import type { LoudnessField, LoudnessReadings } from '../model/loudness-store';
 import type { MeterStore } from '../model/meter-store';
 import { armedMeterRef } from '../model/record';
 import { TOKENS } from '../tokens';
 import { FLOOR_DB } from './peak-hold';
 import { milliDbToPosition } from './taper';
+import { frameMarks } from '../perf/frame-marks';
 
 export interface AnimationFrames {
-  request(callback: () => void): number;
+  // The callback gets the frame's timestamp (the same for every callback of a frame).
+  request(callback: (time?: number) => void): number;
   cancel(handle: number): void;
 }
 
@@ -78,6 +89,8 @@ export interface MeterSlot {
 export interface MixerMetersOptions {
   readonly canvas?: CanvasLike | null;
   readonly store: MeterStore;
+  // The master's loudness (m5b-ui-meter), for the loudness texts.
+  readonly loudness?: LoudnessReadings | null;
   readonly frames?: AnimationFrames;
   // Milliseconds, monotonic.
   readonly clock?: () => number;
@@ -100,7 +113,7 @@ export interface MeterTestHooks {
 }
 
 const browserFrames: AnimationFrames = {
-  request: (callback) => requestAnimationFrame(callback),
+  request: (callback) => requestAnimationFrame((time) => callback(time)),
   cancel: (handle) => cancelAnimationFrame(handle),
 };
 
@@ -137,8 +150,15 @@ interface Peak {
   clipShown: boolean;
 }
 
+interface Loudness {
+  readonly field: LoudnessField;
+  readonly target: PeakText;
+  shown: string | null;
+}
+
 export class MixerMeters {
   readonly #store: MeterStore;
+  readonly #loudness: LoudnessReadings | null;
   readonly #frames: AnimationFrames;
   readonly #clock: () => number;
   readonly #hidden: () => boolean;
@@ -148,6 +168,7 @@ export class MixerMeters {
   #canvas: CanvasLike | null;
   readonly #entries = new Set<Entry>();
   readonly #peaks = new Set<Peak>();
+  readonly #loudnessTexts = new Set<Loudness>();
   #handle: number | null = null;
   #last: number | null = null;
   #dirty = true;
@@ -156,6 +177,7 @@ export class MixerMeters {
 
   constructor(options: MixerMetersOptions) {
     this.#store = options.store;
+    this.#loudness = options.loudness ?? null;
     this.#canvas = options.canvas ?? null;
     this.#frames = options.frames ?? browserFrames;
     this.#clock = options.clock ?? (() => performance.now());
@@ -204,6 +226,27 @@ export class MixerMeters {
     return () => {
       this.#peaks.delete(peak);
     };
+  }
+
+  // A loudness text to write while mounted (m5b-ui-meter).
+  addLoudness(field: LoudnessField, target: PeakText): () => void {
+    const entry: Loudness = { field, target, shown: null };
+    this.#loudnessTexts.add(entry);
+    this.#writeLoudness(entry);
+    return () => {
+      this.#loudnessTexts.delete(entry);
+    };
+  }
+
+  // A loudness frame arrived (or the loudness was cleared): draw when a text would change.
+  onLoudness(): void {
+    if (this.#destroyed || this.#handle !== null || this.#hidden()) return;
+    for (const entry of this.#loudnessTexts) {
+      if (this.#loudnessText(entry.field) !== entry.shown) {
+        this.#request();
+        return;
+      }
+    }
   }
 
   // The layout changed (a resize, a strip added or removed): re-measure on the
@@ -269,6 +312,7 @@ export class MixerMeters {
     this.#handle = null;
     this.#entries.clear();
     this.#peaks.clear();
+    this.#loudnessTexts.clear();
   }
 
   testHooks(): MeterTestHooks {
@@ -284,10 +328,10 @@ export class MixerMeters {
   }
 
   #request(): void {
-    this.#handle = this.#frames.request(() => this.#frame());
+    this.#handle = this.#frames.request((time) => this.#frame(time));
   }
 
-  #frame(): void {
+  #frame(time?: number): void {
     this.#handle = null;
     if (this.#destroyed) return;
     const now = this.#clock();
@@ -295,9 +339,12 @@ export class MixerMeters {
     this.#last = now;
     const store = this.#store;
     store.sync();
-    store.advance(dt);
+    store.advance(dt, time);
+    // The perf scenario's frame marks (perf/frame-marks.ts; a no-op outside the test hook).
+    frameMarks().begin();
     if (this.#dirty) this.measure();
     this.#draw();
+    frameMarks().end();
     this.#drawn += 1;
     if (!this.#hidden() && (store.playing() || !store.decayed())) this.#request();
     else this.#last = null;
@@ -313,6 +360,18 @@ export class MixerMeters {
       for (const entry of this.#entries) if (entry.rect) this.#drawChannel(context, entry, entry.rect);
     }
     for (const peak of this.#peaks) this.#writePeak(peak);
+    for (const entry of this.#loudnessTexts) this.#writeLoudness(entry);
+  }
+
+  #loudnessText(field: LoudnessField): string {
+    return formatLufs(this.#loudness ? this.#loudness.read(field) : -Infinity);
+  }
+
+  #writeLoudness(entry: Loudness): void {
+    const text = this.#loudnessText(entry.field);
+    if (text === entry.shown) return;
+    entry.shown = text;
+    entry.target.textContent = text;
   }
 
   #ref(ref: string): string {

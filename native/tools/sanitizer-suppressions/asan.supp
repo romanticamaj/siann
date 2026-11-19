@@ -1,0 +1,9 @@
+# AddressSanitizer suppressions (ASAN_OPTIONS=suppressions=<this file>), read by
+# the asan-ubsan job of the nightly workflow (m5b-nightly-quality).
+#
+# Empty on purpose: what the first ASAN + UBSAN runs found was in SIANN code and
+# was fixed. A suppression is for a finding in third-party code only, one line
+# each (interceptor_via_fun:<function> or interceptor_via_lib:<library>), with a
+# comment line directly above it giving the reason: the finding, the upstream
+# issue, and why it cannot be fixed here. test/native-quality-options.test.js
+# fails on a suppression without one.

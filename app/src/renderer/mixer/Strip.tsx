@@ -59,6 +59,7 @@ import { formatDb, formatPan } from '../format';
 import { useLocale, useT } from '../i18n/t';
 import type { MasterEntity, TrackEntity } from '../model/document';
 import type { GestureController } from '../model/gesture-controller';
+import type { LoudnessField } from '../model/loudness-store';
 import type { SessionClient } from '../model/session-client';
 import { ghostAttrs, useGhostView, type GhostView } from '../plans/ghost-context';
 import { masterGhosts, trackGhosts, type Ghost } from '../plans/ghosts';
@@ -136,7 +137,9 @@ function Scale() {
 }
 
 // The meter: two channel wells the Mixer's canvas paints, and nothing else.
-function Meter({ meterRef, testId }: { meterRef: string; testId: string }) {
+// The Meter tab (m5b-ui-meter) draws the master's with its own canvas; its
+// wells are no strip's part (partOf null).
+export function Meter({ meterRef, testId, partOf = 'meter' }: { meterRef: string; testId: string; partOf?: string | null }) {
   const meters = useContext(MetersContext);
   const left = useRef<HTMLDivElement | null>(null);
   const right = useRef<HTMLDivElement | null>(null);
@@ -150,7 +153,7 @@ function Meter({ meterRef, testId }: { meterRef: string; testId: string }) {
     };
   }, [meters, meterRef]);
   return (
-    <div className="meter" data-part-of="meter" data-testid={testId}>
+    <div className="meter" data-part-of={partOf ?? undefined} data-testid={testId}>
       <div className="ch" ref={left} />
       <div className="ch" ref={right} />
     </div>
@@ -159,7 +162,7 @@ function Meter({ meterRef, testId }: { meterRef: string; testId: string }) {
 
 // The peak value (.pk): its text and clip class are written by the meter
 // canvas; a click resets the hold lines, the peak and the clip.
-function PeakValue({ meterRef, testId, label }: { meterRef: string; testId: string; label: string }) {
+export function PeakValue({ meterRef, testId, label }: { meterRef: string; testId: string; label: string }) {
   const meters = useContext(MetersContext);
   const peak = useRef<HTMLButtonElement | null>(null);
   useEffect(() => {
@@ -167,6 +170,18 @@ function PeakValue({ meterRef, testId, label }: { meterRef: string; testId: stri
     return meters.peak(meterRef, peak.current);
   }, [meters, meterRef]);
   return <button type="button" ref={peak} className="pk" data-testid={testId} aria-label={label} onClick={() => meters?.reset(meterRef)} />;
+}
+
+// A loudness value (m5b-ui-meter): its text is written by the meter surface
+// from the LoudnessStore (formatLufs, -inf for silence), never by React.
+export function LoudnessValue({ field, testId, style }: { field: LoudnessField; testId: string; style?: CSSProperties }) {
+  const meters = useContext(MetersContext);
+  const value = useRef<HTMLSpanElement | null>(null);
+  useEffect(() => {
+    if (!meters || !value.current) return undefined;
+    return meters.loudness(field, value.current);
+  }, [meters, field]);
+  return <span ref={value} data-testid={testId} style={style} />;
 }
 
 interface ControlProps {
@@ -523,14 +538,29 @@ export function useMasterGain(client: SessionClient): number {
 
 const MASTER_REF = 'master:master';
 
+// The master's loudness row (m5b-ui-meter; the mockup's master, line 201):
+// .panrow with the LUFS-S label and the short-term value, on an engine that
+// lists features.loudness; the empty .panrow the shared rules size otherwise.
+function LoudnessRow() {
+  const t = useT();
+  const can = useCapabilities();
+  if (!can.feature('loudness')) return <div className="panrow" aria-hidden="true" />;
+  return (
+    <div className="panrow" data-part-of="loudness" data-testid="strip-master-loudness">
+      <span style={{ color: 'var(--tx-4)' }}>{t('strip.loudnessShortTerm')}</span>
+      <LoudnessValue field="shortTerm" testId="strip-master-lufs" style={{ color: 'var(--tx-1)' }} />
+    </div>
+  );
+}
+
 // The master strip (the mockup's master): the dB scale, the fader
 // (m5b-ui-inserts-master: the mockup's .ftrack with its unity line and cap,
 // bound to master:master with the track fader's taper and modifiers, one
 // master.set_gain per gesture) and the meter in its fader area, the level and
 // the peak value, the name. Without features.masterGain, master.set_gain or
 // the gesture methods it is the M5 meter: the fader column an empty box, the
-// readout the peak value only. The master's M, rack and e are M6c's
-// (m6c-ui-master-channel) and its loudness row m5b-ui-meter's (spec 3.0): they
+// readout the peak value only. Its loudness row is LoudnessRow (m5b-ui-meter).
+// The master's M, rack and e are M6c's (m6c-ui-master-channel; spec 3.0): they
 // stay empty boxes, as does its automation row. A plan's master.set_gain adds
 // the ghost cap joined to the real cap and both values (UI redesign 4.2).
 export function MasterStrip({ client, gestures }: { client: SessionClient; gestures: GestureController }) {
@@ -555,7 +585,7 @@ export function MasterStrip({ client, gestures }: { client: SessionClient; gestu
       {...(ghosts.length > 0 ? ghostAttrs(view, ghosts.map((g) => g.step)) : {})}
     >
       <div className="ins" aria-hidden="true" />
-      <div className="panrow" aria-hidden="true" />
+      <LoudnessRow />
       <div className="btns" aria-hidden="true" />
       <div className="fad" data-part-of="fader-area">
         <Scale />

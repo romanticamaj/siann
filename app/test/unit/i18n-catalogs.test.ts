@@ -39,6 +39,10 @@ const SAME_AS_ENGLISH: ReadonlySet<Key> = new Set<Key>([
   'agent.transport.mcp',
   // A history row's "N steps · agent": the mockup's separator in every locale.
   'history.summaryBy',
+  // The DSP load's label and the loudness units: the mockup's, in every locale (m5b-ui-meter).
+  'topbar.dsp',
+  'strip.loudnessShortTerm',
+  'meter.lufs',
 ]);
 
 // The parameters each function message is called with. Strings are sentinels
@@ -94,6 +98,21 @@ test('every catalog has the English key set at runtime too', () => {
   for (const [name, catalog] of [...CHINESE, ['pseudo', pseudoCatalog(en)] as const]) {
     assert.deepEqual(Object.keys(catalog).sort(), [...KEYS].sort(), name);
   }
+});
+
+// m5b-ui-meter (acceptance 5): the DSP load, the master's loudness row, the
+// Meter tab and its panel. The Chinese terms are provisional until the
+// zh-glossary-m5b gate; the tab's label is the mockup's (電平表).
+test('the DSP load, the loudness row and the Meter tab have their strings in the three catalogs', () => {
+  const keys = ['topbar.dsp', 'topbar.dspLoad', 'topbar.dspPeak', 'strip.loudnessShortTerm', 'tab.meter', 'meter.master', 'meter.momentary', 'meter.shortTerm', 'meter.integrated', 'meter.lufs', 'meter.peak', 'meter.reset', 'meter.masterPeak'];
+  for (const [name, catalog] of [['en', en] as const, ...CHINESE]) {
+    for (const key of keys) assert.ok(key in catalog, `${name} ${key}`);
+  }
+  assert.equal(en['topbar.dsp'], 'DSP');
+  assert.equal(en['strip.loudnessShortTerm'], 'LUFS-S');
+  assert.equal(en['tab.meter'], 'Meter');
+  assert.equal(zhHant['tab.meter'], '電平表');
+  assert.deepEqual(placeholders(en['topbar.dspPeak']), ['percent']);
 });
 
 test('no catalog value is empty', () => {

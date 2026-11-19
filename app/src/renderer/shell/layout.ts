@@ -32,23 +32,36 @@ import type { TimeFormat } from '../timeline/transport-time';
 export type Zone = 'left' | 'lower' | 'right';
 export const ZONES: readonly Zone[] = ['left', 'lower', 'right'];
 
-// The zones' tabs (3.0): the right zone's Media tab arrived with m5b-ui-media;
-// the Editor and Meter tabs arrive with their features.
+// The zones' tabs (3.0): the right zone's Media tab arrived with m5b-ui-media
+// and its Meter tab with m5b-ui-meter; the Editor tab arrives with its feature.
 export interface ZoneTabs {
   readonly left: 'track';
   readonly lower: 'mixconsole';
-  readonly right: 'plans' | 'media';
+  readonly right: 'plans' | 'media' | 'meter';
 }
 const TABS: { readonly [Z in Zone]: readonly ZoneTabs[Z][] } = {
   left: ['track'],
   lower: ['mixconsole'],
-  right: ['plans', 'media'],
+  right: ['plans', 'media', 'meter'],
 };
 
-// The right zone's tab the window shows: the stored one, or Plans when the
-// stored one is the Media tab and the engine has none (no media.import).
-export function rightTab(layout: Pick<Layout, 'tabs'>, available: { readonly media: boolean }): ZoneTabs['right'] {
-  return layout.tabs.right === 'media' && !available.media ? 'plans' : layout.tabs.right;
+// The right zone's tab as the window shows it: the stored one when the engine
+// has it (the Media tab needs media.import, the Meter tab features.loudness),
+// Plans otherwise. The stored choice is left alone, so it comes back with an
+// engine that has it.
+export interface RightTabsAvailable {
+  readonly media?: boolean;
+  readonly meter?: boolean;
+}
+
+export function shownRightTab(tab: ZoneTabs['right'], available: RightTabsAvailable): ZoneTabs['right'] {
+  if (tab === 'media' && !available.media) return 'plans';
+  if (tab === 'meter' && !available.meter) return 'plans';
+  return tab;
+}
+
+export function rightTab(layout: Pick<Layout, 'tabs'>, available: RightTabsAvailable): ZoneTabs['right'] {
+  return shownRightTab(layout.tabs.right, available);
 }
 
 export type StripWidth = 'normal' | 'narrow';

@@ -297,20 +297,25 @@
      (UI redesign 3.0; 10.7, 5): permanent, not a hold token. The locator
      display is absent while the session has no locators; its cell keeps the
      width the fidelity gate measures for display-locators in the mockup,
-     the same in en and zh-TW (m5-ui-loop-click). */
+     the same in en and zh-TW (m5-ui-loop-click). The DSP load is absent on
+     an engine without features.load and the Meter tab on one without
+     features.loudness (m5b-ui-meter; 10.11): the values of the hold tokens
+     they replace, the tab's set again per Chinese locale below. */
   --display-locators-empty-w: calc(101.7px * var(--scale));
   /* The Media tab (m5b-ui-media; 10.11, 9) is absent on an engine without
      media.import; its box keeps the width the gate measures for tab-media
      in the mockup (the values of the hold it replaced), set again per
      Chinese locale below, so the Meter tab and the hearing switch stay put. */
   --tab-media-empty-w: calc(71.078px * var(--scale));
+  --dsp-load-empty-w: calc(99.484px * var(--scale));
+  --tab-meter-empty-w: calc(69.031px * var(--scale));
 
   /* The boxes of parts still pending (UI redesign 3.0; agent-rules "UI
      fidelity"): the size the fidelity gate measures for each in the mockup,
      the same in en and zh-TW (m5-ui-alignment-chrome). Applied by shell.css
      only; the feature that lands the part deletes its hold. The branch chip
-     (m5b-ui-audition) and the Record button (m5b-ui-recording) landed; DSP load
-     (m5b-ui-meter), the Channel zone button (m5b-ui-editor-channel). The Inspector's three open sections
+     (m5b-ui-audition) and the Record button (m5b-ui-recording) landed; the
+     Channel zone button (m5b-ui-editor-channel). The Inspector's three open sections
      (m5-ui-port-inspector): Routing (m5b-ui-sends-buses), Inserts
      (m5b-ui-inserts-master) and Agent changes (m5b-ui-ghosts), their whole
      box with its hairline; Agent changes in en (its text wraps to one line
@@ -318,16 +323,14 @@
      (m5-ui-port-toolbar): tools 2 and 6 to 9 (M6a), each the
      width of tool()'s .b, the proposal pill (m5b-ui-ghosts) and the Fade In
      and Fade Out fields (m5b-ui-fades); in en, and in Chinese below. */
-  --hold-dsp-load-w: calc(99.484px * var(--scale));
   --hold-zone-button-channel-w: calc(26px * var(--scale));
   --hold-zone-button-channel-h: calc(24px * var(--scale));
   /* The Plans tab's (m5-ui-port-plans; UI redesign 10.10, P1-13 notes): the
-     composer with its bottom margin (m5b-ui-composer) and the Meter tab
-     (m5b-ui-meter); the tab is set again per Chinese locale below. The agent row, the plan's title and its intent
-     landed with m5b-ui-plan-metadata: shell.css sizes their empty boxes by a
+     Media tab landed with m5b-ui-media and the Meter tab with m5b-ui-meter
+     (--tab-media-empty-w and --tab-meter-empty-w above). The agent row, the
+     plan's title and its intent landed with m5b-ui-plan-metadata, and the
+     composer with m5b-ui-composer: shell.css sizes their empty boxes by a
      calc() of the tokens the shared rules size them with. */
-  --hold-composer-h: calc(54px * var(--scale));
-  --hold-tab-meter-w: calc(69.031px * var(--scale));
   --hold-inspector-routing-h: calc(91px * var(--scale));
   --hold-tool-2-w: calc(27.172px * var(--scale));
   --hold-tool-6-w: calc(27.172px * var(--scale));
@@ -500,10 +503,10 @@
   :root { --panel-motion: 0s; }
 }
 
-/* The Plans tab's hold and the Media tab's empty box in Chinese
-   (m5-ui-port-plans, m5b-ui-media): the mockup's zh-TW boxes, for zh-CN
-   too, as the font stacks above. */
+/* The Media and Meter tabs' empty boxes in Chinese (m5b-ui-media,
+   m5b-ui-meter): the mockup's zh-TW boxes, for zh-CN too, as the font
+   stacks above. */
 :root:lang(zh-TW), :root:lang(zh-CN) {
   --tab-media-empty-w: calc(59.125px * var(--scale));
-  --hold-tab-meter-w: calc(70.688px * var(--scale));
+  --tab-meter-empty-w: calc(70.688px * var(--scale));
 }

@@ -52,8 +52,13 @@ export const en = {
   'tab.track': 'Track',
   'tab.mixconsole': 'MixConsole',
   'tab.plans': 'Plans',
+  'tab.meter': 'Meter',
   'topbar.plans': 'Plans',
   'topbar.pending': 'Plans waiting for review: {count}',
+  // The DSP load (m5b-ui-meter): DSP is the mockup's label in every locale.
+  'topbar.dsp': 'DSP',
+  'topbar.dspLoad': 'DSP load',
+  'topbar.dspPeak': 'DSP load, peak {percent}',
   'inspector.label': 'Inspector',
   'status.label': 'Status',
 
@@ -163,6 +168,16 @@ export const en = {
   'strip.muteLabel': '{track} mute',
   'strip.soloLabel': '{track} solo',
   'strip.master': 'Master',
+  'strip.loudnessShortTerm': 'LUFS-S',
+  // The Meter tab's panel (m5b-ui-meter).
+  'meter.master': 'Master',
+  'meter.peak': 'Peak',
+  'meter.masterPeak': 'Master peak; click to reset',
+  'meter.momentary': 'Momentary',
+  'meter.shortTerm': 'Short-term',
+  'meter.integrated': 'Integrated',
+  'meter.lufs': 'LUFS',
+  'meter.reset': 'Reset',
   'inspector.volume': 'Volume',
   'inspector.mono': 'Mono',
   'inspector.stereo': 'Stereo',
@@ -292,6 +307,21 @@ export const en = {
   'actionReason.noneTicked': 'Tick at least one step',
 
   // The agent row of the Plans tab (m5b-ui-plan-metadata; UI redesign 4.4): one entry per MCP tool of protocol-mcp-v0.md.
+  // The "ask the agent" box at the foot of the Plans tab (m5b-ui-composer; UI redesign 4.4).
+  'composer.placeholder': 'Ask {agent} for a change…',
+  'composer.placeholderNone': 'Ask the agent for a change…',
+  'composer.label': 'Ask the agent',
+  'composer.noAgent': 'No agent is connected: connect one over MCP to ask it for a change',
+  'composer.send': 'Send',
+  'composer.requests': 'Requests to the agent',
+  'composer.cancel': 'Cancel the request',
+  'composer.dismiss': 'Dismiss',
+  'composer.state.pending': 'sent',
+  'composer.state.taken': 'taken',
+  'composer.state.answered': 'answered',
+  'composer.state.declined': 'declined',
+  'composer.state.cancelled': 'cancelled',
+  'composer.state.expired': 'expired',
   'agent.connected': 'connected',
   'agent.disconnected': 'disconnected',
   'agent.idle': 'idle',
@@ -412,6 +442,8 @@ export const en = {
   'step.setMonitorOff': 'Turn monitoring off on {track}',
   'step.setMonitorAuto': 'Set {track} to auto monitoring',
   'step.setMonitorInput': 'Monitor the input of {track}',
+  'step.setTrackNotes': 'Edit the notes of {track}',
+  'step.clearTrackNotes': 'Clear the notes of {track}',
   'step.explodeTrack': 'Split {track} into one track per channel',
   'step.placeClip': 'Place a clip on {track} at {time}',
   'step.placeMedia': 'Place {media} on {track} at {time}',
@@ -486,6 +518,9 @@ export const en = {
   'error.queue_full': 'The engine is busy; try again',
   'error.lease_expired': 'The lease expired',
   'error.invalid_name': 'A name cannot contain control characters, text-direction controls or line separators',
+  'error.agent_busy': 'The agent already has as many open requests as it takes',
+  'error.agent_not_connected': 'The agent is not connected',
+  'error.invalid_request_text': 'The text is empty, too long, or holds characters that cannot be sent',
 
   // Projects and audio setup (m5b-ui-project): the application menu, the
   // start view, the refusals of New and Open, the saved mark, the transport's

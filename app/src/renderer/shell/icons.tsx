@@ -107,6 +107,8 @@ const PATHS = {
       <rect x="10.1" y="3.8" width="2.6" height="8.4" fill="currentColor" stroke="none" opacity=".55" />
     </>
   ),
+  // The Meter tab (m5b-ui-meter).
+  bars: <path d="M4 13V7M8 13V3M12 13V9" />,
   // The MixConsole tab (m5-ui-port-mixer-strip).
   sliders: (
     <>
@@ -160,6 +162,13 @@ const PATHS = {
       <path d="M2.5 8h7" />
       <path d="M7 5l3 3-3 3" />
       <path d="M13 3v10" />
+    </>
+  ),
+  // The "ask the agent" box's send control (m5b-ui-composer).
+  send: (
+    <>
+      <path d="M8 12.5v-9" />
+      <path d="M4.5 7 8 3.5 11.5 7" />
     </>
   ),
 } satisfies Record<string, ReactNode>;

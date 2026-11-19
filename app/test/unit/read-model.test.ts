@@ -595,6 +595,45 @@ test('(f) clip fades follow session.changed and their removal restores the hash'
   assert.equal((removed.entities['clip:clp_1'] as ClipEntity).fadeIn, undefined);
 });
 
+// m5b-engine-track-notes: a track carrying notes syncs and hashes as the bridge
+// says (fixtures/model/session-document-v2-notes.json), and the notes deltas apply
+// (notes "" removes the field and the hash returns to the earlier value).
+test('the notes model fixture syncs with its document hash and types the notes', async () => {
+  const fixture = readFixture<{ document: Record<string, unknown>; entityHashes: readonly unknown[]; documentHash: string }>(
+    'model',
+    'session-document-v2-notes.json',
+  );
+  const chunk = {
+    revision: 'r7',
+    seq: '0',
+    documentHash: fixture.documentHash,
+    entities: fixture.entityHashes.length,
+    meters: null,
+    chunk: fixture.document as unknown as SyncChunk['chunk'],
+    next: null,
+  } as unknown as SyncChunk;
+  const snapshot = await new ReadModel().fromSync([chunk]);
+  assert.equal(snapshot.documentHash, fixture.documentHash);
+  const notes: TrackEntity['notes'] = track(snapshot, 'trk-vox').notes;
+  assert.equal(notes, 'Lead vocal: comp takes 2 and 5.\nDouble the chorus\t(聲部 B), keep the breaths.\n');
+  assert.equal(track(snapshot, 'trk_bass').notes, undefined);
+});
+
+test('(h) track notes follow session.changed and their removal restores the hash', async () => {
+  const model = new ReadModel();
+  await model.fromSync(chunks);
+  const apply = (s: (typeof seq.steps)[number]) =>
+    model.applyChanged(s.event as unknown as SessionChanged, s.fetch.result.entities as unknown as FetchedEntity[]);
+  for (const s of [...seq.steps, ...seq.locators.steps, ...seq.master.steps]) await apply(s);
+  assert.equal(model.getSnapshot()!.documentHash, seq.notes.before.documentHash);
+  const set = await apply(seq.notes.steps[0]!);
+  assert.equal(set.documentHash, seq.notes.steps[0]!.documentHash);
+  assert.equal(track(set, 'trk_1').notes, seq.notes.text);
+  const removed = await apply(seq.notes.steps[1]!);
+  assert.equal(removed.documentHash, seq.notes.before.documentHash);
+  assert.equal(track(removed, 'trk_1').notes, undefined);
+});
+
 // m5b-ui-inserts-master: the master fader is a gesture on master:master
 // (docs/schemas/protocol-gestures-v0.md: the master target always exists).
 // While the entity is absent (0 dB) the overlay stands on a synthetic entity

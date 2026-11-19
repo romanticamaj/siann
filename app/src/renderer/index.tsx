@@ -24,7 +24,8 @@
 // window.siannTest.languages, when the test pinned them, stands in for
 // navigator.languages, window.__siannClient hands the e2e tests the session
 // client's log of requests refused as disconnected, of requests sent and of
-// the engine's answers, window.siannTest.capabilities, when the test gave
+// the engine's answers, window.__siannLoad the DSP load last polled
+// (m5b-ui-meter), window.siannTest.capabilities, when the test gave
 // SIANN_TEST_CAPABILITIES, is the engine.capabilities answer the session
 // client uses instead of the engine's (m5-ui-loop-click),
 // window.siannTest.environment, when the fidelity run gave
@@ -57,11 +58,12 @@ import { createLocaleStore, htmlLang, type LocaleStorage, type LocaleStore } fro
 import { reconnectedMessage } from './i18n/messages';
 import { installLocaleStore, translator } from './i18n/t';
 import { ConnectionPhaseStore } from './model/connection-phase';
-import { EngineStatusStore } from './model/engine-status';
+import { EngineStatusStore, type EngineLoad } from './model/engine-status';
 import { GestureController } from './model/gesture-controller';
 import { PeaksCache } from './model/peaks-cache';
 import { BranchSnapshotStore } from './model/branch-snapshot';
 import { AgentStore } from './model/agents';
+import { RequestStore } from './model/request-store';
 import { PlanStore } from './model/plan-store';
 import { ReviewStore } from './model/review-store';
 import type { Ghost } from './plans/ghosts';
@@ -82,6 +84,7 @@ import { displayWrites, transportEnabled } from './shell/Transport';
 import type { MeterTestHooks } from './mixer/MixerMeters';
 import { PickerController } from './mixer/picker';
 import { PluginActions } from './model/plugin-actions';
+import { createFrameRecorder, installFrameMarks, readyLineAt, type FrameTestHooks } from './perf/frame-marks';
 import type { TimelineTestHooks } from './timeline/TimelineCanvas';
 import type { MediaBridge } from './model/media-bridge';
 import { structuralBlocked } from './model/edit-guard';
@@ -117,7 +120,13 @@ declare global {
     // The gesture controller, for the e2e tests to wait on (settled).
     __siannGestures?: GestureController;
     // Present only when the shell runs under SIANN_SHELL_TEST=1.
-    siannTest?: { timelineHooks?: boolean; languages?: readonly string[]; capabilities?: Capabilities; environment?: TestEnvironment };
+    siannTest?: {
+      timelineHooks?: boolean;
+      engineReadyAt?: () => Promise<number | null>;
+      languages?: readonly string[];
+      capabilities?: Capabilities;
+      environment?: TestEnvironment;
+    };
     __siannTimeline?: TimelineTestHooks;
     __siannLocale?: LocaleStore;
     // The toast store, for the fit test to raise a toast per locale.
@@ -133,8 +142,11 @@ declare global {
     __siannMeters?: MeterTestHooks;
     // The import's placeholders as shown and its jobs' results (m5b-ui-media).
     __siannMedia?: { seen(): ReadonlyArray<{ name: string; progress: number | null }>; results(): readonly ImportResult[] };
+    __siannLoad?: () => EngineLoad | null;
     // The plan review's ghosts as the window draws them (m5b-ui-ghosts).
     __siannGhosts?: { list(): readonly Ghost[]; ticked(): number[] | null; outline(): number | null };
+    // The frame marks' recorder (perf scenario, test hook only).
+    __siannFrames?: FrameTestHooks;
     // React commits counted at the root (profiling bundle only).
     __siannCommits?: number;
     // React commits under each <Counted id> (profiling bundle only).
@@ -195,6 +207,9 @@ branches.attach(client);
 // The agents the engine lists (m5b-ui-plan-metadata): engine.status, then agent.changed.
 const agents = new AgentStore();
 agents.attach(client);
+// The requests to the agent the "ask the agent" box shows (m5b-ui-composer): agent.requests, then agent.request_changed.
+const requests = new RequestStore();
+requests.attach(client);
 // The plan under review, its preview and its ghosts (m5b-ui-ghosts).
 const review = new ReviewStore({ client, plans, branches });
 if (testHooks) {
@@ -209,6 +224,8 @@ if (testHooks) {
 }
 const engineStatus = new EngineStatusStore({ client, schedule });
 if (testHooks) window.__siannClient = { refused: () => client.refused(), sent: () => client.sent(), answered: () => client.answered() };
+// The DSP load the store last polled (m5b-ui-meter).
+if (testHooks) window.__siannLoad = () => engineStatus.getLoad();
 
 const connection = new ConnectionPhaseStore(client, { schedule });
 const toasts = new ToastStore({ schedule });
@@ -364,6 +381,39 @@ const onMeterHooks = testHooks
     }
   : undefined;
 
+// The perf scenario's frame marks (m5b-nightly-quality; UI redesign 5.6): only
+// under the test hook; otherwise the draw paths' marks stay a no-op.
+// The cold start runs from the engine's ready line, which the main process
+// read (window.siannTest.engineReadyAt), not from the client's first
+// authenticated connection: that comes after the endpoint's IPC, the
+// WebSocket connect and the token handshake, all inside the budget. The
+// connection only says that a painted session is this engine's.
+const frames = createFrameRecorder(testHooks, {
+  perf: performance,
+  frameTime: () => {
+    const time = document.timeline?.currentTime;
+    return typeof time === 'number' ? time : null;
+  },
+});
+if (frames) {
+  installFrameMarks(frames);
+  window.__siannFrames = { samples: () => frames.samples(), clear: () => frames.clear(), coldStartMs: () => frames.coldStartMs() };
+  let asked = false;
+  const ready = () => {
+    if (client.getState().status !== 'connected') return;
+    frames.connected();
+    // The ready line precedes the first connection, so its time is known now.
+    if (asked || !testHooks?.engineReadyAt) return;
+    asked = true;
+    void testHooks.engineReadyAt().then((at) => {
+      const start = readyLineAt(at, performance.timeOrigin);
+      if (start !== null) frames.engineReadyAt(start);
+    });
+  };
+  client.subscribe(ready);
+  ready();
+}
+
 const countCommit = () => {
   window.__siannCommits = (window.__siannCommits ?? 0) + 1;
 };
@@ -384,6 +434,7 @@ const app = (
     peaks={peaks}
     plans={plans}
     agents={agents}
+    requests={requests}
     review={review}
     engineStatus={engineStatus}
     layout={layout}

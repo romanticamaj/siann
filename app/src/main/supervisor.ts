@@ -82,6 +82,8 @@ export interface SupervisorOptions {
   readyTimeoutMs?: number;
   // stderr lines kept for `gave-up`.
   stderrLines?: number;
+  // The clock firstReadyAt() reads, in ms (default Date.now).
+  now?: () => number;
 }
 
 export interface EngineExit {
@@ -149,6 +151,7 @@ export class EngineSupervisor extends EventEmitter {
   // The next step in ending the current child; non-null once that has begun.
   private cancelKill: (() => void) | null = null;
   private stopWaiters: Array<() => void> = [];
+  private firstReady: number | null = null;
 
   constructor(options: SupervisorOptions) {
     super();
@@ -159,6 +162,13 @@ export class EngineSupervisor extends EventEmitter {
   // The running engine's ready line, or null between launches.
   current(): EngineReady | null {
     return this.launch?.ready ?? null;
+  }
+
+  // When the first ready line of this supervisor was read, on options.now:
+  // the start of the cold start (UI redesign spec 5.6). A restart does not
+  // move it.
+  firstReadyAt(): number | null {
+    return this.firstReady;
   }
 
   // The running engine's pid once it is ready.
@@ -339,6 +349,7 @@ export class EngineSupervisor extends EventEmitter {
       return;
     }
     launch.ready = ready;
+    if (this.firstReady === null) this.firstReady = (this.options.now ?? Date.now)();
     this.cancel('ready');
     if (this.stopping) return;
     this.cancel('reset');

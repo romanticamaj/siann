@@ -92,6 +92,9 @@ const IPC_MEDIA_CHOOSE = 'siann:media:choose';
 const IPC_MENU_SET = 'siann:menu:set';
 const IPC_MENU_COMMAND = 'siann:menu:command';
 const BUNDLE_EXTENSION = 'siann';
+// Under SIANN_SHELL_TEST=1 only: when the first ready line was read (epoch ms),
+// the start of the perf scenario's cold start (UI redesign spec 5.6).
+const IPC_TEST_READY_AT = 'siann:test:engine-ready-at';
 
 // app/ (this file is app/dist/src/main/main.js).
 const APP_DIR = path.resolve(__dirname, '..', '..', '..');
@@ -243,6 +246,9 @@ const supervisor = new EngineSupervisor({
   backoff,
   readyTimeoutMs: positiveInt('SIANN_SHELL_READY_MS'),
   stopGraceMs: positiveInt('SIANN_SHELL_STOP_GRACE_MS'),
+  // Epoch ms at sub-ms resolution, the clock the renderer's
+  // performance.timeOrigin is on.
+  now: () => performance.timeOrigin + performance.now(),
   killGraceMs: positiveInt('SIANN_SHELL_KILL_GRACE_MS'),
   spawn: (exe, args) => spawn(exe, args, { stdio: ['pipe', 'pipe', 'pipe'], windowsHide: true }),
   schedule: (fn, ms) => {
@@ -281,6 +287,7 @@ supervisor.on('gave-up', (info: EngineGaveUp) => {
 });
 
 ipcMain.handle(IPC_CURRENT, () => endpointOf(supervisor.current()));
+if (underTest) ipcMain.handle(IPC_TEST_READY_AT, () => supervisor.firstReadyAt());
 
 // Only the window's own page, served from siann://app, reaches the project and menu handlers.
 function fromApp(event: IpcMainEvent | IpcMainInvokeEvent): boolean {

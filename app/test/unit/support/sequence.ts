@@ -73,6 +73,12 @@ export interface Sequence {
     before: { revision: string; documentHash: string };
     steps: SequenceStep[];
   };
+  // m5b-engine-track-notes: after the master steps, set and remove trk_1's notes.
+  notes: {
+    before: { revision: string; documentHash: string };
+    text: string;
+    steps: SequenceStep[];
+  };
 }
 
 export function sequence(): Sequence {

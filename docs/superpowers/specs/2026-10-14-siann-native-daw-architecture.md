@@ -1814,6 +1814,37 @@ Rules:
   removes the field with `name: null` (the entity then hashes as it did before it
   had a name). `media.rename` declares exactly `{media:<id>}`, is one revision and
   undoable; an unknown id is `not_found`.
+- M5b `Track.notes` (m5b-engine-track-notes, UI redesign UR-17): the track may
+  carry `notes`, plain text of 1 to 16,384 UTF-8 bytes (`kMaxTrackNotesBytes`,
+  well-formed per RFC 3629: no overlong form, no surrogate, nothing above
+  U+10FFFF). It is stored byte for byte, with no normalisation. Notes are text, not
+  a name, so they follow the rule of a plan's intent rather than the names rule
+  below: tab, LF and CR are allowed, and any other control character (C0, DEL,
+  C1) or display-unsafe character (the bidi formatting characters and U+2028,
+  U+2029; `siann/model/display_text.hpp`, `textFault(notes, "\t\n\r")`) is
+  refused (decided 2026-11-17: the Notepad and a plan's preview show the text,
+  and a stored RLO would reorder what the user reads). The renderer shows them in
+  their own text area and never quotes them in a sentence: a plan step that sets
+  notes is described by its track's name. It is omitted from the track's JSON while
+  absent, as `input` is, so the schema stays `siann.entity.track.v1`, the document
+  format does not change, and every existing bundle, checkpoint and
+  fixture keeps its entity and document hashes. Reading a track whose `notes` is
+  empty, longer than 16,384 bytes, malformed or not a string is `invalid_field`;
+  `validate()` reports stored notes outside the rule (a refused character
+  included) as `invalid_notes`, so opening such a document is `invalid_document`.
+  Notes are not sound: a notes edit during playback compiles no graph and sets no
+  parameter (`onlyFaderChanges` treats it like a fader change). Command
+  `track.set_notes {trackId, notes}` declares exactly `{track:<id>}`, is one
+  revision and undoable. Two interpretations pinned here (2026-11-15): `notes: ""`
+  removes the field, so the track hashes as it did before it had notes (the media
+  name removes with `null`, but an emptied text area is the Notepad's natural
+  clear, and `""` is not a value the field can store); and the codes split by
+  what is wrong: a string longer than 16,384 bytes, with a refused character, or
+  not well-formed UTF-8 (which only a `json::Value` built in code can carry: the
+  JSON parser refuses a lone surrogate escape and malformed bytes) is
+  `invalid_notes`, while a non-string `notes` (`null` included), a missing
+  `notes` or `trackId`, or another field is `invalid_params`. An unknown track is
+  `not_found`.
 - Names (follow-up to #123, the plan metadata rule applied to the document): every
   name the document stores, the session's (`root.name`), a track's, a bus's, a
   media's and a plugin slot's (and a marker's when markers land), is well-formed UTF-8
@@ -3788,6 +3819,17 @@ M5b; the wire details are in `docs/schemas/protocol-engine-v0.md`; semantics in
     served session's, written into its checkpoint with the cycle flag, so
     `session.open` takes the opened bundle's.
 
+Protocol v0, track notes (decided 2026-11-15 with m5b-engine-track-notes, UI
+redesign UR-17; the wire details are in `docs/schemas/protocol-engine-v0.md`):
+
+35. Notes are document data and need no method or feature flag of their own: the
+    command `track.set_notes` goes through `command.execute`, a plan step or MCP
+    `execute`, so no MCP tool is added. `engine.capabilities` and `command.list`
+    list `track.set_notes` in `commands`. `plan.preview` shows the track without
+    `notes` before and with it after (the reverse for `""`). Over-long text, a
+    refused character or malformed UTF-8 answers `invalid_notes` with the step
+    index, as any validation error does.
+
 ## Plugin editor windows
 
 1. Every plugin gets a generic parameter UI in the web frontend; agents use the same
@@ -4162,8 +4204,83 @@ Not used: Taskflow (allocates at runtime).
   tool methods and `kNotMcp`, disjoint, every exclusion with a reason).
 - Long tests are Catch2 tests tagged `[.][long]`: hidden, so the default ctest run
   leaves them out (a ctest guard checks that), and run by the scheduled or
-  manually triggered `long-tests` workflow (`siann_cli_tests "[long]"`). M2's
-  10-minute recording and kill test is the first.
+  manually triggered `long-tests` workflow (`siann_cli_tests "[long]"`) on
+  ubuntu-latest, windows-latest and macos-latest. M2's 10-minute recording and
+  kill test is the first.
+- The pull request path lists of `stepsForPath` send `native/libs/playback`,
+  `native/libs/graph` and `native/libs/realtime` to the desktop (JUCE) step as
+  well as native and gcc: the desktop engine links them, so a JUCE-only
+  regression there fails the pull request instead of the next push to main
+  (m5b-nightly-quality). These three do not join the package paths: the
+  installer's step keeps its own list (`PACKAGE_NATIVE_PATHS`: the host
+  libraries, `native/apps/engine` and the build files).
+- A nightly workflow, `.github/workflows/nightly.yml` (m5b-nightly-quality),
+  runs what is too slow for a pull request. It triggers on a schedule and on
+  `workflow_dispatch` only, never on pull requests or pushes, and none of its
+  jobs is in `CI ok`, so it cannot block a pull request. It reads no secret
+  (`permissions: contents: read`) and uses GitHub's own actions only. Its jobs:
+  - `tour`, on windows-latest and ubuntu-latest (xvfb): first the mockup
+    fidelity report as the app job runs it on pull requests
+    (`mockup-fidelity.spec.ts`, `SIANN_FIDELITY=1`, `--project fidelity`,
+    `continue-on-error`, its report uploaded as `fidelity-<os>`, no threshold
+    of its own: every gate of `app/test/fidelity/manifest.json` is `report` or
+    `pending`); then, on Linux, the CJK fonts (`fonts-noto-cjk`), installed
+    after the fidelity run so its measurement matches the app job's; then
+    `app/test/e2e/ux-tour.spec.ts` with `SIANN_UX_TOUR=1` once per
+    `SIANN_UX_LOCALE` (`en`, `zh-Hant`, `zh-Hans`) against the core-only
+    `siann-engine` and `siann-cli`, each locale's PNGs and `index.json` notes
+    uploaded as `tour-<os>-<locale>`. A state that fails to render fails the
+    job, and `scripts/check-tour-output.js` fails it when a locale has no
+    `index.json`, a listed PNG is missing or empty, or the locales captured
+    different states.
+  - `asan-ubsan`: Clang 20 (apt.llvm.org), the core built with
+    `-DSIANN_ASAN_UBSAN=ON` (`-fsanitize=address,undefined
+    -fno-sanitize-recover=undefined` on every target, third-party code
+    included, as `SIANN_RTSAN` does; Clang only, and not together with
+    `SIANN_RTSAN`), the whole ctest suite with `ASAN_OPTIONS` and
+    `UBSAN_OPTIONS` carrying `halt_on_error=1`. `ASAN_OPTIONS`,
+    `UBSAN_OPTIONS` and `LSAN_OPTIONS` pass the suppression files of
+    `native/tools/sanitizer-suppressions/` (`asan.supp`, `ubsan.supp`,
+    `lsan.supp`), which hold comments only: a suppression is for third-party
+    code and carries its reason on the comment line above it.
+  - `fuzz`: `-DSIANN_FUZZ=ON` (Clang only) builds one libFuzzer executable per
+    harness function of `native/fuzz/` with
+    `-fsanitize=fuzzer,address,undefined`: `siann_fuzz_protocol_frame` (the
+    protocol server's handling of one text frame, as the auth frame and on an
+    authenticated connection, over the in-memory transport),
+    `siann_fuzz_ws_request` (a sequence of JSON requests over the WebSocket),
+    `siann_fuzz_meter_frame` and `siann_fuzz_loudness_frame` (the binary frame
+    decoders of `realtime_channel.hpp`), `siann_fuzz_mcp_http` (the
+    `POST /v0/mcp` body through the adapter) and `siann_fuzz_command_json`
+    (command and plan JSON parsed and validated). Each runs for the same fixed
+    `-max_total_time` from its committed corpus, `native/fuzz/corpus/<target>/`
+    (generated from the protocol fixtures and the plan fixtures by
+    `scripts/generate-fuzz-corpus.js`), and any `crash-*`, `leak-*`,
+    `timeout-*` or `oom-*` input is uploaded. The same harness functions run in
+    every build as the ctest `fuzz_smoke_test`, so in the native job on three
+    OSes and in the RTSan job: every committed seed file, then a bounded count
+    of inputs from fixed seeds through a hand-written PRNG (splitmix64), so the
+    inputs are the same under MSVC, GCC and Clang.
+  - `coverage`: `-DSIANN_COVERAGE=ON` (Clang `-fprofile-instr-generate
+    -fcoverage-mapping`), ctest with `LLVM_PROFILE_FILE` per process (`%p`),
+    `llvm-profdata merge`, then `llvm-cov show -format=html` and `llvm-cov
+    report` with `--ignore-filename-regex` for `_deps` and the tests; the HTML
+    is uploaded as `native-coverage` and the summary goes to the job summary.
+    Report only, no threshold. The app job of `ci.yml` prints the app's unit
+    test coverage (`node --test --experimental-test-coverage`) in its job
+    summary the same way.
+  - `perf`: `app/test/e2e/perf.spec.ts` with `SIANN_PERF=1`: a generated
+    64-track, 2,000-clip session (one plan, synthetic audio in a scratch
+    directory) playing on the fake device with meters running; main-thread
+    work per frame (median and 99th percentile, from the renderer's
+    `performance.measure('siann.frame')` marks around the work of the
+    animation-frame callbacks of the event display, the MixConsole meters, the
+    track list's meters and the transport display, which exist only under the
+    test hook, `window.siannTest`, so production pays nothing), the JS heap
+    (`performance.memory`) and cold start from the engine's ready line to the
+    first painted session, written to `perf-report.json` against the budgets
+    of UI redesign 5.6 and uploaded. Report only at first: it fails on a crash
+    or a missing measurement, never on a budget.
 
 Test layers:
 
@@ -4172,11 +4289,11 @@ Test layers:
 | L0 unit | time, midi, model, command, JCS fixtures shared with Node, DSP |
 | L1 determinism | journal replay yields identical document hashes; offline render golden files with tolerance |
 | L2 headless end-to-end | CLI builds a session, records from a file-backed fake device, renders, compares |
-| Realtime safety | audio-thread allocation hooks, RealtimeSanitizer, TSAN/ASAN/UBSAN builds |
+| Realtime safety | audio-thread allocation hooks, RealtimeSanitizer, ASAN/UBSAN builds (nightly); TSAN not yet |
 | Stress | fake device driving callbacks at small buffers; deadline-miss counting; rapid graph swaps; queue overflow; device hot-unplug; disk full; sample-rate mismatch |
 | PDC | null tests across direct, send, aux, sidechain; latency change during playback |
 | Parity | offline vs realtime null test (through the same SRC when SRC is active); single vs multi-thread bit-identical (when threading exists) |
-| Fuzz | command JSON and protocol messages |
+| Fuzz | protocol input and command JSON: `siann_fuzz_protocol_frame`, `siann_fuzz_ws_request`, `siann_fuzz_meter_frame`, `siann_fuzz_loudness_frame`, `siann_fuzz_mcp_http`, `siann_fuzz_command_json` (libFuzzer nightly); the same harnesses as the seeded `fuzz_smoke_test` ctest in every native build. The media decoders (WAV, FLAC) are not fuzzed yet |
 | Plugin (L3) | a built-in hostile test plugin (`siann_hostile_plugin`: allocates, throws, changes latency, sleeps, calls back into the host, crashes on a parameter; outcomes under "siann-host: two targets, one interface", Hostile test plugin) plus pluginval-checked real plugins (VST3 and AU at strictness 5; pluginval is JUCE-based and checks no CLAP; `siann_test_plugin` in CI, the compatibility set on maintainer runs) |
 | Recovery | kill the engine at random points during recording and editing; verify recovery criteria |
 | L4 manual | DAWproject into Cubase / Studio One / Bitwig; recorded per release |

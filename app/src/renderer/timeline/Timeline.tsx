@@ -220,6 +220,8 @@ export interface TimelineProps {
   readonly reconnects?: number;
   // The selected clip, for the left zone.
   readonly onSelect?: (clipId: string | null) => void;
+  // Every selected clip, as the selection changes (m5b-ui-composer: sent with an agent request).
+  readonly onSelectClips?: (clipIds: readonly string[]) => void;
   // A click in the ruler's lower half or a Shift+Alt-click in the event
   // display: locate the project cursor (frames).
   readonly onLocate?: (frames: string) => void;
@@ -294,6 +296,7 @@ export function Timeline({
   onSelectTrack,
   platform = 'other',
   onSelect,
+  onSelectClips,
   onHooks,
   onLocate,
   loopClick,
@@ -562,6 +565,9 @@ export function Timeline({
   useEffect(() => {
     onSelect?.(state.selectedClipId);
   }, [onSelect, state.selectedClipId]);
+  useEffect(() => {
+    onSelectClips?.(state.selectedClipIds);
+  }, [onSelectClips, state.selectedClipIds]);
 
   // A reconnect clears the selection (UI redesign spec 4.5 C8).
   const seenReconnects = useRef(reconnects);

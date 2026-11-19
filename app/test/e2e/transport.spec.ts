@@ -320,7 +320,7 @@ test('the cursor and the position display run at display rate with zero React co
   // Let the commits the play causes (the playing flag) settle.
   const startDraws = await hook<number>('overlayDraws');
   await expect.poll(() => hook<number>('overlayDraws')).toBeGreaterThan(startDraws + 10);
-  const before = { transport: await commits('transport'), timeline: await commits('timeline'), root: await commits() };
+  const before = { transport: await commits('transport'), timeline: await commits('timeline'), dsp: await commits('dsp-load'), root: await commits() };
   const xruns = await page.getByTestId('xruns').textContent();
   const text = await primary().textContent();
   const secondText = await secondary().textContent();
@@ -336,6 +336,8 @@ test('the cursor and the position display run at display rate with zero React co
   expect(await commits()).toBeGreaterThan(before.root);
   expect(await commits('transport')).toBe(before.transport);
   expect(await commits('timeline')).toBe(before.timeline);
+  // The DSP load changes with every poll (m5b-ui-meter) and commits nothing.
+  expect(await commits('dsp-load')).toBe(before.dsp);
   // Display rate: the realtime channel ticks slower than the display, and
   // the display and the cursor still move on most animation frames (the
   // extrapolating clock), still without a commit.

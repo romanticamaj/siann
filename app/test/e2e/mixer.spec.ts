@@ -775,7 +775,8 @@ test('zero React commits while playing (profiling bundle), and the counter does 
   const commits = () =>
     page.evaluate(() => {
       const by = (window as unknown as { __siannCommitsBy?: Record<string, number> }).__siannCommitsBy ?? {};
-      return (by.mixer ?? 0) + (by.timeline ?? 0) + (by.transport ?? 0);
+      // The DSP load (m5b-ui-meter) changes every poll and must not commit either.
+      return (by.mixer ?? 0) + (by.timeline ?? 0) + (by.transport ?? 0) + (by['dsp-load'] ?? 0);
     });
   const root = () => page.evaluate(() => (window as unknown as { __siannCommits?: number }).__siannCommits ?? 0);
   // The counter moves on a commit: a mute click re-renders the strip.

@@ -31,6 +31,12 @@ enum class TextFault {
     display_unsafe,  // isDisplayUnsafe
 };
 
+// True when `text` is well-formed UTF-8 (RFC 3629: no stray continuation, no
+// truncated or overlong sequence, no surrogate, nothing past U+10FFFF). Any
+// code point is allowed, controls included: the shared walk of the media name
+// and the track notes (m5b-engine-track-notes), whose lengths are their own rule.
+bool isWellFormedUtf8(std::string_view text) noexcept;
+
 // The first fault of `text`. `allowedControls` lists the ASCII control
 // characters that are allowed (tab, LF and CR for an intent).
 TextFault textFault(std::string_view text, std::string_view allowedControls = {}) noexcept;

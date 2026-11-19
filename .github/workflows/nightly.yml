@@ -1,0 +1,394 @@
+name: Nightly quality
+
+# The quality jobs too slow for a pull request (m5b-nightly-quality; architecture
+# spec, "Build, test and CI"): the UX tour in three locales with the mockup
+# fidelity report, ASAN + UBSAN over the whole native suite, the libFuzzer
+# targets, native coverage and the 64-track performance scenario. Nightly and on demand
+# (`gh workflow run nightly.yml --ref <branch>`); never on pull requests or
+# pushes, and a file of its own, so none of these jobs is in ci.yml's CI ok and
+# none can block a pull request. The time is off ci.yml's (18:30) and
+# long-tests.yml's (03:17).
+on:
+  schedule:
+    - cron: '45 0 * * *'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: nightly-${{ github.ref }}
+  cancel-in-progress: false
+
+# As in ci.yml: a bounded parallel build on every OS.
+env:
+  CMAKE_BUILD_PARALLEL_LEVEL: 4
+
+jobs:
+  # app/test/e2e/ux-tour.spec.ts in each locale against the core-only
+  # siann-engine on the fake device, on Windows and Linux; each locale's PNGs and
+  # index.json notes are an artifact (tour-<os>-<locale>). A state that fails to
+  # render fails the spec, and the job with it; scripts/check-tour-output.js then
+  # checks that every locale captured the same states, none of them empty.
+  # The same runners take the mockup fidelity report first (docs/harness/
+  # agent-rules.md, "UI fidelity"), as the app job does on pull requests: a
+  # report that never fails the job, with no threshold of its own. It runs before
+  # the Linux leg installs the CJK fonts, so its measurement is the app job's, and
+  # the tour's zh PNGs then show real glyphs.
+  tour:
+    name: UX tour and fidelity (${{ matrix.os }})
+    timeout-minutes: 120
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [windows-latest, ubuntu-latest]
+    runs-on: ${{ matrix.os }}
+    env:
+      electron_config_cache: ${{ github.workspace }}/.electron-cache
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: app/package-lock.json
+      - uses: ./.github/actions/compiler-cache
+        with:
+          name: app
+      - name: Configure
+        run: cmake -S native -B native/build/app -DCMAKE_BUILD_TYPE=Debug -DSIANN_WERROR=ON
+      - name: Build siann-engine and siann-cli
+        run: cmake --build native/build/app --config Debug --target siann-engine siann-cli
+      - name: Locate siann-engine and siann-cli
+        run: |
+          exe=$(find native/build/app -type f \( -name siann-engine -o -name siann-engine.exe \) | head -n 1)
+          cli=$(find native/build/app -type f \( -name siann-cli -o -name siann-cli.exe \) | head -n 1)
+          test -n "$exe" && test -n "$cli"
+          echo "SIANN_ENGINE_EXE=$GITHUB_WORKSPACE/$exe" >> "$GITHUB_ENV"
+          echo "SIANN_CLI_EXE=$GITHUB_WORKSPACE/$cli" >> "$GITHUB_ENV"
+      - name: Cache the Electron download
+        uses: actions/cache@v4
+        with:
+          path: .electron-cache
+          key: electron-${{ runner.os }}-${{ hashFiles('app/package-lock.json') }}
+      - name: Install app dependencies
+        working-directory: app
+        run: |
+          ELECTRON_SKIP_BINARY_DOWNLOAD=1 npm ci
+          for i in 1 2 3 4 5; do node node_modules/electron/install.js && break; [ $i = 5 ] && exit 1; sleep 30; done
+      - name: Allow the Chromium sandbox helper
+        if: runner.os == 'Linux'
+        working-directory: app
+        run: |
+          sudo chown root node_modules/electron/dist/chrome-sandbox
+          sudo chmod 4755 node_modules/electron/dist/chrome-sandbox
+      # The fidelity run opens the mockup in Playwright's own Chromium.
+      - name: Install Playwright Chromium
+        working-directory: app
+        run: |
+          if [ "$RUNNER_OS" = Linux ]; then npx playwright install --with-deps chromium; else npx playwright install chromium; fi
+      - name: Build app
+        working-directory: app
+        run: npm run build
+      - name: Mockup fidelity report
+        continue-on-error: true
+        working-directory: app
+        env:
+          SIANN_FIDELITY: '1'
+          SIANN_FIDELITY_OUT: ${{ runner.temp }}/fidelity
+        run: |
+          if [ "$RUNNER_OS" = Linux ]; then xvfb-run -a npx playwright test --project fidelity; else npx playwright test --project fidelity; fi
+      - name: Fidelity report in the job summary
+        if: always()
+        env:
+          SIANN_FIDELITY_OUT: ${{ runner.temp }}/fidelity
+        run: |
+          if [ -f "$SIANN_FIDELITY_OUT/report.md" ]; then cat "$SIANN_FIDELITY_OUT/report.md" >> "$GITHUB_STEP_SUMMARY"; else echo "no fidelity report was written" >> "$GITHUB_STEP_SUMMARY"; fi
+      - name: Upload the fidelity report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: fidelity-${{ runner.os }}
+          path: ${{ runner.temp }}/fidelity
+          if-no-files-found: warn
+      # After the fidelity run: the runner image has no CJK font, so the zh
+      # tours would show boxes without one.
+      - name: Install the CJK fonts
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y fonts-noto-cjk
+          fc-cache -f
+      - name: UX tour (en)
+        if: ${{ !cancelled() }}
+        working-directory: app
+        env:
+          SIANN_UX_TOUR: '1'
+          SIANN_UX_LOCALE: en
+          SIANN_UX_OUT: ${{ runner.temp }}/ux-tour
+        run: |
+          if [ "$RUNNER_OS" = Linux ]; then xvfb-run -a -s '-screen 0 2560x1600x24' npx playwright test ux-tour; else npx playwright test ux-tour; fi
+      - name: Upload the tour (en)
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: tour-${{ runner.os }}-en
+          path: ${{ runner.temp }}/ux-tour/en
+          if-no-files-found: error
+      - name: UX tour (zh-Hant)
+        if: ${{ !cancelled() }}
+        working-directory: app
+        env:
+          SIANN_UX_TOUR: '1'
+          SIANN_UX_LOCALE: zh-Hant
+          SIANN_UX_OUT: ${{ runner.temp }}/ux-tour
+        run: |
+          if [ "$RUNNER_OS" = Linux ]; then xvfb-run -a -s '-screen 0 2560x1600x24' npx playwright test ux-tour; else npx playwright test ux-tour; fi
+      - name: Upload the tour (zh-Hant)
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: tour-${{ runner.os }}-zh-Hant
+          path: ${{ runner.temp }}/ux-tour/zh-Hant
+          if-no-files-found: error
+      - name: UX tour (zh-Hans)
+        if: ${{ !cancelled() }}
+        working-directory: app
+        env:
+          SIANN_UX_TOUR: '1'
+          SIANN_UX_LOCALE: zh-Hans
+          SIANN_UX_OUT: ${{ runner.temp }}/ux-tour
+        run: |
+          if [ "$RUNNER_OS" = Linux ]; then xvfb-run -a -s '-screen 0 2560x1600x24' npx playwright test ux-tour; else npx playwright test ux-tour; fi
+      - name: Upload the tour (zh-Hans)
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: tour-${{ runner.os }}-zh-Hans
+          path: ${{ runner.temp }}/ux-tour/zh-Hans
+          if-no-files-found: error
+      - name: Check the tour output
+        if: ${{ !cancelled() }}
+        run: node scripts/check-tour-output.js "$RUNNER_TEMP/ux-tour"
+
+  # AddressSanitizer and UndefinedBehaviorSanitizer over the whole native suite
+  # (-DSIANN_ASAN_UBSAN=ON: every target, third-party code included; undefined
+  # behaviour is not recoverable). Clang 20 from apt.llvm.org, as the RTSan job.
+  # Suppressions live in native/tools/sanitizer-suppressions/, each with its
+  # reason (none so far); halt_on_error stays on.
+  asan-ubsan:
+    name: Native core ASAN + UBSAN (ubuntu, Clang 20)
+    timeout-minutes: 120
+    runs-on: ubuntu-24.04
+    env:
+      ASAN_OPTIONS: halt_on_error=1:detect_leaks=1:abort_on_error=0:suppressions=${{ github.workspace }}/native/tools/sanitizer-suppressions/asan.supp
+      UBSAN_OPTIONS: halt_on_error=1:print_stacktrace=1:suppressions=${{ github.workspace }}/native/tools/sanitizer-suppressions/ubsan.supp
+      LSAN_OPTIONS: suppressions=${{ github.workspace }}/native/tools/sanitizer-suppressions/lsan.supp
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install Clang 20 from apt.llvm.org
+        run: |
+          wget https://apt.llvm.org/llvm.sh
+          sudo bash llvm.sh 20
+          sudo apt-get install -y libclang-rt-20-dev ninja-build
+          clang++-20 --version
+      - uses: ./.github/actions/compiler-cache
+        with:
+          name: asan-ubsan
+      - name: Configure
+        run: cmake -S native -B native/build/asan -G Ninja -DCMAKE_BUILD_TYPE=Debug -DCMAKE_CXX_COMPILER=clang++-20 -DSIANN_WERROR=ON -DSIANN_ASAN_UBSAN=ON
+      - name: Build
+        run: cmake --build native/build/asan
+      - name: Test
+        run: ctest --test-dir native/build/asan --output-on-failure --no-tests=error --timeout 600
+
+  # libFuzzer on the protocol server's input and command JSON (native/fuzz): each
+  # of the six targets for the same fixed time from its committed corpus. New
+  # inputs go to a work directory, never into the repository; a crashing,
+  # leaking, hanging or out-of-memory input is uploaded. Every OS runs the same
+  # harnesses as fuzz_smoke_test.
+  fuzz:
+    name: Fuzz (ubuntu, Clang 20, libFuzzer)
+    timeout-minutes: 60
+    runs-on: ubuntu-24.04
+    env:
+      ASAN_OPTIONS: halt_on_error=1
+      UBSAN_OPTIONS: halt_on_error=1:print_stacktrace=1
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install Clang 20 from apt.llvm.org
+        run: |
+          wget https://apt.llvm.org/llvm.sh
+          sudo bash llvm.sh 20
+          sudo apt-get install -y libclang-rt-20-dev ninja-build
+          clang++-20 --version
+      - uses: ./.github/actions/compiler-cache
+        with:
+          name: fuzz
+      - name: Configure
+        run: cmake -S native -B native/build/fuzz -G Ninja -DCMAKE_BUILD_TYPE=Debug -DCMAKE_CXX_COMPILER=clang++-20 -DSIANN_WERROR=ON -DSIANN_FUZZ=ON -DSIANN_BUILD_TESTS=OFF
+      - name: Build
+        run: cmake --build native/build/fuzz --target siann_fuzz_protocol_frame siann_fuzz_ws_request siann_fuzz_meter_frame siann_fuzz_loudness_frame siann_fuzz_mcp_http siann_fuzz_command_json
+      - name: Fuzz
+        run: |
+          mkdir -p fuzz-artifacts fuzz-work/protocol_frame fuzz-work/ws_request fuzz-work/meter_frame fuzz-work/loudness_frame fuzz-work/mcp_http fuzz-work/command_json
+          status=0
+          native/build/fuzz/fuzz/siann_fuzz_protocol_frame -max_total_time=180 -timeout=30 -rss_limit_mb=4096 -artifact_prefix=fuzz-artifacts/protocol_frame- fuzz-work/protocol_frame native/fuzz/corpus/protocol_frame || status=1
+          native/build/fuzz/fuzz/siann_fuzz_ws_request -max_total_time=180 -timeout=30 -rss_limit_mb=4096 -artifact_prefix=fuzz-artifacts/ws_request- fuzz-work/ws_request native/fuzz/corpus/ws_request || status=1
+          native/build/fuzz/fuzz/siann_fuzz_meter_frame -max_total_time=180 -timeout=30 -rss_limit_mb=4096 -artifact_prefix=fuzz-artifacts/meter_frame- fuzz-work/meter_frame native/fuzz/corpus/meter_frame || status=1
+          native/build/fuzz/fuzz/siann_fuzz_loudness_frame -max_total_time=180 -timeout=30 -rss_limit_mb=4096 -artifact_prefix=fuzz-artifacts/loudness_frame- fuzz-work/loudness_frame native/fuzz/corpus/loudness_frame || status=1
+          native/build/fuzz/fuzz/siann_fuzz_mcp_http -max_total_time=180 -timeout=30 -rss_limit_mb=4096 -artifact_prefix=fuzz-artifacts/mcp_http- fuzz-work/mcp_http native/fuzz/corpus/mcp_http || status=1
+          native/build/fuzz/fuzz/siann_fuzz_command_json -max_total_time=180 -timeout=30 -rss_limit_mb=4096 -artifact_prefix=fuzz-artifacts/command_json- fuzz-work/command_json native/fuzz/corpus/command_json || status=1
+          exit "$status"
+      - name: Upload what the fuzzers found
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: fuzz-findings
+          path: |
+            fuzz-artifacts/*crash-*
+            fuzz-artifacts/*leak-*
+            fuzz-artifacts/*timeout-*
+            fuzz-artifacts/*oom-*
+          if-no-files-found: warn
+
+  # Clang source-based coverage of the native suite (-DSIANN_COVERAGE=ON), one
+  # profile per process (%p, the engine and CLI children included), merged; the
+  # HTML is an artifact and the summary goes to the job summary. Report only.
+  coverage:
+    name: Native coverage (ubuntu, Clang 20, llvm-cov)
+    timeout-minutes: 120
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install Clang 20 from apt.llvm.org
+        run: |
+          wget https://apt.llvm.org/llvm.sh
+          sudo bash llvm.sh 20
+          sudo apt-get install -y libclang-rt-20-dev ninja-build
+          clang++-20 --version
+      - uses: ./.github/actions/compiler-cache
+        with:
+          name: coverage
+      - name: Configure
+        run: cmake -S native -B native/build/coverage -G Ninja -DCMAKE_BUILD_TYPE=Debug -DCMAKE_CXX_COMPILER=clang++-20 -DSIANN_WERROR=ON -DSIANN_COVERAGE=ON
+      - name: Build
+        run: cmake --build native/build/coverage
+      - name: Test
+        env:
+          LLVM_PROFILE_FILE: ${{ github.workspace }}/native/build/coverage/profiles/%p-%m.profraw
+        run: ctest --test-dir native/build/coverage --output-on-failure --no-tests=error --timeout 600
+      - name: Coverage report
+        if: always()
+        run: |
+          cd native/build/coverage
+          llvm-profdata-20 merge -sparse profiles/*.profraw -o merged.profdata
+          # The instrumented executables: no extension (a generated header can carry the x bit).
+          bins=$(find . -path ./_deps -prune -o -type f -perm -u+x \( -name 'siann_*' -o -name 'siann-*' \) ! -name '*.*' -print | sort)
+          set -- $bins
+          first=$1
+          shift
+          objects=""
+          for bin in "$@"; do objects="$objects -object=$bin"; done
+          ignore='(_deps|/tests?|/catch2)/'
+          llvm-cov-20 show "$first" $objects -instr-profile=merged.profdata -format=html -output-dir=html --ignore-filename-regex='(_deps|/tests?|/catch2)/'
+          llvm-cov-20 report "$first" $objects -instr-profile=merged.profdata --ignore-filename-regex="$ignore" > report.txt
+          {
+            echo '## Native coverage (llvm-cov, report only)'
+            echo
+            echo '```'
+            tail -n 1 report.txt
+            echo '```'
+            echo
+            echo '<details><summary>Per file</summary>'
+            echo
+            echo '```'
+            cat report.txt
+            echo '```'
+            echo '</details>'
+          } >> "$GITHUB_STEP_SUMMARY"
+      - name: Upload the coverage report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: native-coverage
+          path: |
+            native/build/coverage/html
+            native/build/coverage/report.txt
+          if-no-files-found: warn
+
+  # The performance scenario (app/test/e2e/perf.spec.ts): a generated 64-track,
+  # 2,000-clip session playing on the fake device with meters running, measured
+  # against UI redesign 5.6 into perf-report.json. Report only: it fails on a
+  # crash or a missing measurement, never on a budget.
+  perf:
+    name: Performance scenario (ubuntu)
+    timeout-minutes: 90
+    runs-on: ubuntu-latest
+    env:
+      electron_config_cache: ${{ github.workspace }}/.electron-cache
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: app/package-lock.json
+      - uses: ./.github/actions/compiler-cache
+        with:
+          name: app
+      - name: Configure
+        run: cmake -S native -B native/build/app -DCMAKE_BUILD_TYPE=Debug -DSIANN_WERROR=ON
+      - name: Build siann-engine and siann-cli
+        run: cmake --build native/build/app --config Debug --target siann-engine siann-cli
+      - name: Locate siann-engine and siann-cli
+        run: |
+          exe=$(find native/build/app -type f -name siann-engine | head -n 1)
+          cli=$(find native/build/app -type f -name siann-cli | head -n 1)
+          test -n "$exe" && test -n "$cli"
+          echo "SIANN_ENGINE_EXE=$GITHUB_WORKSPACE/$exe" >> "$GITHUB_ENV"
+          echo "SIANN_CLI_EXE=$GITHUB_WORKSPACE/$cli" >> "$GITHUB_ENV"
+      - name: Cache the Electron download
+        uses: actions/cache@v4
+        with:
+          path: .electron-cache
+          key: electron-${{ runner.os }}-${{ hashFiles('app/package-lock.json') }}
+      - name: Install app dependencies
+        working-directory: app
+        run: |
+          ELECTRON_SKIP_BINARY_DOWNLOAD=1 npm ci
+          for i in 1 2 3 4 5; do node node_modules/electron/install.js && break; [ $i = 5 ] && exit 1; sleep 30; done
+          sudo chown root node_modules/electron/dist/chrome-sandbox
+          sudo chmod 4755 node_modules/electron/dist/chrome-sandbox
+      - name: Build app
+        working-directory: app
+        run: npm run build
+      - name: Performance scenario
+        working-directory: app
+        env:
+          SIANN_PERF: '1'
+          SIANN_PERF_OUT: ${{ runner.temp }}/perf
+        run: xvfb-run -a -s '-screen 0 2560x1600x24' npx playwright test perf
+      - name: Performance report
+        if: always()
+        env:
+          SIANN_PERF_OUT: ${{ runner.temp }}/perf
+        run: |
+          if [ -f "$SIANN_PERF_OUT/perf-report.json" ]; then
+            { echo '## Performance scenario (report only)'; echo; echo '```json'; cat "$SIANN_PERF_OUT/perf-report.json"; echo '```'; } >> "$GITHUB_STEP_SUMMARY"
+          else
+            echo "no performance report was written" >> "$GITHUB_STEP_SUMMARY"
+          fi
+      - name: Upload the performance report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: perf-report
+          path: ${{ runner.temp }}/perf/perf-report.json
+          if-no-files-found: warn

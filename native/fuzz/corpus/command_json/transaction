@@ -1,0 +1,1 @@
+{"commands":[{"channels":2,"name":"trk_c","op":"track.add","trackId":"trk_c"},{"clipId":"clp_c","length":"48000","mediaId":"med_a","op":"clip.place","position":{"domain":"audio","value":"0"},"sourceStart":"0","trackId":"trk_c"}]}

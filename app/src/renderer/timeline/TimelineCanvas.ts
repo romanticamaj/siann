@@ -228,6 +228,7 @@ import { planDrop, type DropPlan } from './media-drop';
 import { SELECTED_OUTLINE_W, clipPalette, trackColourVar, type ClipPalette } from './track-colour';
 import { waveformColumns, type WaveColumn } from './waveform';
 import { ZOOM_STEP, maxScrollY, scrollFramesBy, scrollYBy, stepLaneHeight, zoomAbout, zoomFull, zoomToRange } from './zoom';
+import { frameMarks } from '../perf/frame-marks';
 
 // The tools of P1-8: 1 Object Selection, 3 Split; of m5b-ui-edit-more: 4
 // Glue, 5 Erase (UI redesign spec 3.2).
@@ -1164,7 +1165,10 @@ export class TimelineCanvas {
     if (this.#destroyed || this.#contentFrame !== null) return;
     this.#contentFrame = requestAnimationFrame(() => {
       this.#contentFrame = null;
+      // The perf scenario's frame marks (perf/frame-marks.ts; a no-op outside the test hook).
+      frameMarks().begin();
       this.#drawContent();
+      frameMarks().end();
     });
   }
 
@@ -1172,7 +1176,9 @@ export class TimelineCanvas {
     if (this.#destroyed || this.#overlayFrame !== null) return;
     this.#overlayFrame = requestAnimationFrame(() => {
       this.#overlayFrame = null;
+      frameMarks().begin();
       this.#drawOverlay();
+      frameMarks().end();
     });
   }
 
@@ -2028,6 +2034,8 @@ export class TimelineCanvas {
     }
     this.#columns = columns;
     this.#waves = waves;
+    // Cold start (UI redesign 5.6): the first frame that paints a session's clips.
+    if (this.#rects.length > 0) frameMarks().sessionPainted();
   }
 
   // The ruler as draw() draws it: the upper half (the locators': the band),

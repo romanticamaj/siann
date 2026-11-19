@@ -4,7 +4,8 @@
 // (snapshot.trackOrder), keyed by track id, then the master strip when the
 // meter legend names "master". All meters are drawn by one canvas over the
 // strips (MixerMeters), fed from the realtime channel through a MeterStore;
-// the strips register their meter channels and peak values with it. React
+// the strips register their meter channels and peak values with it, and the
+// master strip its LUFS-S value (m5b-ui-meter; meter-board.ts). React
 // renders the chrome once per revision; no meter value reaches it.
 //
 // The canvas and the knob's gradient come after the strips, so the strips
@@ -26,8 +27,9 @@ import type { RealtimeClient } from '../model/realtime-client';
 import { monitoredTracks } from '../model/record';
 import type { SessionClient } from '../model/session-client';
 import { KnobGradient } from './Knob';
-import { MetersContext, type MetersRegistry } from './meters-context';
-import { MixerMeters, type MeterTestHooks, type PeakText } from './MixerMeters';
+import { MeterBoard } from './meter-board';
+import { MetersContext } from './meters-context';
+import type { MeterTestHooks } from './MixerMeters';
 import { GhostStrip, MasterStrip, Strip } from './Strip';
 import { useRecordHost } from '../shell/record-context';
 import { ReviewContext, useGhostView } from '../plans/ghost-context';
@@ -41,80 +43,11 @@ export interface MixerProps {
   readonly onMeterHooks?: (hooks: MeterTestHooks | null) => void;
   // The rack switches (m5b-ui-inserts-master; siann.layout.v1): Inserts shows the strips' insert racks.
   readonly racks?: { readonly inserts: boolean };
+  // The meter store the Meter tab shares (m5b-ui-meter); one of its own otherwise.
+  readonly meterStore?: MeterStore;
 }
 
-// The meter canvas and its registry of channels and peak values.
-class MeterBoard implements MetersRegistry {
-  readonly meters: MixerMeters;
-  #container: HTMLElement | null = null;
-  #canvas: HTMLCanvasElement | null = null;
-  // The channels, observed while mounted: a channel can change size without
-  // the mixer changing size (a strip's row growing), and its rect is measured
-  // only when something says so.
-  readonly #slots = new Set<HTMLElement>();
-  #observer: ResizeObserver | null = null;
-
-  // armed: the armed tracks' ids, whose strips read their input meter;
-  // monitored: the monitoring tracks' ids, whose track meters stay live while
-  // the transport is stopped (m5b-ui-recording).
-  constructor(realtime: RealtimeClient, armed: () => readonly string[] = () => [], monitored: () => readonly string[] = () => []) {
-    this.meters = new MixerMeters({
-      store: new MeterStore(realtime, { monitored }),
-      size: () => ({ width: this.#container?.scrollWidth ?? 0, height: this.#container?.clientHeight ?? 0 }),
-      armed,
-    });
-  }
-
-  mount(container: HTMLElement | null, canvas: HTMLCanvasElement | null): void {
-    this.#observer?.disconnect();
-    this.#observer = null;
-    this.#container = container;
-    this.#canvas = canvas;
-    if (container) {
-      const observer = new ResizeObserver(() => this.meters.invalidate());
-      observer.observe(container);
-      for (const element of this.#slots) observer.observe(element);
-      this.#observer = observer;
-    }
-    this.meters.attach(canvas);
-  }
-
-  slot(ref: string, channel: number, element: HTMLElement): () => void {
-    this.#slots.add(element);
-    this.#observer?.observe(element);
-    const remove = this.meters.addSlot({ ref, channel, measure: () => this.#measure(element) });
-    return () => {
-      this.#slots.delete(element);
-      this.#observer?.unobserve(element);
-      remove();
-    };
-  }
-
-  peak(ref: string, element: HTMLElement): () => void {
-    return this.meters.addPeak(ref, element as PeakText);
-  }
-
-  reset(ref: string): void {
-    this.meters.reset(ref);
-  }
-
-  // The channel's inside: its well's border box less the border.
-  #measure(element: HTMLElement) {
-    const canvas = this.#canvas;
-    if (!canvas || !element.isConnected) return null;
-    const origin = canvas.getBoundingClientRect();
-    const box = element.getBoundingClientRect();
-    if (element.clientWidth === 0 || element.clientHeight === 0) return null;
-    return {
-      x: box.left - origin.left + element.clientLeft,
-      y: box.top - origin.top + element.clientTop,
-      width: element.clientWidth,
-      height: element.clientHeight,
-    };
-  }
-}
-
-export function Mixer({ client, gestures, realtime, selectedTrackId = null, onMeterHooks, racks }: MixerProps) {
+export function Mixer({ client, gestures, realtime, selectedTrackId = null, onMeterHooks, racks, meterStore }: MixerProps) {
   const t = useT();
   const order = useSyncExternalStore(
     (listener) => client.model.subscribe(listener),
@@ -129,9 +62,12 @@ export function Mixer({ client, gestures, realtime, selectedTrackId = null, onMe
   const record = useRecordHost();
   const recordRef = useRef(record);
   recordRef.current = record;
+  // The armed tracks' strips read their input meter; the monitoring tracks'
+  // track meters stay live while stopped (m5b-ui-recording).
   const [board] = useState(() => {
     const armed = () => recordRef.current?.controller.store.getSnapshot()?.armed ?? [];
-    return new MeterBoard(realtime, armed, () => monitoredTracks(client.model.getSnapshot()?.tracks ?? [], armed()));
+    const monitored = () => monitoredTracks(client.model.getSnapshot()?.tracks ?? [], armed());
+    return new MeterBoard(meterStore ?? new MeterStore(realtime, { monitored }), realtime.loudness ?? null, armed);
   });
   const view = useGhostView();
   const review = useContext(ReviewContext);
@@ -145,11 +81,13 @@ export function Mixer({ client, gestures, realtime, selectedTrackId = null, onMe
     const meters = board.meters;
     board.mount(el, surface);
     const offFrames = realtime.subscribe(() => meters.onFrame());
+    const offLoudness = typeof realtime.subscribeLoudness === 'function' ? realtime.subscribeLoudness(() => meters.onLoudness()) : () => undefined;
     const visible = () => meters.wake();
     document.addEventListener('visibilitychange', visible);
     onMeterHooks?.(meters.testHooks());
     return () => {
       offFrames();
+      offLoudness();
       document.removeEventListener('visibilitychange', visible);
       onMeterHooks?.(null);
       board.mount(null, null);
