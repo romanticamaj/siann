@@ -202,6 +202,18 @@ export function monitorOf(track: Pick<TrackEntity, 'monitor'> | null | undefined
   return track?.monitor === 'auto' || track?.monitor === 'input' ? track.monitor : 'off';
 }
 
+// The tracks that monitor their input (protocol-engine-v0 "Monitoring"): monitor
+// input, or auto on an armed track. While the transport is stopped the engine
+// runs the graph for them, so their track meters read live (m5b-ui-recording).
+export function monitoredTracks(tracks: Iterable<Pick<TrackEntity, 'id' | 'monitor'>>, armed: readonly string[]): string[] {
+  const ids: string[] = [];
+  for (const track of tracks) {
+    const mode = monitorOf(track);
+    if (mode === 'input' || (mode === 'auto' && armed.includes(track.id))) ids.push(track.id);
+  }
+  return ids;
+}
+
 // A click on the monitor button: off to input, input or auto to off (10.11, 16).
 export function nextMonitor(mode: MonitorMode): MonitorMode {
   return mode === 'off' ? 'input' : 'off';

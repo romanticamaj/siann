@@ -253,3 +253,21 @@ test('an armed track\'s well reads input:<trackId> while the legend has it (m5b-
   frames.flush();
   assert.equal(surface.canvas.dataset.lit, '1');
 });
+
+// m5b-ui-recording (protocol-engine-v0 "Monitoring"): a monitored, unarmed
+// track's well reads its track meter, which carries the monitored input,
+// as its strip does while the transport is stopped (mixer-meters).
+test('a monitored, unarmed track\'s well reads track:<trackId>, as its strip does', () => {
+  const surface = fakeCanvas();
+  const realtime = realtimeOf();
+  const frames = manualFrames();
+  const meters = new HeaderMeters({ canvas: surface.canvas, realtime: realtime.client, frames, size: surface.size, pixelRatio: () => 1, armed: () => [] });
+  meters.addSlot(slot('track:a', { x: 0, y: 0, width: 100, height: 2 }).value);
+  meters.start();
+  // The monitored input at -30 dBFS through the track's strip: half the well.
+  realtime.emit({ 'track:a': [dB(-30)], 'input:a': [dB(-12)] });
+  frames.flush();
+  assert.equal(surface.canvas.dataset.lit, '1');
+  const width = surface.fills.reduce((sum, f) => sum + f.w, 0);
+  assert.ok(Math.abs(width - 50) <= 1, `the track's bar, not the input's: ${width}`);
+});

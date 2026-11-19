@@ -23,6 +23,7 @@ import { useT } from '../i18n/t';
 import type { GestureController } from '../model/gesture-controller';
 import { MeterStore } from '../model/meter-store';
 import type { RealtimeClient } from '../model/realtime-client';
+import { monitoredTracks } from '../model/record';
 import type { SessionClient } from '../model/session-client';
 import { KnobGradient } from './Knob';
 import { MetersContext, type MetersRegistry } from './meters-context';
@@ -53,10 +54,12 @@ class MeterBoard implements MetersRegistry {
   readonly #slots = new Set<HTMLElement>();
   #observer: ResizeObserver | null = null;
 
-  // armed: the armed tracks' ids, whose strips read their input meter (m5b-ui-recording).
-  constructor(realtime: RealtimeClient, armed: () => readonly string[] = () => []) {
+  // armed: the armed tracks' ids, whose strips read their input meter;
+  // monitored: the monitoring tracks' ids, whose track meters stay live while
+  // the transport is stopped (m5b-ui-recording).
+  constructor(realtime: RealtimeClient, armed: () => readonly string[] = () => [], monitored: () => readonly string[] = () => []) {
     this.meters = new MixerMeters({
-      store: new MeterStore(realtime),
+      store: new MeterStore(realtime, { monitored }),
       size: () => ({ width: this.#container?.scrollWidth ?? 0, height: this.#container?.clientHeight ?? 0 }),
       armed,
     });
@@ -126,7 +129,10 @@ export function Mixer({ client, gestures, realtime, selectedTrackId = null, onMe
   const record = useRecordHost();
   const recordRef = useRef(record);
   recordRef.current = record;
-  const [board] = useState(() => new MeterBoard(realtime, () => recordRef.current?.controller.store.getSnapshot()?.armed ?? []));
+  const [board] = useState(() => {
+    const armed = () => recordRef.current?.controller.store.getSnapshot()?.armed ?? [];
+    return new MeterBoard(realtime, armed, () => monitoredTracks(client.model.getSnapshot()?.tracks ?? [], armed()));
+  });
   const view = useGhostView();
   const review = useContext(ReviewContext);
   const container = useRef<HTMLElement | null>(null);
