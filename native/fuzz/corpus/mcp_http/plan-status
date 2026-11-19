@@ -1,0 +1,1 @@
+{"id":7,"jsonrpc":"2.0","method":"tools/call","params":{"arguments":{"plan":"sha256:0000000000000000000000000000000000000000000000000000000000000000"},"name":"plan_status"}}

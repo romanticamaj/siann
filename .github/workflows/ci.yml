@@ -419,6 +419,22 @@ jobs:
       - name: Build app
         working-directory: app
         run: npm run build
+      # The app's unit test coverage in the job summary (m5b-nightly-quality;
+      # docs/harness/test-matrix.md, section 5). Report only: no minimum.
+      - name: Unit test coverage
+        working-directory: app
+        run: |
+          status=0
+          node --test --experimental-test-coverage --test-coverage-exclude='dist/test/**' dist/test/unit/*.test.js > "$RUNNER_TEMP/unit-coverage.txt" 2>&1 || status=$?
+          {
+            echo "## App unit test coverage ($RUNNER_OS)"
+            echo
+            echo '```'
+            sed -n '/start of coverage report/,/end of coverage report/p' "$RUNNER_TEMP/unit-coverage.txt"
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+          if [ "$status" -ne 0 ]; then cat "$RUNNER_TEMP/unit-coverage.txt"; fi
+          exit "$status"
       # Linux runs the Electron specs at a 150 % display scale (canvas backing
       # stores at devicePixelRatio 1.5, CSS px unchanged); Windows and macOS at 1.
       - name: Test (Linux, virtual display, 150 % scale)

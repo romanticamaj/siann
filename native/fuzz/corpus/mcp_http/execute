@@ -1,0 +1,1 @@
+{"id":6,"jsonrpc":"2.0","method":"tools/call","params":{"arguments":{"commands":[{"channels":2,"name":"trk_mcp","op":"track.add","trackId":"trk_mcp"}]},"name":"execute"}}

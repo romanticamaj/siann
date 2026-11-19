@@ -829,11 +829,13 @@ TEST_CASE("Plan entity sets accept bus and send refs", "[plan][buses]") {
     store.approve(history, hash, "user", "t1");
     const Revision& applied = store.apply(history, hash, "agent", "t2");
     CHECK(applied.diff.size() == 3);
+    // A copy: the rollback below appends a revision, which can move `applied` (ASAN).
+    const auto appliedHash = applied.envelope.documentHash;
     CHECK(history.head().document.send("s1") != nullptr);
     const Revision& inverse = store.rollback(history, hash, "user", "t3");
     CHECK(history.head().document.send("s1") == nullptr);
     CHECK(history.head().document.bus("b1")->gain.milliDb == 0);
-    CHECK(inverse.envelope.documentHash != applied.envelope.documentHash);
+    CHECK(inverse.envelope.documentHash != appliedHash);
 }
 
 TEST_CASE("A bus plan goes stale when the bus changes", "[plan][buses]") {

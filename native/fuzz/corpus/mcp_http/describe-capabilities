@@ -1,0 +1,1 @@
+{"id":4,"jsonrpc":"2.0","method":"tools/call","params":{"arguments":{},"name":"describe_capabilities"}}

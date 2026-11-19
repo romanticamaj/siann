@@ -229,3 +229,87 @@ test('gaps 5 and 10 left section 6 and the Node bridge table names the reject-pl
     assert.doesNotMatch(row, /\*\*none\*\*|untested/, `${subcommand} is no longer a hole`);
   }
 });
+
+// m5b-nightly-quality (acceptance item 7): the nightly layers are in section 1,
+// sanitizers, fuzzing and the macOS long tests left "never", gaps 4, 6, 7, 9 and
+// 12 are closed and section 7's proposals are done.
+function section(prefix) {
+  const text = matrixText();
+  const start = text.indexOf(`\n${prefix}`);
+  assert.ok(start >= 0, `the matrix has a section "${prefix}"`);
+  const level = prefix.startsWith('### ') ? /\n#{2,3} /g : /\n## /g;
+  level.lastIndex = start + 1;
+  const next = level.exec(text);
+  return text.slice(start + 1, next ? next.index : undefined);
+}
+
+const CLOSED_GAPS = [4, 6, 7, 9, 12];
+
+test('section 1 has a row for each nightly layer', () => {
+  const rows = section('## 1. ').split('\n').filter((line) => line.startsWith('| **'));
+  const find = (re, what) => {
+    const row = rows.find((line) => re.test(line.split('|')[2] ?? ''));
+    assert.ok(row, `a section 1 row for ${what}`);
+    assert.match(row.split('|')[3], /nightly/, `${what} runs in the nightly workflow`);
+    return row;
+  };
+  find(/ux-tour\.spec\.ts/, 'the tour');
+  find(/ASAN/, 'ASAN/UBSAN');
+  find(/libFuzzer/, 'fuzzing');
+  find(/llvm-cov/, 'native coverage');
+  find(/perf\.spec\.ts/, 'the performance scenario');
+  const long = rows.find((line) => line.startsWith('| **L** |'));
+  assert.ok(long, 'the long tests row');
+  assert.match(long.split('|')[4], /macos/);
+});
+
+test('section 3.1 no longer lists sanitizers, fuzzing or the macOS long tests as never run', () => {
+  const text = section('### 3.1 ');
+  const never = text.split('\n- ').find((item) => item.startsWith('**Never**'));
+  assert.ok(never, 'a "Never" item');
+  assert.doesNotMatch(never, /ASAN|UBSAN|fuzz/i);
+  assert.match(never, /TSAN/, 'TSAN is still not built');
+  assert.doesNotMatch(text, /long-tests/);
+});
+
+test('gaps 4, 6, 7, 9 and 12 are closed in the gap table and section 6', () => {
+  const head = matrixText().split('\n## 1. ')[0].split('\n');
+  for (const gap of CLOSED_GAPS) {
+    const row = head.find((line) => line.startsWith(`| ${gap} `));
+    if (row) assert.match(row, /closed by `m5b-nightly-quality`/, `gap ${gap} in the gap table`);
+  }
+  const six = section('## 6. ').split('\n');
+  for (const gap of CLOSED_GAPS) {
+    assert.ok(!six.some((line) => line.startsWith(`| ${gap} |`)), `gap ${gap} is out of section 6`);
+  }
+  // What gap 6 named and the feature does not fuzz: the media decoders.
+  const decoders = six.find((line) => /^\| \d+ \|/.test(line) && /WAV/.test(line) && /FLAC/.test(line));
+  assert.ok(decoders, 'a section 6 row for fuzzing the WAV and FLAC readers');
+  assert.match(decoders, /\| Low[^|]*\|/, 'ranked low');
+});
+
+test('section 7 lists its proposals 1 to 3 and 5 to 7 as done', () => {
+  const text = section('## 7. ');
+  assert.doesNotMatch(text, /Proposed, not done/);
+  for (const item of [1, 2, 3, 5, 6, 7]) {
+    const line = text.split('\n').find((l) => l.startsWith(`${item}. `));
+    assert.ok(line, `section 7 item ${item}`);
+    assert.match(line, /done by `m5b-nightly-quality`/i, `item ${item} is done`);
+  }
+});
+
+test('section 2 has a row for m5b-nightly-quality naming its tests', () => {
+  const row = section('## 2. ').split('\n').find((line) => line.startsWith('| m5b-nightly-quality |'));
+  assert.ok(row, 'an m5b-nightly-quality row');
+  for (const name of ['ci-workflow', 'ci-long-tests', 'check-all-changed', 'test-matrix', 'native-quality-options', 'tour-output',
+    'fuzz_smoke_test', 'perf-report', 'frame-marks', 'perf.spec']) {
+    assert.ok(row.includes(name), `the row names ${name}`);
+  }
+});
+
+test('section 3.2 says the tour runs nightly in three locales', () => {
+  const row = section32().split('\n').find((line) => line.split('|')[2]?.includes('`SIANN_UX_TOUR=1`'));
+  assert.ok(row, 'the tour row');
+  assert.match(row, /nightly/);
+  for (const locale of ['en', 'zh-Hant', 'zh-Hans']) assert.ok(row.includes(locale), locale);
+});

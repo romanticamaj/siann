@@ -1,0 +1,4 @@
+{"method":"command.execute","params":{"commands":[{"channels":2,"name":"trk_seq","op":"track.add","trackId":"trk_seq"},{"channels":2,"contentHash":"sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","format":"wav","frames":"480000","mediaId":"med_seq","op":"media.add","sampleRate":48000},{"clipId":"clp_seq","length":"48000","mediaId":"med_seq","op":"clip.place","position":{"domain":"audio","value":"0"},"sourceStart":"0","trackId":"trk_seq"}]},"requestId":"req_12","sessionId":"$session"}
+{"method":"session.undo","params":{},"requestId":"req_13","sessionId":"$session"}
+{"method":"session.redo","params":{},"requestId":"req_14","sessionId":"$session"}
+{"method":"session.fetch","params":{"entities":[{"id":"trk_seq","type":"track"}]},"requestId":"req_15","sessionId":"$session"}

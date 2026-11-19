@@ -78,16 +78,27 @@ function parseArgs(argv) {
 
 // ---- Which steps a change needs ------------------------------------------------
 
-// What the desktop preset (JUCE) compiles differently or only: the JUCE host, the
-// plugin hosting it builds on, siann-engine (which links it in that preset), and the
-// build files that choose all of that.
-const DESKTOP_PATHS = [
+// The native paths that go into the Windows installer (m5b-package-windows): the
+// JUCE host, the plugin hosting it builds on, siann-engine (which links it in the
+// desktop preset), and the build files that choose all of that.
+const PACKAGE_NATIVE_PATHS = [
   /^native\/libs\/host_[^/]+\//,
   /^native\/apps\/engine\//,
   /^native\/cmake\//,
   /^native\/CMakePresets\.json$/,
   /(^|\/)CMakeLists\.txt$/,
   /\.cmake$/,
+];
+
+// What the desktop preset (JUCE) compiles differently or only: the package paths,
+// and the core libraries the JUCE host's playback runs through (m5b-nightly-quality,
+// test-matrix gap 7), whose JUCE-only regressions then show on the pull request.
+// These three run the desktop step only: the package step keeps its own list.
+const DESKTOP_PATHS = [
+  ...PACKAGE_NATIVE_PATHS,
+  /^native\/libs\/playback\//,
+  /^native\/libs\/graph\//,
+  /^native\/libs\/realtime\//,
 ];
 
 // What goes into the Windows installer (m5b-package-windows) besides the desktop
@@ -130,9 +141,9 @@ function stepsForPath(file) {
   // The UI mockup is what the app's fidelity gate compares the window with.
   if (p.startsWith(MOCKUP_DIR)) return ['node', 'app'];
   if (/^native\//.test(p)) {
-    const steps = DESKTOP_PATHS.some((re) => re.test(p))
-      ? ['node', 'native', 'desktop', 'package', 'gcc']
-      : ['node', 'native', 'gcc'];
+    const desktop = DESKTOP_PATHS.some((re) => re.test(p));
+    const packaged = PACKAGE_NATIVE_PATHS.some((re) => re.test(p));
+    const steps = ['node', 'native', ...(desktop ? ['desktop'] : []), ...(packaged ? ['package'] : []), 'gcc'];
     return BRIDGE_NATIVE_PATHS.some((re) => re.test(p)) ? [...steps, 'bridge'] : steps;
   }
   if (/^app\//.test(p)) return PACKAGE_APP_PATHS.some((re) => re.test(p)) ? ['node', 'app', 'package'] : ['node', 'app'];
@@ -282,6 +293,7 @@ function listSources() {
   };
   walk(path.join(NATIVE, 'libs'));
   walk(path.join(NATIVE, 'apps'));
+  walk(path.join(NATIVE, 'fuzz'));
   return files.filter((f) => !f.includes(`${path.sep}host_desktop${path.sep}`));
 }
 
@@ -364,6 +376,8 @@ async function gcc(options) {
       if (fs.existsSync(inc)) includes.push(`-I${toPosix(inc)}`);
     }
   }
+  // The fuzz harness (m5b-nightly-quality).
+  includes.push(`-I${toPosix(path.join(NATIVE, 'fuzz', 'include'))}`);
   includes.push(`-I${toPosix(path.join(NATIVE, 'libs', 'media', 'tests'))}`);
   includes.push(`-I${toPosix(path.join(NATIVE, 'libs', 'graph', 'tests'))}`);
   includes.push(`-I${toPosix(path.join(NATIVE, 'libs', 'hash', 'tests'))}`);
@@ -382,7 +396,7 @@ async function gcc(options) {
     includes.push('-isystem', toPosix(dir));
   }
   const flags = ['-std=c++20', '-Wall', '-Wextra', '-Wpedantic', '-Wshadow', '-Werror', '-fsyntax-only',
-    '-DSIANN_FIXTURES_DIR="x"', '-DSIANN_TEST_PLUGIN_CLAP="x"',
+    '-DSIANN_FIXTURES_DIR="x"', '-DSIANN_FUZZ_CORPUS_DIR="x"', '-DSIANN_FUZZ_TARGET=protocolFrame', '-DSIANN_TEST_PLUGIN_CLAP="x"',
     '-DSIANN_HOSTILE_PLUGIN_CLAP="x"', '-DSIANN_HOST_CLAP_TESTS_EXE="x"', ...includes];
 
   const jobs = [];
@@ -715,7 +729,8 @@ if (require.main === module) {
 }
 
 module.exports = {
-  ALL_STEPS, appDepsFresh, BRIDGE_NATIVE, bridgeStep, buildTypeDefines, cacheRoot, changedPaths, dependencySource, desktopSources,
-  engineTestFiles, listSources, nativeEnv, needsInstall, PACKAGE_NATIVE, packageStep, parseArgs, presetBuildType, recordInstall, selectSteps,
+  ALL_STEPS, appDepsFresh, BRIDGE_NATIVE, bridgeStep, buildTypeDefines, cacheRoot, changedPaths, dependencySource, DESKTOP_PATHS,
+  desktopSources,
+  engineTestFiles, listSources, nativeEnv, needsInstall, PACKAGE_NATIVE, PACKAGE_NATIVE_PATHS, packageStep, parseArgs, presetBuildType, recordInstall, selectSteps,
   stepsForPath, stepsForPaths,
 };

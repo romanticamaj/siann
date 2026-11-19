@@ -40,6 +40,12 @@ if (process.argv.includes(TEST_HOOKS_ARG)) {
   const environment: unknown = env ? JSON.parse(decodeURIComponent(env.slice(TEST_ENVIRONMENT_ARG.length))) : undefined;
   contextBridge.exposeInMainWorld('siannTest', {
     timelineHooks: true,
+    // When the main process read the engine's first ready line (epoch ms), or
+    // null before it: the start of the perf scenario's cold start.
+    engineReadyAt: async (): Promise<number | null> => {
+      const at: unknown = await ipcRenderer.invoke('siann:test:engine-ready-at');
+      return typeof at === 'number' && Number.isFinite(at) ? at : null;
+    },
     ...(languages ? { languages } : {}),
     ...(capabilities !== undefined ? { capabilities } : {}),
     ...(environment !== undefined ? { environment } : {}),

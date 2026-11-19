@@ -1,0 +1,1 @@
+{"id":9,"jsonrpc":"2.0","method":"tools/call","params":{"arguments":{},"name":"no_such_tool"}}

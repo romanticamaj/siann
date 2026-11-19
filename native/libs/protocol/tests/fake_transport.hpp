@@ -109,6 +109,16 @@ public:
     // The client closes the socket.
     void disconnect(ConnectionId connection) { close(connection, 1000, "client"); }
 
+    // Drops a closed connection's record, so a long run (the fuzz harness,
+    // native/fuzz) does not keep every frame it was sent.
+    void forget(ConnectionId connection) {
+        std::lock_guard lock(mutex_);
+        auto it = connections_.find(connection);
+        if (it != connections_.end() && it->second.closed) {
+            connections_.erase(it);
+        }
+    }
+
     HttpResponse http(HttpRequest request) { return handlers_.onHttp(request); }
 
     std::vector<std::string> sent(ConnectionId connection) const {

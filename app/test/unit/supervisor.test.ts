@@ -142,6 +142,41 @@ function last<T>(items: T[]): T {
   return items[items.length - 1]!;
 }
 
+// The cold start of UI redesign 5.6 starts at the engine's ready line: the
+// supervisor keeps the time it read the first one (m5b-nightly-quality), on
+// the clock it is given, and a restart's ready line does not move it.
+test('firstReadyAt is the time of the first ready line read, kept across restarts', async () => {
+  let clock = 1_000;
+  const r = rig(BACKOFF, { now: () => clock });
+  assert.equal(r.supervisor.firstReadyAt(), null);
+  r.supervisor.start();
+  clock = 1_200;
+  r.children[0]!.stdout.write(readyLine(1000).slice(0, 10));
+  await flush();
+  assert.equal(r.supervisor.firstReadyAt(), null, 'half a ready line is no ready line');
+  clock = 1_500;
+  r.children[0]!.stdout.write(readyLine(1000).slice(10));
+  await flush();
+  assert.equal(r.ready.length, 1);
+  assert.equal(r.supervisor.firstReadyAt(), 1_500);
+  clock = 9_000;
+  last(r.children).exit(1);
+  r.scheduler.fire(250);
+  last(r.children).stdout.write(readyLine(1001));
+  await flush();
+  assert.equal(r.ready.length, 2);
+  assert.equal(r.supervisor.firstReadyAt(), 1_500);
+});
+
+test('a malformed ready line sets no firstReadyAt', async () => {
+  const r = rig(BACKOFF, { now: () => 42 });
+  r.supervisor.start();
+  r.children[0]!.stdout.write('{"schema":"nope"}\n');
+  await flush();
+  assert.deepEqual(r.protocolErrors, ['malformed ready line']);
+  assert.equal(r.supervisor.firstReadyAt(), null);
+});
+
 test('arguments given as a function are read again for every launch', () => {
   let window = 1;
   const r = rig(BACKOFF, { args: () => ['--owner-window', String(window)] });

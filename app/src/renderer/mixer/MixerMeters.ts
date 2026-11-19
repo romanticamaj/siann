@@ -35,6 +35,7 @@ import type { MeterStore } from '../model/meter-store';
 import { TOKENS } from '../tokens';
 import { FLOOR_DB } from './peak-hold';
 import { milliDbToPosition } from './taper';
+import { frameMarks } from '../perf/frame-marks';
 
 export interface AnimationFrames {
   // The callback gets the frame's timestamp (the same for every callback of a frame).
@@ -333,8 +334,11 @@ export class MixerMeters {
     const store = this.#store;
     store.sync();
     store.advance(dt, time);
+    // The perf scenario's frame marks (perf/frame-marks.ts; a no-op outside the test hook).
+    frameMarks().begin();
     if (this.#dirty) this.measure();
     this.#draw();
+    frameMarks().end();
     this.#drawn += 1;
     if (!this.#hidden() && (store.playing() || !store.decayed())) this.#request();
     else this.#last = null;

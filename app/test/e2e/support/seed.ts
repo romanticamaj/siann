@@ -97,6 +97,39 @@ export function seedBundle(scratch: string, tracks: readonly SeedTrack[], clips:
   return path.dirname(bundle);
 }
 
+// A large generated bundle for the performance scenario (perf.spec.ts): `tracks`
+// tracks and `clips` one-second clips of one short WAV, imported once, dealt
+// round-robin over the tracks, end to end on each. Every command goes in one
+// `siann-cli plan` (one revision), not one process per command.
+export function seedLargeBundle(scratch: string, tracks: number, clips: number): string {
+  const bundle = path.join(scratch, 'sessions', 'Untitled.siann');
+  fs.mkdirSync(path.dirname(bundle), { recursive: true });
+  cli('create', bundle, '--name', 'Perf', '--rate', '48000');
+  const wav = path.join(scratch, 'seed-square.wav');
+  squareWav(wav);
+  cli('import', bundle, wav, '--media-id', 'med_seed');
+  const trackId = (i: number) => `trk_${String(i).padStart(2, '0')}`;
+  const commands: Record<string, unknown>[] = [];
+  for (let i = 0; i < tracks; i += 1) {
+    commands.push({ op: 'track.add', trackId: trackId(i), name: `Track ${i + 1}`, channels: 2 });
+  }
+  for (let c = 0; c < clips; c += 1) {
+    commands.push({
+      op: 'clip.place',
+      clipId: `clp_${String(c).padStart(4, '0')}`,
+      trackId: trackId(c % tracks),
+      mediaId: 'med_seed',
+      position: { domain: 'audio', value: String(Math.floor(c / tracks) * RATE) },
+      sourceStart: '0',
+      length: String(RATE),
+    });
+  }
+  const file = path.join(scratch, 'perf-commands.json');
+  fs.writeFileSync(file, JSON.stringify(commands));
+  cli('plan', bundle, `@${file}`);
+  return path.dirname(bundle);
+}
+
 export function launchApp(options: {
   // null: no SIANN_SESSION_DIR, so the shell chooses the bundle itself (the
   // last one, or the scratch bundle with the start view; m5b-ui-project).

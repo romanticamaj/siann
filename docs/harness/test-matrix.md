@@ -20,17 +20,17 @@ gaps here when it lands.
 | 1 the component port after `m5-ui-tokens-spacing` (`m5-ui-alignment-chrome` in review; seven `m5-ui-port-*` not started, which replaced the other alignment features on 2026-11-17) (m5-ui-transport closed its 8, m5-ui-edit-basics its 9, m5-ui-loop-click its 11; gap 1 of section 6 is closed) | the chrome and the port features (in flight) | 9 to 12 |
 | 2 method/tool/doc/fixture parity | closed by `m5b-protocol-parity` (section 4) | 2 |
 | 3 bridge targets the Ardour engine, gated tests dead | closed by `m5b-bridge-native-client` (layer G in CI) | 2 |
-| 4 tour states only in the manual tour | `m5b-nightly-quality` | 3 |
+| 4 tour states only in the manual tour | closed by `m5b-nightly-quality` (layer T, nightly in three locales) | 3 |
 | 5 rollback never deletes media or renders | closed by `m5b-bridge-cli-coverage` (native and G) | 3 |
-| 6 no ASAN/UBSAN, no fuzzing | `m5b-nightly-quality` | 3 |
-| 7 desktop job skipped on core-library PRs | `m5b-nightly-quality` | 3 |
+| 6 no ASAN/UBSAN, no fuzzing | closed by `m5b-nightly-quality` (layers A and Z; TSAN stays open) | 3 |
+| 7 desktop job skipped on core-library PRs | closed by `m5b-nightly-quality` (`DESKTOP_PATHS`) | 3 |
 | 8 macOS-specific behaviour manual only | not taken: needs the macOS bundle (M0 `m0-macos-bundle`, apple-signing gate) | |
-| 9 UI spec 5.6 performance budgets | `m5b-nightly-quality` | 3 |
+| 9 UI spec 5.6 performance budgets | closed by `m5b-nightly-quality` (layer Pf, report only) | 3 |
 | 10 bridge CLI holes (`reject-plan`, `validate-journal`, `--run`) | closed by `m5b-bridge-cli-coverage` (B and G; `bin/siann.js` branch coverage gated at 70 % on ubuntu) | 3 |
 | 11 `read-model-sequence.json` not checked against the engine | not taken: stays an M5 follow-up | |
-| 12 long tests not on macOS | `m5b-nightly-quality` | 3 |
+| 12 long tests not on macOS | closed by `m5b-nightly-quality` (layer L on macos) | 3 |
 | 13 M4 ordering / link assertions | not taken: stays an M4 follow-up | |
-| native coverage (section 5), app unit coverage (section 7 item 7) | `m5b-nightly-quality` | 3 |
+| native coverage (section 5), app unit coverage (section 7 item 7) | closed by `m5b-nightly-quality` (layer C; the app job's summary) | 3 |
 
 ## 1. Layers and where they run
 
@@ -38,16 +38,22 @@ gaps here when it lands.
 |---|---|---|---|---|
 | **N** | Native Catch2, core-only build (`native/**/tests`, ctest) | `native` job | ubuntu, windows, macos | PR when `native/` changes; every push to main; nightly |
 | **R** | Native suite under Clang 20 RealtimeSanitizer (`-DSIANN_RTSAN=ON`, `halt_on_error=1`) + `[src]` | `rtsan` job | ubuntu only | as N |
-| **D** | Native suite with JUCE (`-DSIANN_WITH_JUCE=ON`: `siann_host_desktop_tests`, the JUCE half of `engine_launch_test`, `cli_realtime_test [juce]`) | `desktop` job | ubuntu (xvfb + openbox), windows, macos | PR when `native/libs/host_*`, `apps/engine`, CMake or `app/` change; push to main; nightly |
+| **D** | Native suite with JUCE (`-DSIANN_WITH_JUCE=ON`: `siann_host_desktop_tests`, the JUCE half of `engine_launch_test`, `cli_realtime_test [juce]`) | `desktop` job | ubuntu (xvfb + openbox), windows, macos | PR when `native/libs/host_*`, `native/libs/playback`, `graph`, `realtime`, `apps/engine`, CMake or `app/` change; push to main; nightly |
 | **P** | pluginval strictness 5 on `siann_test_plugin` (VST3; AU on macOS) | `desktop` job | VST3: all three; AU: macos | as D |
 | **U** | Electron unit tests (`app/test/unit`, `node --test` on `dist/`) | `app` job | ubuntu, windows, macos | PR when `app/` changes; push to main; nightly |
 | **E** | Playwright Electron e2e (`app/test/e2e`) against the core-only `siann-engine` on the fake device | `app` job | ubuntu (xvfb, 150 % scale), windows, macos | as U |
 | **Ew** | `editor.spec.ts` against the JUCE engine (editor owned by the Electron window) | `desktop` job | windows only | as D |
 | **F** | Mockup fidelity run (`docs/harness/agent-rules.md`, "UI fidelity"). Blocking: tokens and the manifest, `test/ui-tokens.test.js`, `test/mockup-fidelity.test.js` (in B). A report, never blocking (decided by the maintainer, 2026-11-17): geometry against 1 px, computed styles and chrome pixels per region, `app/test/e2e/mockup-fidelity.spec.ts`, the mockup in Chromium against the app in Electron at 1440x900 and device scale factor 1, en and zh-TW; its region images are the side-by-side screenshots a UI pull request attaches | `node` job (tokens, manifest); `app` job (the spec, `SIANN_FIDELITY=1`) | tokens: ubuntu, windows, macos; the spec: ubuntu (xvfb), windows; not macos | tokens: every PR. The spec: PR when `app/` or the mockup's directory changes; push to main; nightly. **A report for good** (`continue-on-error`, report uploaded as `fidelity-<os>`): no gate is `enforce` and the step never fails the job |
 | **B** | Node bridge, scripts and fixture tests (`test/*.js`, `npm test`) | `node` job | ubuntu, windows, macos (**since this PR**; ubuntu only before) | every PR |
-| **L** | `[.][long]` Catch2 tests (`siann_cli_tests "[long]"`) | `long-tests.yml` | ubuntu, windows | nightly + manual; never on PRs |
+| **L** | `[.][long]` Catch2 tests (`siann_cli_tests "[long]"`) | `long-tests.yml` | ubuntu, windows, macos | nightly + manual; never on PRs |
 | **G** | Engine-gated Node tests (`SIANN_RUN_ENGINE_TESTS=1`): `test/runtime-engine.test.js`, the engine case of `test/live-import-pack.test.js`, the `G:` cases of `test/bridge-cli-run-flags.test.js`, against the core-only `siann-engine` with `--device fake` | `bridge-engine` job (`npm test` with the gate on; locally `node scripts/check-all.js --only bridge`) | ubuntu, windows, macos | PR when `src/`, `bin/`, `test/`, `native/libs/protocol` or `native/apps/engine` change (the `bridge` step of `stepsForPath`); push to main; nightly |
-| **M** | Manual / env-gated (`SIANN_TEST_VST3`, `SIANN_TEST_AU`, `SIANN_TEST_CLAP`, `[hardware]`, `pluginval --compat`, `SIANN_UX_TOUR=1`, human gates) | maintainer's machines | never | see 3.2 |
+| **T** | UX screenshot tour (`app/test/e2e/ux-tour.spec.ts`, `SIANN_UX_TOUR=1`) against the core-only `siann-engine` and `siann-cli`, one run per `SIANN_UX_LOCALE` (en, zh-Hant, zh-Hans); PNGs and `index.json` notes uploaded as `tour-<os>-<locale>`; then `scripts/check-tour-output.js` (an `index.json` per locale, every listed PNG there and not empty, the same states in every locale; `test/tour-output.test.js` in B) | `nightly.yml` `tour` job | ubuntu (xvfb, `fonts-noto-cjk`), windows | nightly + manual (`workflow_dispatch`); never on PRs; a state that fails to render fails the job |
+| **Fn** | The fidelity run of F (`mockup-fidelity.spec.ts`, `SIANN_FIDELITY=1`, `--project fidelity`) in the tour job, before the CJK fonts are installed so the measurement is the app job's; `continue-on-error`, report uploaded as `fidelity-<os>`, no threshold of its own | `nightly.yml` `tour` job | ubuntu (xvfb), windows | nightly + manual; a report, never failing the job |
+| **A** | Native suite under Clang 20 ASAN + UBSAN (`-DSIANN_ASAN_UBSAN=ON`, `-fno-sanitize-recover=undefined`, `ASAN_OPTIONS` and `UBSAN_OPTIONS` with `halt_on_error=1`), the whole ctest; `ASAN_OPTIONS`, `UBSAN_OPTIONS` and `LSAN_OPTIONS` pass `native/tools/sanitizer-suppressions/` (`asan.supp`, `ubsan.supp`, `lsan.supp`), comments only so far, every suppression with its reason (`test/native-quality-options.test.js`) | `nightly.yml` `asan-ubsan` job | ubuntu only (Clang) | nightly + manual |
+| **Z** | Fuzzing (`native/fuzz/`): libFuzzer targets `siann_fuzz_protocol_frame`, `siann_fuzz_ws_request`, `siann_fuzz_meter_frame`, `siann_fuzz_loudness_frame`, `siann_fuzz_mcp_http`, `siann_fuzz_command_json` (`-DSIANN_FUZZ=ON`), 180 s each from `native/fuzz/corpus/<target>/`, `crash-*`, `leak-*`, `timeout-*` and `oom-*` uploaded; the same harnesses as the seeded `fuzz_smoke_test` ctest in N and R | `nightly.yml` `fuzz` job (libFuzzer); `native` and `rtsan` jobs (smoke) | libFuzzer: ubuntu; smoke: ubuntu, windows, macos | libFuzzer: nightly + manual; smoke: as N |
+| **C** | Native coverage, Clang source-based (`-DSIANN_COVERAGE=ON`, `LLVM_PROFILE_FILE=%p-%m.profraw`, `llvm-profdata merge`, `llvm-cov show -format=html` and `llvm-cov report`, `_deps` and tests ignored), HTML uploaded as `native-coverage`, summary in the job summary; report only | `nightly.yml` `coverage` job | ubuntu only | nightly + manual |
+| **Pf** | Performance scenario (`app/test/e2e/perf.spec.ts`, `SIANN_PERF=1`): 64 tracks, 2,000 clips playing on the fake device with meters; frame work median and p99 from the renderer's frame marks over a window that starts once the transport plays and a meter frame was drawn (playing at both ends and the meter frames inside go into the report, and frames without them are missing), JS heap, cold start; `perf-report.json` against UI redesign 5.6, uploaded as `perf-report`; report only (fails on a crash or a missing measurement) | `nightly.yml` `perf` job | ubuntu (xvfb) | nightly + manual |
+| **M** | Manual / env-gated (`SIANN_TEST_VST3`, `SIANN_TEST_AU`, `SIANN_TEST_CLAP`, `[hardware]`, `pluginval --compat`, human gates) | maintainer's machines | never | see 3.2 |
 
 Sizes at the audit: ~1,000 native `TEST_CASE`s (protocol 174, apps/engine 93,
 realtime 87, command 82, playback 71, host_desktop 56, session 56, host_clap 55,
@@ -80,7 +86,7 @@ Platform column: which OSes the automated tests actually execute on in CI.
 | m2-device-src | Y (`src_test`, `recording_test`) | Y (`[src]`) | p (JUCE reopen; `[hardware]` SKIPs on runners) | | | 3 + RTSan | real-device half only on the maintainer's bench |
 | m2-realtime-pdc | Y (`pdc_realtime_test`) | Y | | | | 3 + RTSan | - |
 | m2-cli-realtime | Y (`cli_realtime_test`, `cli_kill_test`) | Y | p (`devices`) | | | 3 | - |
-| m2-long-record | ctest guard only | | | Y | Y (`ci-long-tests`) | L: ubuntu, windows (no macOS) | 3 ("20 consecutive runs": manual) |
+| m2-long-record | ctest guard only | | | Y | Y (`ci-long-tests`) | L: ubuntu, windows, macos | 3 ("20 consecutive runs": manual) |
 | m2-rtsan-ci | `[rtsan]` canaries | Y | | | Y (CI-structure) | Linux only (Apple Clang has no RTSan) | 1, 3: CI-structure/doc tests only, by design |
 
 ### M3 Agent access
@@ -638,6 +644,42 @@ side-by-side screenshots by eye.
 | m5b-ui-audition (P2-3) | Y (`branch-snapshot`: proposal.changed fetches its refs at the branch revision once, a second one refetches the union at the new revision, a late answer of an older request is dropped, dropped on proposal.closed of its branch, on any status but connected and on every syncCount change, held again only from the next proposal.changed, never from session.inspect; `edit-guard` (the predicate, the table of structural ops, the one catalog key in three locales); `heard-ghosts` (solid from the branch with main's value as `replaced`, unchanged without a snapshot, a gesture's value a solid ghost of step 0); `audition-keys` (`Shift+A` window, `Mod+Enter` right zone only, neither in a text field, Enter and NumpadEnter kept, Ctrl+Shift+A not taken, `flipTarget`, `primaryAction`); `top-bar` (the chip against the template's line evaluated from mockup.html, `main r<head>`, the plan's name and title while heard, the generic word, no hold; before the first snapshot an empty session name and no chip with nothing in its place, UI redesign 10.11, 15); `edit-guard`, `edit-guard-ui` and `heard-ghosts` also hold the inserts of `m5b-ui-inserts-master` under the guard (bypass, Remove, the empty slot, the picker's choice; e stays) and its ghosts solid while heard; `plan-name` (`heardPlanName`); `plans-tab`, `plan-panel` (the primary's last child the mockup's `<kbd>⏎</kbd>` for Approve N of M, Apply and Merge, no other kbd); `shell-frame` (`data-hearing`); `strip-port` (the solid ghost cap, pan tick and M ring, the real cap marked `data-replaced`, no badge on step 0, none of it on dashed ghosts); `timeline-ghosts` (`ghostStroke`); `timeline-layers` (heard: no lane or clip hatch and no dashed outline on a ghost clip, the proposed lane, a removed lane, a removed clip and the locator band, the lanes' ghost body, a moved clip's original a faint `--ai-a300` outline instead of 38 %); `edit-guard-ui` (Split, M and S disabled with the reason, the fader and knob live); `i18n-catalogs`) | Y (`audition.spec`: frame (a fixed `::after` over the window with a computed 2 px `--ai` border, no pointer), banner, chip and both switches follow audition.changed from a second client; Shift+A both ways and nothing with no proposal (a watcher round-trip); Ctrl+Return merges from the right zone, applies a validated plan, does nothing from the project zone; solid ghosts with main's values as the outline in the hook, the canvas and the strip, dashed after a reload with the frame kept; the guard on Add Track, Split, M and S with the reason, T, Delete, Alt+X, Ctrl+D, M, S, a clip drag and a rename inert with main's head unchanged, a fader drag ending in proposal.changed on the branch as a solid un-numbered ghost; Merge and Discard (proposal.closed merged true and false, the card's state); a partial approval merging exactly its two ticked steps; the engine killed while heard: no frame, banner or solid ghost, the chip `main r<recovered>`, no fetch at the old branch revision; `shell-layout` (the chip shown at 1440 and 1301 px, gone at 1280 and 1080); `i18n-fit` (the chip on one line inside its group with its title, the Plans button in the window, the session's name whole beside the chip, the primary with its kbd, in four locales); `plan-review`, `i18n` (the primary's text with its kbd)) | report (`m5b-ui-audition`; side-by-side screenshots of the top bar in en and zh-TW; 17 and 28 app-only, the mockup has no hearing state) | Y (`mockup-fidelity`: the gate report, `--hold-branch-chip-w` and its rules gone, the 1300 px rule names the chip, the frame on `--space-half` and `--ai`, the proposed header and strip unhatched while heard, the session's name not shrinking beside the chip; `ui-tokens`) | the top bar in every state but 05 (the chip); the primary's kbd in 13 to 15, 17, 18, 20, 21, 26 and 27; 17 hearing the proposal (frame, chip, solid ghosts); 28 appended (the 6-step plan auditioned, solid clip and track ghosts, the Split tool disabled) | 3 | - (7: the screenshots, by eye (maintainer)). The violet frame, the solid ghost and the faint outline are app-only `shell.css` rules on existing tokens; offline the chip keeps the last `main r<head>` |
 | m5b-ui-media (UR-5) | Y (`create-demo-audio`: `writeWav` writes the rate in the header (bytes 24 and 28) and rate x seconds frames, 48000 by default, `--sample-rate 44100` for both demo files, a bad value exits non-zero; `mockup-fidelity`: the gate report, no `--hold-tab-media-w`, `--tab-media-empty-w` in `:root` and the zh-TW / zh-CN block applied from `shell.css` only, `pixels.dynamic` names `plan-step-2-title` and not `plan-step-*-title`; `ui-tokens`) | | Y (`media-bridge`: the accepted extensions from `features.mediaImport.formats`, a drop split into accepted and refused before any request, the open dialog's options; `media-drop`: on track k the files go to k, k+1, ..., past the last track each further file a `track.add` named after the media and a `clip.place` in one command list, all at the snapped position, length the media's frames; `media-import`: one `media.import {path, clientImportId}` per file polled with `job.status`, progress per placeholder, the placements after every import of the drop ended, in drop order, each with the head the read model reached, `existing: true` placed with the returned `mediaId`, a failed job's placeholder removed and its toast with the code and the file name while the others are placed on their lanes, N files N `command.execute`; `media-tab`: the list (name or id, length, channels, rate, use count), the search, Import only with the bridge, rename by double-click (`media.rename`), Remove (`media.remove`) disabled with a reason for used media and absent without the command, rows draggable only with `clip.place`; the edit guard (UI redesign 4.5 C5): while a branch is heard Import, the drag, the rename and Remove are disabled with the reason; `media-import`: while blocked a drop and Import send no request and a toast gives the reason, and a drop whose imports end once a proposal is heard places nothing; `edit-guard`: `media.import`, `media.rename` and `media.remove` in the table; `capabilities`: the event display marked `data-drop-target="guarded"` while a branch is heard; `shell-frame`, `capabilities`: `tab-media` as the mockup's `span.tab` with the folder icon, the `tab-media-empty` box (no role, aria-hidden, no id) without `media.import`, no Import and no drop handlers without `window.siann`; `plan-step-rows`, `plans-tab`: `plan-step-N-title` around a title that names a clip, "Place <media> on <track>" and "Move <media> on <track>"; `clip-title`, `info-line-port`: a rename followed; `key-preset`, `key-dispatcher`, `app-menu`: `media.open` (Mod+P, window) and no `pool.open`; `i18n-catalogs`: the `media.*` strings in three catalogs and no `pool.*`; `layout`: right tabs plans and media, a stored `media` falling back to plans) | Y (`media.spec`: a drop of two files (CDP `Input.dispatchDragEvent`) with placeholders, two media, two clips on consecutive tracks at the snapped position titled with the file names, 2 media.add + 2 command.execute; the same file again `existing`; Import from the tab through a replaced `dialog.showOpenDialog`; a row dragged to the event display, one revision; a 44.1 kHz file into a 48 kHz session `converted`; rename followed by the clip title and the info line; Remove disabled for used media and removing an unused one; N undos remove the N clips; a .txt file refused with a toast and no request; a truncated WAV's `decode_failed` toast; Ctrl+P and the context menu open the tab; reduced capabilities: no `tab-media`, no drop target, the `--tab-media-empty-w` box keeping `rightHead` in place in en and zh-TW; every id in the window; the edit guard: while a proposal is heard Import, Remove and the row's drag are disabled with the reason, a drop of a file sends no `media.import` and raises the reason's toast, main's head unchanged; `plain-tab`: no Import and no request on a drop; `i18n-fit`: the tab, Import, Remove, the search field and the column heads in three locales) | report (`m5b-ui-media`; side-by-side screenshots of the right zone's tab row and the plan steps in en and zh-TW, the Media tab's states from the app alone) | 01, 02, 06, 10, 11, 12, 25 (clip titles); 31, the Media tab with imported files (the Pool's until this feature) | 3 | - (10: the screenshots, by eye (maintainer)) |
 
+### M5b harness features (landed)
+
+| Feature | N | U | E | B | Nightly | Platforms | Gaps |
+|---|---|---|---|---|---|---|---|
+| m5b-nightly-quality | Y (`fuzz_smoke_test`: splitmix64 vectors, deterministic mutations, per target every committed seed, the empty input and about 2,000 seeded inputs, the server answering afterwards, the decoders' seeds decoding) | Y (`perf-report`: median, p99, the 5.6 budgets, `{value, budget, withinBudget}`, `assertComplete`, frames missing on a window not played at both ends or with fewer than 10 meter frames; `perf.spec`'s order: playing and a meter frame before the window; `frame-marks`: `siann.frame` per frame, only under the test hook, in the four draw paths) | `perf.spec` (Pf, `SIANN_PERF=1`) | Y (`ci-workflow` nightly jobs, the app job's coverage step, long-tests on macos; `ci-long-tests` macOS; `check-all-changed` playback, graph, realtime; `test-matrix`; `native-quality-options`; `tour-output`; `script-invocation` g++ reaches `native/fuzz`) | T, Fn, A, Z, C, Pf (`nightly.yml`), L on macos | smoke: 3; nightly: ubuntu (T and Fn also windows) | - |
+
+Per acceptance item (`m5b-nightly-quality`): 1 `ci-workflow` "nightly tour:
+ux-tour.spec.ts in en, zh-Hant and zh-Hans ...", "nightly tour: the fidelity
+report on the same runners ...", "the nightly workflow runs on a schedule and
+by hand only ...", `tour-output` and the dispatched run's `tour-<os>-<locale>`
+and `fidelity-<os>` artifacts; 2 `native-quality-options` (SIANN_ASAN_UBSAN
+beside SIANN_RTSAN, before the first target, Clang only and not with RTSan, the
+suppression files with reasons) and `ci-workflow` "nightly asan-ubsan: ...";
+its first local run (Clang 20.1.8, WSL) found two defects, fixed here:
+`Sha256::update` passed a null pointer to `memcpy` for an empty span (UBSAN,
+the RFC 6962 empty leaf in `merkle_test`), and `plan_test` "Plan entity sets
+accept bus and send refs" read a revision through a reference the rollback had
+moved (ASAN); 3 `fuzz_smoke_test` (ctest, three OSes), `native-quality-options`
+(the targets of the CMake, one per harness function, and their corpora) and
+`ci-workflow` "nightly fuzz: ..."; 4 `ci-workflow` "nightly coverage: ..." and
+"the app job prints the unit test coverage ..."; 5 `check-all-changed`
+"playback runs the desktop preset ...", "graph runs ...", "realtime runs ...",
+"the package step keeps the native paths it had ..." and `ci-long-tests` "the
+long tests run on ubuntu, windows and macos"; 6 app unit `perf-report` and
+`frame-marks`, `perf.spec.ts` in the nightly run; 7 `ci-workflow` "no nightly
+job blocks a pull request ..." and `test-matrix` (section 1 rows, 3.1, the gaps,
+section 7, this row, the tour's 3.2 row). Tour states changed: none. The
+branch's local runs (Clang 20.1.8, WSL, 2026-11-18): ASAN + UBSAN, all 1,174
+ctest tests passed with the suppression files passed and empty; the six
+libFuzzer targets for 180 s each found nothing; coverage 92.9 % of regions of
+SIANN sources (tests, `_deps` and Catch2 ignored), after the coverage step's
+executable list was fixed to skip a generated header carrying the x bit;
+`perf.spec.ts` on Windows: median 0.5 ms and p99 4.5 ms of frame work, 20 MB of
+heap, 400 ms cold start (from the supervisor's ready line, after fix round 1
+moved the start there from the client's first connection), all within 5.6.
+
 ### M5b (not landed), M6a, M6b, M6c, M7 (not started)
 
 No code, so no tests. What matters now is whether each acceptance item says how
@@ -704,11 +746,15 @@ onto session.create, media.import, plans, session.save and render.start.
 - **macOS only**: AU hosting (`juce_plugin_host_mac_test.mm`, pluginval on the
   `.component`), "the engine activates itself while an editor is open", AU sysex.
   `i18n.spec.ts`'s `navigator.languages` test is **skipped** on macOS.
-- **Linux only**: RTSan (the whole suite). Display-dependent JUCE tests run under
-  xvfb + openbox; e2e runs at 1.5 device pixel ratio there only.
-- **Not covered on macOS**: the `long-tests` workflow (ubuntu, windows).
+- **Linux only**: RTSan (the whole suite); the nightly ASAN + UBSAN suite (A), the
+  libFuzzer targets (Z; the seeded smoke test runs on all three), native coverage
+  (C), the UX tour in three locales (T) and the performance scenario (Pf): Clang's
+  sanitizers, libFuzzer and llvm-cov on one OS cover the platform-independent core,
+  and the tour and the scenario are reference renderings, not per-OS behaviour.
+  Display-dependent JUCE tests run under xvfb + openbox; e2e runs at 1.5 device
+  pixel ratio there only.
 - **Never**: Linux arm64 (spec CI matrix lists it; M7), macOS universal binary,
-  ASAN/TSAN/UBSAN builds (spec "Realtime safety" layer), fuzzing (spec "Fuzz").
+  TSAN builds (spec "Realtime safety" layer; not yet built).
 
 ### 3.2 Env-gated and manual tests (never in CI)
 
@@ -719,7 +765,8 @@ onto session.create, media.import, plans, session.save and render.start.
 | "the maintainer's CLAP opens its editor" (Surge XT) | `SIANN_TEST_CLAP` | maintainer, at M5 exit |
 | `juce_device_test` `[hardware]` cases | an output device (SKIP on runners) | maintainer's bench, M2 exit |
 | `node scripts/pluginval.js --compat` | one env var per plugin in `scripts/compat-plugins.json` | maintainer, M4 exit, before a JUCE pin move |
-| `ux-tour.spec.ts` (every "Tour states changed" criterion) | `SIANN_UX_TOUR=1` (and `testIgnore`) | the feature's build agent attaches the states; the maintainer reviews at the `ux-review` gate |
+| `ux-tour.spec.ts` (every "Tour states changed" criterion) | `SIANN_UX_TOUR=1` (and `testIgnore`) | **nightly in CI, three locales** (layer T: the `tour` job of `nightly.yml` runs it for en, zh-Hant and zh-Hans on windows and ubuntu and uploads `tour-<os>-<locale>`); the feature's build agent still attaches the states it changed (or dispatches the workflow on its branch), and the maintainer reviews at the `ux-review` gate |
+| `perf.spec.ts` (Pf; UI redesign 5.6) | `SIANN_PERF=1` (and `testIgnore`) | **nightly in CI** (the `perf` job of `nightly.yml`, ubuntu, `perf-report.json` uploaded); report only. Locally the runbook's command ("Nightly quality jobs"); a change to the timeline or meter draw paths dispatches the workflow on its branch |
 | `mockup-fidelity.spec.ts` (F) | `SIANN_FIDELITY=1` (and its own Playwright project, `fidelity`) | **In CI** on ubuntu and windows (the `app` job sets the variable), as a report that never fails the job (decided by the maintainer, 2026-11-17), so it is run and uploaded on every such PR, not left to a manual test; listed here because the plain `npm test` of `app/` skips it. Locally: `node scripts/check-all.js --only app`, or the command in the runbook. macOS does not run it: the reference rendering is compared on two OSes and the Mac lane would add font rasterisation without adding a layout engine |
 | `mockup-fidelity.spec.ts` "the mockup's measurement (<locale>)" (F on the mockup alone) | `SIANN_FIDELITY_MOCKUP_ONLY=1` with `SIANN_FIDELITY=1` and `SIANN_FIDELITY_MOCKUP_ROOT` (set by `scripts/fidelity-mockup-compare.js`); with the flag set the spec's app gate test skips, without it this test skips | **Not in CI**: it measures a worktree of the base commit, which the CI checkout does not have. The implementer of a change to `tokens.css`, `app/renderer/ui/*.css` or the mockup's script runs `node scripts/fidelity-mockup-compare.js` before the PR (first `m5-ui-tokens-spacing`) and attaches the result; the reviewer checks it at review |
 | `studio-setup` "a refused selection sends the previous device again ..." (U only) | the fake device cannot refuse an open after one succeeded: `--fake-open-failures N` counts from the launch's open, so the e2e (`studio-setup.spec`) drives only the case with no device running, where nothing is sent back | the unit test runs in `npm test` on every OS; a hardware device held by another program is the maintainer's bench, at the `audio-hardware` gate |
@@ -732,11 +779,14 @@ onto session.create, media.import, plans, session.save and render.start.
 ### 3.3 Path gating in pull requests
 
 A pull request runs only the jobs its paths need (`stepsForPath` in
-`scripts/check-all.js`). Consequences: a change in `native/libs/playback`
-runs N and R but **not D** (the JUCE build), so JUCE-only regressions there
-surface only on the push to main or the nightly run; a change in `native/`
-never runs the app e2e against the new engine until main. The nightly
-schedule (18:30 UTC) runs everything.
+`scripts/check-all.js`). Consequences: a change in `native/libs/playback`,
+`native/libs/graph` or `native/libs/realtime` runs N, R **and D** (the JUCE
+build) since `m5b-nightly-quality` (gap 7 closed), not the installer's job; a
+change in another core library (`model`, `session`, `command`, ...) runs N and
+R only; a change in `native/` never runs the app e2e against the new engine
+until main. The nightly schedule of `ci.yml` (18:30 UTC) runs everything;
+`nightly.yml` (00:45 UTC) runs the layers no pull request runs (T, Fn, A, Z, C,
+Pf), and `long-tests.yml` (03:17 UTC) layer L.
 
 ## 4. Parity: protocol method x MCP tool x clients
 
@@ -815,7 +865,8 @@ Taken on Windows, Node 22, 2026-11-14.
 | Node, incl. `scripts/` | same, no include filter | 86.5 % | 78.0 % | 91.2 % | `scripts/check-all.js` 53 % (the build steps), `create-daw-manifest.js` 73 % |
 | App, unit tests only | `npm run build` then `node --test --experimental-test-coverage --test-coverage-exclude='dist/test/**' dist/test/unit/*.test.js` | 89.7 % of loaded files | 88.2 % | 79.7 % | `PlanPanel` 33 %, `TrackListDivider` 32 %, `ValueControl` 37 %, `Mixer` 42 %, `TrackList` 49 %, `Timeline` 51 %, `StepList` 72 %, `plans/diff` 79 %, `keys/commands` 80 %. Never loaded by a unit test: `main.ts`, `preload.ts`, `App.tsx`, `Shell.tsx`, `TopBar.tsx`, `index.tsx` (covered by e2e only) |
 | App e2e | not measured | | | | proposal: `NODE_V8_COVERAGE` for the main process and Playwright's `page.coverage` (Chromium) for the renderer, merged with c8-style tooling in the app job |
-| Native | not measured (heavy) | | | | proposal: a nightly ubuntu job, Clang `-fprofile-instr-generate -fcoverage-mapping`, ctest with `LLVM_PROFILE_FILE=%p.profraw`, `llvm-profdata merge`, `llvm-cov report --ignore-filename-regex='(_deps|tests)/'`; or GCC `--coverage` + gcovr. Report only, no threshold at first |
+| Native | nightly (layer C): the `coverage` job of `nightly.yml`, Clang `-DSIANN_COVERAGE=ON`, ctest with `LLVM_PROFILE_FILE=%p-%m.profraw`, `llvm-profdata merge`, `llvm-cov report --ignore-filename-regex='(_deps|/tests?|/catch2)/\|/tests?)/'`. The figures of the newest run are in that run's job summary, the per-line HTML in its `native-coverage` artifact (since `m5b-nightly-quality`) | see the run | see the run | see the run | report only, no minimum |
+| App, unit tests, per pull request | the `app` job's "Unit test coverage" step prints the command above into each run's job summary, per OS (since `m5b-nightly-quality`) | see the run | | | report only, no minimum |
 
 The low React-component numbers are expected: those components are exercised by
 Playwright, which is not measured. The `bin/siann.js` branch figure, 42 % before
@@ -826,14 +877,11 @@ Playwright, which is not measured. The `bin/siann.js` branch figure, 42 % before
 
 | # | Gap | Risk | Proposed test | Owner |
 |---|---|---|---|---|
-| 4 | "Tour states changed" criteria (7 features) only in the manual tour | Medium: layout regressions are visible only to a human | run `ux-tour.spec.ts` in a nightly job on one OS with `SIANN_UX_TOUR=1` and upload the screenshots as an artifact; later pixel-diff against committed baselines (the `test/mockup-fidelity` work) | M5 `ux-review` gate |
-| 6 | No ASAN/UBSAN/TSAN, no fuzzing (spec test layers) | Medium: protocol server parses untrusted JSON and WAV headers | nightly ubuntu Clang job with `-fsanitize=address,undefined` over ctest; a libFuzzer target for protocol messages, command JSON and the WAV reader | M5b infra / M7 |
-| 7 | Desktop (JUCE) job skipped on PRs that change core libs | Medium: JUCE-only breakage lands on main | add `native/libs/playback`, `graph`, `realtime` to `DESKTOP_PATHS`, or rely on the nightly and track red nightlies | infra |
 | 8 | macOS-specific behaviour manual only (editor float/level, `m0-macos-bundle`, AU third-party) | Medium | an XCTest-free check in the desktop job: window level of an open editor via `CGWindowListCopyWindowInfo`; bundle `Info.plist` assertions once m0-macos-bundle is built | M0 / M5 exit |
-| 9 | Performance budgets of UI spec 5.6 (64 tracks, frame time, memory, cold start) have no scenario | Medium for M5b/M6c | Playwright perf scenario reading `performance.measure` marks; nightly, report-only first | UI phase 4 / M6c |
 | 11 | `read-model-sequence.json` never checked against the engine | Low-medium | native test that replays the sequence's commands and compares the emitted events | M5 follow-up |
-| 12 | Long tests not on macOS | Low | add macos-latest to `long-tests.yml` | infra |
 | 13 | m4-crash-recovery 3, m4-engine-device 3: ordering / link not asserted | Low | ctest: `siann-engine --print-error-mode` (test-only flag) before any plugin; CMake check that `siann_engine_*_tests` link `siann_rt_alloc_guard` | M4 follow-up |
+| 14 | No TSAN build | Low-medium: data races in the command/protocol thread handoff | a nightly `-fsanitize=thread` job over the protocol and realtime suites | M7 hardening |
+| 15 | The media decoders (the WAV and FLAC readers of `native/libs/media`) are not fuzzed: gap 6 named them, `m5b-nightly-quality` fuzzes the protocol input and command JSON | Low: a hostile media file reaches them only through an import the user asked for | a libFuzzer target and a seeded smoke case over `media::` decoding beside `native/fuzz/`, seeded from `fixtures/` WAV and FLAC files | M7 hardening |
 
 ## 7. CI changes
 
@@ -855,16 +903,16 @@ Done in this PR:
   and append the rest. That is a `native/cmake` change, outside this
   docs-and-CI pull request, so it is left to a separate fix (gap 0).
 
-Proposed, not done (each needs a decision or touches build config others are editing):
+The audit's proposals, all done since:
 
-1. Nightly `ux-tour` job with screenshot artifacts (gap 4).
-2. Nightly sanitizer job (ASAN+UBSAN) and a fuzz smoke (gap 6).
-3. Nightly native coverage job with llvm-cov, report-only (section 5).
+1. Nightly `ux-tour` job with screenshot artifacts (gap 4): done by `m5b-nightly-quality` (layer T, three locales).
+2. Nightly sanitizer job (ASAN+UBSAN) and a fuzz smoke (gap 6): done by `m5b-nightly-quality` (layers A and Z; TSAN is gap 14).
+3. Nightly native coverage job with llvm-cov, report-only (section 5): done by `m5b-nightly-quality` (layer C).
 4. Engine-gated Node job against the native `siann-engine`: done by
    `m5b-bridge-native-client` (the `bridge-engine` job, layer G; gap 3 closed).
-5. `long-tests.yml` on macos-latest (gap 12).
-6. Desktop job on core-library PRs (gap 7).
-7. App unit coverage printed in the app job (`--experimental-test-coverage`), no threshold.
+5. `long-tests.yml` on macos-latest (gap 12): done by `m5b-nightly-quality`.
+6. Desktop job on core-library PRs (gap 7): done by `m5b-nightly-quality` (`DESKTOP_PATHS`).
+7. App unit coverage printed in the app job (`--experimental-test-coverage`), no minimum: done by `m5b-nightly-quality`.
 
 ## 8. How to keep it complete
 
@@ -885,8 +933,8 @@ Proposed, not done (each needs a decision or touches build config others are edi
    section 4).
 3. **Every UI feature** gets unit tests for its pure logic, a Playwright e2e for
    each user path against the real engine, the i18n fit check covering its new
-   controls, and the tour states it changes (until the tour runs in CI, the
-   build agent attaches them).
+   controls, and the tour states it changes (the tour runs nightly in three
+   locales, layer T; the build agent still attaches the states it changed).
 4. **Cross-platform by default**: new tests run on ubuntu, windows and macos
    unless the behaviour is platform-specific; a platform skip
    (`#if`, `test.skip(process.platform ...)`, `SKIP`) carries a reason, and the
