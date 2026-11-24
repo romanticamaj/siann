@@ -481,6 +481,7 @@ export const zhHans: Catalog = {
   'error.agent_busy': '代理的待处理请求已满',
   'error.agent_not_connected': '代理未连接',
   'error.invalid_request_text': '文字为空、太长，或包含无法发送的字符',
+  'error.invalid_notes': '记事太长，或包含无法保存的字符',
 
   // Projects and audio setup (m5b-ui-project): the application menu, the
   // start view, the refusals of New and Open, the saved mark, the transport's
@@ -542,6 +543,9 @@ export const zhHans: Catalog = {
   'agent.step': '步骤 {n}',
   'agent.pendingIn': '待审核，于',
   'agentChanges.none': '这条音轨没有待审核的变更。',
+  'inspector.notepad': '记事本',
+  'notepad.label': '{track} 记事',
+  'notepad.changedElsewhere': '记事已在别处更改。离开会保留这段文字；按 Esc 显示新的内容。',
   // The insert racks, the rack switch and the plugin picker (m5b-ui-inserts-master).
   'inspector.inserts': '插入效果',
   'inserts.add': '新增插入效果',

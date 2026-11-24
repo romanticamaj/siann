@@ -42,6 +42,7 @@ const ERROR_KEYS = {
   agent_busy: 'error.agent_busy',
   agent_not_connected: 'error.agent_not_connected',
   invalid_request_text: 'error.invalid_request_text',
+  invalid_notes: 'error.invalid_notes',
 } as const satisfies Record<string, MessageKey>;
 
 type KnownCode = keyof typeof ERROR_KEYS;

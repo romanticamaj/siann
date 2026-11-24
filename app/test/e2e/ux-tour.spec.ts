@@ -1048,6 +1048,33 @@ test('UX screenshot tour', async () => {
     { number: 42 },
   );
 
+  // ---- 43 (m5b-ui-notepad; UI redesign 3.4): the Inspector's Notepad
+  // section open with text. The text is a draft, discarded afterwards with
+  // Escape, so no revision is added and the later states keep their heads;
+  // the section is closed again, as every earlier state shows it.
+  const notepad = page.locator('[data-part="inspector-notepad"]');
+  if ((await notepad.count()) === 0) {
+    await page.getByTestId('track-header-trk_voxlead').locator('.name').click();
+    await expect(page.getByTestId('track-header-trk_voxlead')).toHaveAttribute('aria-selected', 'true');
+  }
+  await expect(notepad).toHaveClass(/\bshut\b/);
+  await notepad.getByRole('button').click();
+  await expect(notepad).not.toHaveClass(/\bshut\b/);
+  const notepadText = page.getByTestId('notepad-text');
+  await notepadText.click();
+  await page.keyboard.type('Double the chorus vocal at bar 17.\nBreath before the bridge: keep it.');
+  await shoot(
+    page,
+    'Notepad open with text',
+    `The Inspector's Notepad section (sec('Notepad',''), m5b-ui-notepad), opened by a click on its head (shut by default, as every earlier state shows it; kept in siann.layout.v1), with text typed into its text area for ${await page.getByTestId('inspector-track').textContent()}. Leaving the area or Ctrl+Enter commits one track.set_notes (one revision, one undo); Escape discards the draft. While the area has the focus no command key but the focus keys runs, so typing m does not mute. The mockup draws the section shut only: the open state is the app's, built from the shared .sec and .sec-b rules.`,
+    { number: 43 },
+  );
+  await page.keyboard.press('Escape');
+  await expect(notepadText).toHaveValue(/^(?!Double the chorus)/);
+  await notepad.getByRole('button').click();
+  await expect(notepad).toHaveClass(/\bshut\b/);
+  await composerField.click();
+
   // ---- 34 (m5b-ui-inserts-master; UI redesign 3.4): an insert rack with a
   // plugin, and the picker open from an empty slot.
   await page.keyboard.press('Escape');

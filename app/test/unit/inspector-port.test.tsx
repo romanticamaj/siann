@@ -243,14 +243,14 @@ test('the pan row: the label, .hs with its thumb only, the value as C, L35, R100
   }
 });
 
-test('the four pending sections keep their rows as empty boxes, the open one and the shut three; Agent changes and Inserts are sec()', () => {
+test('the three pending sections keep their rows as empty boxes, the open one and the shut two; Agent changes, Inserts and Notepad are sec()', () => {
   const app = render([vox()]);
   const holds = findAll(app, byClass('inspector-hold'));
-  // Agent changes landed with m5b-ui-ghosts, Inserts with m5b-ui-inserts-master: their sections are the mockup's sec() (the next tests).
-  const landed = ['inspector-agent-changes', 'inspector-inserts'];
+  // Agent changes landed with m5b-ui-ghosts, Inserts with m5b-ui-inserts-master, Notepad with m5b-ui-notepad: their sections are the mockup's sec() (the next tests, notepad-port).
+  const landed = ['inspector-agent-changes', 'inspector-inserts', 'inspector-notepad'];
   const mockup = findAll(mockupZone(), byClass('sec')).filter((sec) => !landed.includes(sec.attrs['data-part']!));
-  assert.equal(holds.length, 4);
-  assert.equal(mockup.length, 4);
+  assert.equal(holds.length, 3);
+  assert.equal(mockup.length, 3);
   for (const [i, hold] of holds.entries()) {
     const id = mockup[i]!.attrs['data-part']!;
     // Routing's box holds the In row (m5b-ui-recording) until m5b-ui-sends-buses ports the section around it.
@@ -285,7 +285,7 @@ test('the ids are the mockup\'s minus the pending parts\', and no pending id is 
   const app = render([vox()]);
   const ids = (root: Element) => findAll(root, byAttr('data-part')).map((el) => el.attrs['data-part']!).sort();
   assert.deepEqual(ids(app), ids(mockupZone()).filter((id) => !pending(id)));
-  assert.deepEqual(ids(app), ['inspector-agent-changes', 'inspector-buttons', 'inspector-head', 'inspector-inserts', 'inspector-monitor', 'inspector-mute', 'inspector-name', 'inspector-pan', 'inspector-record', 'inspector-solo', 'inspector-tabs', 'inspector-track', 'inspector-volume'].sort());
+  assert.deepEqual(ids(app), ['inspector-agent-changes', 'inspector-buttons', 'inspector-head', 'inspector-inserts', 'inspector-monitor', 'inspector-mute', 'inspector-name', 'inspector-notepad', 'inspector-pan', 'inspector-record', 'inspector-solo', 'inspector-tabs', 'inspector-track', 'inspector-volume'].sort());
 });
 
 test('with no track selected, or a track gone, the zone shows its head and foot and nothing between them', () => {

@@ -70,6 +70,7 @@ import {
 import { useT } from '../i18n/t';
 import type { CommandId, CommandRegistry, ZoneScope } from '../keys/commands';
 import { composingKey, isTextField, resolveKey } from '../keys/dispatcher';
+import { clearEscape, markEscape } from '../keys/escape-intent';
 import { CUBASE_PRESET } from '../keys/preset-cubase';
 import { capabilitySelector } from '../model/capabilities';
 import { FOCUS_COMMANDS, focusMove, ringStep, type FocusPlace } from '../keys/zone-focus';
@@ -484,8 +485,16 @@ export function Shell({
           zoneRing(frames.current[step.zone], step.zone)[0]?.focus();
           return true;
         case 'root':
+          // The control's blur arrives inside focusZone: it is marked as left
+          // by Escape for that call (keys/escape-intent.ts; the Notepad
+          // discards its draft instead of committing it).
+          markEscape(active);
+          try {
+            focusZone(step.zone, true);
+          } finally {
+            clearEscape();
+          }
           // The key goes on: the zone's own Escape (edit.cancel) still runs.
-          focusZone(step.zone, true);
           return false;
       }
     };

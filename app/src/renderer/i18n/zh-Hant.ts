@@ -481,6 +481,7 @@ export const zhHant: Catalog = {
   'error.agent_busy': '代理的待處理請求已滿',
   'error.agent_not_connected': '代理未連線',
   'error.invalid_request_text': '文字是空的、太長，或包含無法傳送的字元',
+  'error.invalid_notes': '記事太長，或包含無法儲存的字元',
 
   // Projects and audio setup (m5b-ui-project): the application menu, the
   // start view, the refusals of New and Open, the saved mark, the transport's
@@ -542,6 +543,9 @@ export const zhHant: Catalog = {
   'agent.step': '步驟 {n}',
   'agent.pendingIn': '待審核，於',
   'agentChanges.none': '這條音軌沒有待審核的變更。',
+  'inspector.notepad': '記事本',
+  'notepad.label': '{track} 記事',
+  'notepad.changedElsewhere': '記事已在別處變更。離開會保留這段文字；按 Esc 顯示新的內容。',
   // The insert racks, the rack switch and the plugin picker (m5b-ui-inserts-master).
   'inspector.inserts': '插入效果',
   'inserts.add': '新增插入效果',
