@@ -341,6 +341,17 @@ async function recordingStates(page: Page, dir: string, locale: string, notes: s
     await monitor.click();
     await expect(monitor).toHaveAttribute('aria-pressed', 'false');
 
+    // The Notepad open with a draft (m5b-ui-notepad): the mockup draws the section shut only.
+    const notepadHead = page.locator('[data-part="inspector-notepad"] > .sec-h');
+    await notepadHead.click();
+    await expect(notepadHead).toHaveAttribute('aria-expanded', 'true');
+    await page.getByTestId('notepad-text').fill(locale === 'en' ? 'Double the chorus vocal at bar 17.\nBreath before the bridge: keep it.' : '第 17 小節的副歌人聲加倍。\n橋段前的換氣保留。');
+    await shootRegion('left-zone', 'left-zone.notepad-open.app.png');
+    notes.push(`The Notepad section open with a draft in its text area (app-only rules .notepad-text on existing tokens; UI redesign 3.4) is ${locale}/left-zone.notepad-open.app.png, the app's alone: the mockup draws the section shut. Compare its head with ${locale}/left-zone.mockup.png.`);
+    await page.getByTestId('notepad-text').press('Escape');
+    await notepadHead.click();
+    await expect(notepadHead).toHaveAttribute('aria-expanded', 'false');
+
     // Record disabled: nothing armed (aria-disabled, the reason in its tooltip).
     await page.getByTestId(`track-record-${vox}`).click();
     await expect(page.getByTestId(`track-record-${vox}`)).toHaveAttribute('aria-pressed', 'false');
