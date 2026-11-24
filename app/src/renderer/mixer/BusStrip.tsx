@@ -16,7 +16,8 @@
 // A plan's bus.remove dims the strip with its step badge (.ghost-removed, as
 // a removed track's strip). The edit guard (4.5 C5): M, S, the pan, the
 // selector and the rename are disabled with the reason while a proposal is
-// heard; the fader is a gesture and stays.
+// heard (the pan knob stays, aria-disabled with the reason as its tooltip);
+// the fader is a gesture and stays.
 
 import { memo, useSyncExternalStore, useState, type CSSProperties, type PointerEvent } from 'react';
 
@@ -130,7 +131,7 @@ export const BusStrip = memo(function BusStrip({ busId, client, gestures, select
   const ref = `bus:${busId}`;
   const gesturable = can.has('gesture.begin') && can.feature('gestures');
   const faderListed = gesturable && can.command('bus.set_gain');
-  const panListed = can.command('bus.set_pan') && guard === null;
+  const panListed = can.command('bus.set_pan');
   const style = { '--c': `var(${trackColourVar(busId)})` } as CSSProperties;
   const classes = ['strip', bus.mute ? 'muted' : '', selected ? 'sel' : '', removal ? 'ghost-removed' : ''].filter(Boolean).join(' ');
   const toggle = (field: 'mute' | 'solo') => {
@@ -160,7 +161,7 @@ export const BusStrip = memo(function BusStrip({ busId, client, gestures, select
         </span>
       ) : null}
       <BusRack client={client} bus={bus} rack={rack} />
-      <PanRow id={busId} name={bus.name} value={bus.pan} entityRef={ref} gestures={pan} listed={panListed} view={view} />
+      <PanRow id={busId} name={bus.name} value={bus.pan} entityRef={ref} gestures={pan} listed={panListed} disabledReason={guard} view={view} />
       <div className="btns" data-part-of="buttons">
         {can.command('bus.set_mute') ? (
           <button type="button" className={`msr m${bus.mute ? ' on' : ''}`} data-testid={`mute-${busId}`} data-part-of="mute" disabled={guard !== null} title={guard ?? undefined} aria-label={t('strip.muteLabel', { track: bus.name })} aria-pressed={bus.mute} onClick={() => toggle('mute')}>

@@ -255,9 +255,16 @@ export function App({
       }
       return sendCommand(client, removeBusCommand(snapshot, busId));
     });
+    // Escape with the lower zone focused clears the bus selection.
+    const offCancel = commands.register('lower', 'edit.cancel', () => {
+      if (buses.getSnapshot() === null) return false;
+      buses.set(null);
+      return true;
+    });
     return () => {
       offAdd();
       offRemove();
+      offCancel();
     };
   }, [commands, client, buses, plans, t]);
   const epoch = useSyncExternalStore(

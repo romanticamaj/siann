@@ -291,13 +291,17 @@ export interface PanRowProps {
   // The gesture controller, or a bus's releaseCommit() (one bus.set_pan at release).
   readonly gestures: ValueGestures;
   readonly listed: boolean;
+  // The edit guard's reason (a bus's pan, a command, while a proposal is
+  // heard): the knob stays, aria-disabled, with the reason as its tooltip,
+  // and takes no gesture or typed value.
+  readonly disabledReason?: string | null;
   readonly ghost?: Extract<Ghost, { kind: 'pan' }>;
   readonly view: GhostView;
 }
 
 // The pan row: the PAN label as the mockup styles it, the knob, the value. A
 // track's and a bus's alike.
-export function PanRow({ id, name, value, entityRef, gestures, listed, ghost, view }: PanRowProps) {
+export function PanRow({ id, name, value, entityRef, gestures, listed, disabledReason = null, ghost, view }: PanRowProps) {
   const t = useT();
   const locale = useLocale();
   const row = useRef<HTMLDivElement | null>(null);
@@ -334,7 +338,25 @@ export function PanRow({ id, name, value, entityRef, gestures, listed, ghost, vi
           {t('strip.panRow')}
         </span>
       )}
-      {listed ? (
+      {listed && disabledReason !== null ? (
+        <Knob
+          pan={value}
+          ghost={ghost?.after}
+          ghostMode={ghost?.mode}
+          ref={knob}
+          data-part-of="pan-knob"
+          data-testid={`pan-${track.id}`}
+          role="slider"
+          aria-disabled="true"
+          aria-label={t('strip.panLabel', { track: track.name })}
+          aria-orientation="horizontal"
+          aria-valuemin={-10_000}
+          aria-valuemax={10_000}
+          aria-valuenow={value}
+          aria-valuetext={text}
+          tooltip={disabledReason}
+        />
+      ) : listed ? (
         <Knob
           pan={value}
           ghost={ghost?.after}

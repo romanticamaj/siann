@@ -45,6 +45,8 @@ export const CUBASE_PRESET: readonly Binding[] = [
   { chord: 'Delete', commandId: 'edit.delete', scope: 'project' },
   { chord: 'Backspace', commandId: 'edit.delete', scope: 'project' },
   { chord: 'Escape', commandId: 'edit.cancel', scope: 'project' },
+  // The lower zone: Escape clears the bus selection (m5b-ui-sends-buses; UI redesign 3.4).
+  { chord: 'Escape', commandId: 'edit.cancel', scope: 'lower' },
   // The event display's zoom (m5-ui-arrange; research/cubase.md 7.6, 8.1).
   { chord: 'H', commandId: 'view.zoomIn', scope: 'project' },
   { chord: 'G', commandId: 'view.zoomOut', scope: 'project' },

@@ -23,6 +23,12 @@
 // cascade too). The edit guard (4.5 C5): while a proposal is heard on, pre,
 // Remove and the empty slot are disabled with the reason; the level is a
 // gesture and stays.
+//
+// In a strip's 80 px slot the level keeps the room (shell.css, .send-slot):
+// hover or focus shows on and Remove beside the bus name, never PRE / POST,
+// which shows there only while it holds the keyboard focus (it stays in the
+// tab order; the Inspector's slot always shows it); a pre-fader send's name
+// is set in italics, and the slot's tooltip names PRE or POST.
 
 import { useEffect, useRef, useState, useSyncExternalStore, type CSSProperties, type KeyboardEvent, type ReactNode } from 'react';
 
@@ -124,12 +130,13 @@ function FilledSlot({ variant, client, gestures, sendId, entity, busName, ghosts
   const removal = ghosts.remove.find((g) => g.sendId === sendId);
   const prefix = TEST_PREFIX[variant];
   const btn = BUTTON_CLASS[variant];
-  const classes = [SLOT_CLASS[variant], enabled ? '' : 'off', removal ? 'ghost-removed' : ''].filter(Boolean).join(' ');
+  const classes = [SLOT_CLASS[variant], 'send-slot', enabled ? '' : 'off', pre ? 'send-pre' : '', removal ? 'ghost-removed' : ''].filter(Boolean).join(' ');
   const text = formatValue('gain', level);
+  const mode = pre ? t('send.pre') : t('send.post');
   const snapshot = () => client.model.getSnapshot();
   const fill = { '--send-fill': percent(milliDbToPosition(level)) } as CSSProperties;
   return (
-    <div className={classes} data-testid={`${prefix}send-${sendId}`} data-send-id={sendId} title={`${busName} · ${text}`} {...(removal ? ghostAttrs(view, [removal.step], removal.mode) : {})}>
+    <div className={classes} data-testid={`${prefix}send-${sendId}`} data-send-id={sendId} title={`${busName} · ${text} · ${mode}`} {...(removal ? ghostAttrs(view, [removal.step], removal.mode) : {})}>
       <button
         type="button"
         className={`${BUTTON_CLASS[variant]}${enabled ? ' on' : ''}`}
@@ -190,7 +197,7 @@ function FilledSlot({ variant, client, gestures, sendId, entity, busName, ghosts
           if (now) send(client, sendPreCommand(now, sendId, !pre));
         }}
       >
-        {pre ? t('send.pre') : t('send.post')}
+        {mode}
       </button>
       <button
         type="button"

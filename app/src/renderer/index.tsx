@@ -88,7 +88,7 @@ import { PluginActions } from './model/plugin-actions';
 import { createFrameRecorder, installFrameMarks, readyLineAt, type FrameTestHooks } from './perf/frame-marks';
 import type { TimelineTestHooks } from './timeline/TimelineCanvas';
 import type { MediaBridge } from './model/media-bridge';
-import { structuralBlocked } from './model/edit-guard';
+import { GUARD_REASON, structuralBlocked } from './model/edit-guard';
 import { MediaImporter, type ImportResult } from './model/media-import';
 import type { MediaHost } from './media/MediaTab';
 
@@ -345,6 +345,8 @@ if (menuBridge) {
       shell: shellPort !== null,
       can: capabilitySelector(client.getState().capabilities),
       busSelected: busSelection.getSnapshot() !== null,
+      // The edit guard (4.5 C5): Add Bus and Remove Bus are disabled with its reason while a proposal is heard.
+      guard: structuralBlocked(plans.getSnapshot().heard) ? translator(locales.getSnapshot())(GUARD_REASON) : null,
     });
     const text = JSON.stringify(model);
     if (text === sentMenu) return;
@@ -355,6 +357,7 @@ if (menuBridge) {
   project.subscribe(pushMenu);
   client.subscribe(pushMenu);
   busSelection.subscribe(pushMenu);
+  plans.subscribe(pushMenu);
   pushMenu();
   menuBridge.onCommand((command) => {
     if ((COMMAND_IDS as readonly string[]).includes(command)) commands.run('window', command as CommandId);

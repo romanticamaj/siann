@@ -1022,6 +1022,15 @@ button.ghost[data-ghost-mode="solid"] { outline-style: solid; }
 .slot.off, .islot.off { color: var(--tx-4); }
 .slot.off::before, .islot.off::before { background: var(--tx-4); }
 .slot-btn.pre, .islot-btn.pre { font-size: var(--fs-micro); }
+/* In a strip's 80 px slot the level keeps the room (fix round 1): on, the
+   name and PRE / POST with Remove do not fit together, so hover and focus
+   show on and Remove beside the name and PRE / POST shows only while it holds
+   the keyboard focus (the Inspector's slot always shows it); a hidden button
+   gives back the slot's gap, and a pre-fader send's name is set in italics. */
+.ins > .slot.send-slot > .slot-btn:not(.on, .ghost) { margin-inline-start: calc(var(--space) * -1); }
+.ins > .slot.send-slot:hover > .slot-btn, .ins > .slot.send-slot:focus-within > .slot-btn { margin-inline-start: 0; }
+.ins > .slot.send-slot > .slot-btn.pre:not(:focus) { width: 0; overflow: hidden; margin-inline-start: calc(var(--space) * -1); }
+.ins > .slot.send-slot.send-pre > .send-level { font-style: italic; }
 /* The bus picker of a send's empty slot (m5b-ui-sends-buses): the plugin picker's dialog without
    its search field; its list starts under the head. */
 .bus-picker .picker-list { margin-top: var(--space-half); }

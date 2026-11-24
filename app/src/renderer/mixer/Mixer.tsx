@@ -22,7 +22,8 @@
 // (BusStrip) stand after the tracks' strips, in busOrder, then the ghost
 // strips of the plan (proposed tracks, then proposed buses), then the
 // master; an engine without features.buses shows none. A press on a bus
-// strip selects the bus (busSelection), Escape in the zone clears it. The
+// strip selects the bus (busSelection), Escape in the zone clears it (the
+// lower zone's edit.cancel, which App registers). The
 // rack row of every strip shows the lit rack switch's rack (racks.shown),
 // when the engine can show it. The meters are measured again when the
 // strips move: a new track or bus order, or proposed strips.
@@ -147,9 +148,6 @@ export function Mixer({ client, gestures, realtime, selectedTrackId = null, onMe
         data-part="mixer"
         aria-label={t('mixer.label')}
         ref={container}
-        onKeyDown={(event) => {
-          if (event.key === 'Escape') selection.set(null);
-        }}
       >
         {(order ?? []).map((trackId) => (
           <Strip key={trackId} trackId={trackId} client={client} gestures={gestures} selected={trackId === selectedTrackId} rack={rack} />
