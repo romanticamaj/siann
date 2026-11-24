@@ -390,6 +390,102 @@ async function recordingStates(page: Page, dir: string, locale: string, notes: s
   }
 }
 
+// m5b-ui-sends-buses' app-only states (UI redesign 3.4; 10.11, 24): the
+// mockup draws the rack row with Inserts lit, no bus strip, no send and the
+// Sends section shut. Two buses (Verb, Delay) and a post-fader send from Vox
+// Lead to Verb are made through the protocol and taken back with
+// session.undo at the end, so the later states see the session as before.
+async function sendsBusesStates(page: Page, dir: string, locale: string, notes: string[], parts: readonly Part[]): Promise<void> {
+  const region = (id: string) => {
+    const rect = parts.find((part) => part.id === id);
+    if (!rect) throw new Error(`the mockup has no region ${id}`);
+    return rect;
+  };
+  const shootRegion = async (id: string, file: string, away = true) => {
+    if (away) await page.mouse.move(VIEW.width - 2, 1);
+    await painted(page);
+    fs.writeFileSync(path.join(dir, file), encodePng(crop(decodePng(await page.screenshot()), region(id))));
+  };
+  const shootWindow = async (file: string) => {
+    await page.mouse.move(VIEW.width - 2, 1);
+    await painted(page);
+    fs.writeFileSync(path.join(dir, file), await page.screenshot());
+  };
+  const vox = TRACK_IDS[4]!;
+  const racks = page.locator('[data-part="mixer-racks"]');
+  const engine = await engineClient(page);
+  try {
+    const before = (await engine.call('session.inspect')).revisions as number;
+    await engine.call('command.execute', {
+      commands: [
+        { op: 'bus.add', busId: 'bus_fid_verb', name: 'Verb' },
+        { op: 'bus.add', busId: 'bus_fid_delay', name: 'Delay' },
+        { op: 'send.add', sendId: 'snd_fid_verb', trackId: vox, busId: 'bus_fid_verb', levelMilliDb: -6000, pre: false },
+        { op: 'send.add', sendId: 'snd_fid_delay', trackId: vox, busId: 'bus_fid_delay', levelMilliDb: -12000, pre: true },
+        { op: 'bus.set_output', busId: 'bus_fid_verb', output: { busId: 'bus_fid_delay' } },
+      ],
+    });
+    await expect(page.getByTestId('mixer-strip-bus-bus_fid_delay')).toBeVisible();
+
+    // The Inspector with Vox Lead's Sends section open, a send per slot, and the Routing section's Out row.
+    await page.getByTestId(`track-header-${vox}`).click({ position: { x: 30, y: 30 } });
+    await expect(page.locator('[data-part="inspector-sends"]').getByTestId('islot-send-snd_fid_verb')).toBeVisible();
+    await shootRegion('left-zone', 'left-zone.sends.app.png');
+    notes.push(`The Inspector's Sends section open with Vox Lead's two sends (Verb post-fader, Delay pre-fader) and "+ Add send", under the Routing section's In and Out rows, is ${locale}/left-zone.sends.app.png, the app's alone. The mockup draws the Sends section shut (sec('Sends','','0')); the app draws it open with its body whenever the engine lists features.sends and send.add, so left-zone.app.png has it open, with no send, where left-zone.mockup.png has it shut, and the geometry row of inspector-sends shows the difference (UI redesign 3.4; 10.11, 24). Compare it with ${locale}/left-zone.mockup.png.`);
+
+    // The Sends rack: the strips' send slots, at rest and with Vox Lead's Verb slot hovered (on and Remove beside the level).
+    await racks.getByTestId('rack-sends').click();
+    await expect(page.getByTestId('send-snd_fid_verb')).toBeVisible();
+    await shootRegion('lower-zone', 'lower-zone.sends.app.png');
+    notes.push(`The Sends rack lit (Vox Lead's send slots: Verb at -6 dB post-fader, Delay at -12 dB pre-fader in italics; the other tracks' two empty slots; the bus strips' empty Sends box) with the bus strips Verb and Delay after the tracks is ${locale}/lower-zone.sends.app.png, the app's alone: the mockup draws Inserts lit and no bus strip. Compare it with ${locale}/lower-zone.mockup.png.`);
+    await page.getByTestId('send-snd_fid_verb').hover();
+    await shootRegion('lower-zone', 'lower-zone.sends-hover.app.png', false);
+    notes.push(`Vox Lead's Verb send slot hovered (on and Remove beside the level, which keeps its room; PRE / POST shows in a strip's slot only with the keyboard focus) is ${locale}/lower-zone.sends-hover.app.png, the app's alone.`);
+
+    // The bus picker of an empty send slot.
+    await page.getByTestId(`mixer-strip-${TRACK_IDS[0]!}`).locator('.ins .slot.empty').first().click();
+    await expect(page.getByTestId('bus-picker')).toBeVisible();
+    await shootWindow('bus-picker.app.png');
+    notes.push(`The bus picker of an empty send slot (the buses in busOrder) is ${locale}/bus-picker.app.png, the app's alone: the mockup has no such list.`);
+    await page.getByTestId('bus-picker').getByTestId('picker-close').click();
+    await expect(page.getByTestId('bus-picker')).toBeHidden();
+
+    // The Routing rack: every strip's output selector (Verb routed to Delay); a selected bus strip.
+    await racks.getByTestId('rack-routing').click();
+    await expect(page.getByTestId('output-bus_fid_delay')).toBeVisible();
+    await page.getByTestId('mixer-strip-bus-bus_fid_delay').locator('.scale').click();
+    await expect(page.getByTestId('mixer-strip-bus-bus_fid_delay')).toHaveAttribute('aria-selected', 'true');
+    await shootRegion('lower-zone', 'lower-zone.routing.app.png');
+    notes.push(`The Routing rack lit (each strip's output selector: the tracks to the master, Verb to Delay, Delay to the master) with the bus strip Delay selected (.sel) is ${locale}/lower-zone.routing.app.png, the app's alone: the mockup draws Inserts lit and no bus strip.`);
+
+    // Delay to Verb closes a loop: the engine refuses it (routing_cycle), shown at Delay's selector.
+    await page.getByTestId('output-bus_fid_delay').selectOption('bus_fid_verb');
+    await expect(page.getByTestId('output-refusal-bus_fid_delay')).toBeVisible();
+    await shootRegion('lower-zone', 'lower-zone.routing-refusal.app.png');
+    notes.push(`Delay routed to Verb, which routes to Delay: the engine's routing_cycle refusal line at Delay's output selector, which keeps the master, is ${locale}/lower-zone.routing-refusal.app.png, the app's alone.`);
+
+    // Remove Bus on the selected Delay, which has a send and a bus routed to it: the confirmation names them.
+    await page.getByTestId('mixer-strip-bus-bus_fid_delay').locator('.scale').click();
+    await app!.evaluate(({ Menu }) => Menu.getApplicationMenu()!.getMenuItemById('mixer.bus.remove')!.click());
+    const confirm = page.locator('dialog[open][data-testid="confirm-dialog"]');
+    await expect(confirm).toBeVisible();
+    await shootWindow('bus-remove-confirm.app.png');
+    notes.push(`The confirmation of Remove Bus on Delay (Vox Lead's send goes, Verb is rerouted to the master) is ${locale}/bus-remove-confirm.app.png, the app's alone: the mockup has no such dialog.`);
+    await confirm.getByTestId('confirm-cancel').click();
+    await expect(confirm).toHaveCount(0);
+
+    // Back as before: Inserts lit, the bus selection cleared, the five commands taken back.
+    await racks.getByTestId('rack-inserts').click();
+    await page.keyboard.press('Escape');
+    // One command.execute was one revision; the refused routing made none.
+    expect((await engine.call('session.inspect')).revisions).toBe(before + 1);
+    await engine.call('session.undo');
+    await expect(page.locator('[data-testid^="mixer-strip-bus-"]')).toHaveCount(0);
+  } finally {
+    engine.close();
+  }
+}
+
 // ---------------------------------------------------------------- the gate
 
 function commit(): string {
@@ -599,6 +695,12 @@ for (const [locale, setting] of Object.entries(MANIFEST.locales)) {
       fs.writeFileSync(path.join(dir, 'left-zone.empty.app.png'), encodePng(crop(decodePng(await page.screenshot()), leftZone)));
       notes.push(`The left zone with no track selected is ${locale}/left-zone.empty.app.png, the app's alone: the mockup always shows a selected track.`);
     }
+
+    // m5b-ui-sends-buses' states the mockup does not draw, the app's alone:
+    // the Sends section open with sends, the Sends rack at rest and hovered,
+    // the bus picker, the Routing rack with a selected bus strip, the
+    // routing_cycle refusal and the removal confirmation (taken back after).
+    await sendsBusesStates(page, dir, locale, notes, mockupParts.parts);
 
     // m5b-ui-recording's states the mockup does not draw, the app's alone,
     // after every measurement (they commit a take and restart the engine):
