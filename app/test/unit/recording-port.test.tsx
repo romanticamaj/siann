@@ -271,8 +271,9 @@ test('inspector-record and inspector-monitor are the third and fourth .msr of .i
   assert.ok(!classes(monitor).includes('on'));
   assert.equal(monitor.attrs['aria-pressed'], 'false');
   assert.ok((monitor.attrs.title ?? '').includes(translator('en')('monitor.mode.off')));
-  // The boxes of read, write and e stay.
-  elements(buttons).slice(4).forEach((el, i) => assertEmptyBox(el, `i-btns box ${i}`));
+  // The boxes of read and write stay; e landed with m5b-ui-editor-channel.
+  elements(buttons).slice(4, 6).forEach((el, i) => assertEmptyBox(el, `i-btns box ${i}`));
+  assert.equal(elements(buttons)[6]!.attrs['data-part'], 'inspector-edit');
 });
 
 test('a monitored track\'s monitor is lit with its mode in the tooltip', () => {
@@ -361,7 +362,8 @@ test('against capabilities without features.recording none of the parts is in th
   const r1 = find(find(zones.headers, byTestId('track-header-trk_a')), byClass('r1'));
   assert.equal(elements(r1).filter((el) => classes(el).includes('msr-box')).length >= 3, true, 'the boxes of record, read and write');
   const buttons = find(zones.inspector, byClass('i-btns'));
-  elements(buttons).slice(2).forEach((el, i) => assertEmptyBox(el, `i-btns box ${i}`));
+  // Read and write's boxes too; e (m5b-ui-editor-channel) needs no engine method.
+  elements(buttons).slice(2, 6).forEach((el, i) => assertEmptyBox(el, `i-btns box ${i}`));
   const routing = find(zones.inspector, (el) => classes(el).includes('inspector-hold') && classes(el).includes('routing'));
   assertEmptyBox(routing, 'the Routing box');
   // The reduced fixture has no transport at all; the full one without recording keeps it.

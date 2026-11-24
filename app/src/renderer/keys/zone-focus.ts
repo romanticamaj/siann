@@ -12,6 +12,9 @@
 // - Enter on a zone (focus.enterZone) moves into its first control; Escape
 //   from a control (focus.zoneRoot) returns to its zone.
 // - Inside a modal dialog nothing here applies: the dialog keeps the focus.
+// - Return on the project zone itself while a clip is selected is editor.open
+//   (m5b-ui-editor-channel; spec 2.1, 3.6): the lower zone shows the clip on
+//   its Editor tab and the focus stays; with no clip it enters the zone.
 
 import type { CommandId, ZoneScope } from './commands';
 
@@ -26,7 +29,14 @@ export type FocusMove =
   | { readonly type: 'zone'; readonly step: 1 | -1 }
   | { readonly type: 'control'; readonly zone: ZoneScope; readonly step: 1 | -1 }
   | { readonly type: 'enter'; readonly zone: ZoneScope }
-  | { readonly type: 'root'; readonly zone: ZoneScope };
+  | { readonly type: 'root'; readonly zone: ZoneScope }
+  // editor.open: the selected clip in the lower zone's Editor tab.
+  | { readonly type: 'editor' };
+
+// What the focus keys need to know beyond the place: whether a clip is selected.
+export interface FocusContext {
+  readonly clipSelected?: boolean;
+}
 
 export const FOCUS_COMMANDS: ReadonlySet<CommandId> = new Set<CommandId>([
   'focus.next',
@@ -46,7 +56,7 @@ export const FOCUS_COMMANDS_IN_FIELDS: ReadonlySet<CommandId> = new Set<CommandI
   'focus.zoneRoot',
 ]);
 
-export function focusMove(command: CommandId, place: FocusPlace): FocusMove | null {
+export function focusMove(command: CommandId, place: FocusPlace, context: FocusContext = {}): FocusMove | null {
   if (place.kind === 'dialog') return null;
   switch (command) {
     case 'focus.nextZone':
@@ -60,7 +70,9 @@ export function focusMove(command: CommandId, place: FocusPlace): FocusMove | nu
       return null;
     }
     case 'focus.enterZone':
-      return place.kind === 'zone' ? { type: 'enter', zone: place.zone } : null;
+      if (place.kind !== 'zone') return null;
+      if (place.zone === 'project' && context.clipSelected === true) return { type: 'editor' };
+      return { type: 'enter', zone: place.zone };
     case 'focus.zoneRoot':
       return place.kind === 'control' ? { type: 'root', zone: place.zone } : null;
     default:

@@ -6,7 +6,11 @@
 //   .ins          the insert rack (m5b-ui-inserts-master; mixer/InsertSlot.tsx):
 //                 a .slot per plugin_slot and the .slot.empty in the positions left
 //   .panrow       the PAN label, the knob (svg.knob, the pan slider), the value
-//   .btns         M and S (.msr.m, .msr.s; .on from the track), the box of e
+//   .btns         M and S (.msr.m, .msr.s; .on from the track), then e
+//                 (.msr.e; m5b-ui-editor-channel): Edit Channel Settings, the
+//                 Channel zone on this track, lit (.on, aria-pressed) while
+//                 the zone shows it; it needs no engine method and is never
+//                 absent on a track strip (the master's is M6c's)
 //   .fad          .scale (the dB labels at the taper's positions), .ftrack
 //                 (the fader: .unity at 0 dB and the .cap), .meter (two .ch)
 //   .readout      the level (a double-click types one) and the peak value (.pk)
@@ -39,6 +43,11 @@
 // An empty box (spec 3.0) has no role, no focus, no data-part id and is
 // hidden from assistive technology; the shared rules' rows and columns, or
 // the --ms-w / --ms-h of the button it stands for, size it.
+//
+// The Channel zone (m5b-ui-editor-channel; UI redesign 2.1) shows the same
+// component for the selected track (variant 'channel'): without
+// data-part-item, so the MixConsole's strip-N numbering does not shift, and
+// with every test id prefixed channel-, so no id is its MixConsole twin's.
 //
 // The plan under review (m5b-ui-ghosts; UI redesign 4.2) adds to a strip what
 // strip() draws for it: a gain change's step badge, the line from the real cap
@@ -89,6 +98,11 @@ export interface StripProps {
   readonly selected?: boolean;
   // The Inserts rack switch (m5b-ui-inserts-master): the rack row shows the insert rack.
   readonly inserts?: boolean;
+  // The MixConsole's strip, or the Channel zone's (m5b-ui-editor-channel).
+  readonly variant?: 'mixer' | 'channel';
+  // e: lit while the Channel zone shows this track; a press reports the track.
+  readonly editLit?: boolean;
+  readonly onEdit?: (trackId: string) => void;
 }
 
 // The track as the UI shows it (committed, or with the gesture's overlay).
@@ -208,11 +222,13 @@ interface FaderProps {
   readonly gestures: GestureController;
   readonly ghosts: readonly GainGhost[];
   readonly view: GhostView;
+  // Before the test ids (the Channel zone's strip).
+  readonly prefix?: string;
 }
 
 // The fader: the mockup's .ftrack with its unity line and cap; the slider. A
 // track's and the master's alike (the master's has the track fader's taper).
-function Fader({ entityRef, value, id, label, gestures, ghosts, view }: FaderProps) {
+function Fader({ entityRef, value, id, label, gestures, ghosts, view, prefix = '' }: FaderProps) {
   const ftrack = useRef<HTMLDivElement | null>(null);
   const cap = useRef<HTMLDivElement | null>(null);
   const tooltip = useRef<HTMLSpanElement | null>(null);
@@ -236,7 +252,7 @@ function Fader({ entityRef, value, id, label, gestures, ghosts, view }: FaderPro
       ref={ftrack}
       className={`ftrack${isAboveCap(value) ? ' warn' : ''}`}
       data-part-of="fader"
-      data-testid={`fader-${id}`}
+      data-testid={`${prefix}fader-${id}`}
       data-position={String(position)}
       role="slider"
       tabIndex={0}
@@ -258,7 +274,7 @@ function Fader({ entityRef, value, id, label, gestures, ghosts, view }: FaderPro
             key={`c${g.step}`}
             className="cap ghost"
             data-part-of="cap-ghost"
-            data-testid={`fader-${id}-ghost-${g.step}`}
+            data-testid={`${prefix}fader-${id}-ghost-${g.step}`}
             {...ghostAttrs(view, [g.step], g.mode)}
             style={{ bottom: percent(to) }}
             onPointerDown={(event) => {
@@ -269,13 +285,13 @@ function Fader({ entityRef, value, id, label, gestures, ghosts, view }: FaderPro
         ];
       })}
       <div className="cap" data-part-of="cap" ref={cap} {...(ghosts.some((g) => g.mode === 'solid') ? { 'data-replaced': 'true' } : {})} style={{ bottom: percent(position) }} />
-      <span ref={tooltip} className="value-tooltip" data-testid={`fader-${id}-tooltip`} role="status" hidden />
+      <span ref={tooltip} className="value-tooltip" data-testid={`${prefix}fader-${id}-tooltip`} role="status" hidden />
     </div>
   );
 }
 
 // The pan row: the PAN label as the mockup styles it, the knob, the value.
-function PanRow({ track, gestures, listed, ghost, view }: ControlProps & { listed: boolean; ghost?: Extract<Ghost, { kind: 'pan' }>; view: GhostView }) {
+function PanRow({ track, gestures, listed, ghost, view, prefix = '' }: ControlProps & { listed: boolean; ghost?: Extract<Ghost, { kind: 'pan' }>; view: GhostView; prefix?: string }) {
   const t = useT();
   const locale = useLocale();
   const row = useRef<HTMLDivElement | null>(null);
@@ -320,7 +336,7 @@ function PanRow({ track, gestures, listed, ghost, view }: ControlProps & { liste
           ghostMode={ghost?.mode}
           ref={knob}
           data-part-of="pan-knob"
-          data-testid={`pan-${track.id}`}
+          data-testid={`${prefix}pan-${track.id}`}
           role="slider"
           tabIndex={0}
           aria-label={t('strip.panLabel', { track: track.name })}
@@ -337,14 +353,14 @@ function PanRow({ track, gestures, listed, ghost, view }: ControlProps & { liste
       )}
       <span
         className="lab"
-        data-testid={`pan-value-${track.id}`}
+        data-testid={`${prefix}pan-value-${track.id}`}
         {...(ghost ? { 'data-part-of': 'pan-value-ghost', ...ghostAttrs(view, [ghost.step], ghost.mode), style: { color: 'var(--ai-2)' } } : {})}
       >
         {editing ? (
           <TypedValue
             kind="pan"
             initial={text}
-            testId={`pan-input-${track.id}`}
+            testId={`${prefix}pan-input-${track.id}`}
             label={t('strip.panInput', { track: track.name })}
             onDone={(typed) => {
               setEditing(false);
@@ -357,12 +373,12 @@ function PanRow({ track, gestures, listed, ghost, view }: ControlProps & { liste
           text
         )}
       </span>
-      <span ref={tooltip} className="value-tooltip" data-testid={`pan-${track.id}-tooltip`} role="status" hidden />
+      <span ref={tooltip} className="value-tooltip" data-testid={`${prefix}pan-${track.id}-tooltip`} role="status" hidden />
     </div>
   );
 }
 
-export const Strip = memo(function Strip({ trackId, client, gestures, selected = false, inserts = true }: StripProps) {
+export const Strip = memo(function Strip({ trackId, client, gestures, selected = false, inserts = true, variant = 'mixer', editLit = false, onEdit }: StripProps) {
   const t = useT();
   const can = useCapabilities();
   const record = useRecordHost();
@@ -371,6 +387,9 @@ export const Strip = memo(function Strip({ trackId, client, gestures, selected =
   const view = useGhostView();
   const guard = useEditGuard();
   if (!track) return null;
+  // The Channel zone's strip: its test ids prefixed, no data-part-item.
+  const prefix = variant === 'channel' ? 'channel-' : '';
+  const tid = (id: string) => `${prefix}${id}`;
   const ghosts = trackGhosts(view.ghosts, trackId);
   const gain = ghosts.gain.at(-1);
   const mute = ghosts.mute.at(-1);
@@ -385,8 +404,8 @@ export const Strip = memo(function Strip({ trackId, client, gestures, selected =
   return (
     <div
       className={classes}
-      data-testid={`mixer-strip-${trackId}`}
-      data-part-item="strip"
+      data-testid={tid(`mixer-strip-${trackId}`)}
+      data-part-item={variant === 'channel' ? undefined : 'strip'}
       role="group"
       aria-label={track.name}
       style={style}
@@ -397,8 +416,8 @@ export const Strip = memo(function Strip({ trackId, client, gestures, selected =
           {String(gain.step)}
         </span>
       ) : null}
-      {inserts && pluginsListed(can) ? <InsertRack client={client} track={track} view={view} /> : <div className="ins" aria-hidden="true" />}
-      <PanRow track={track} gestures={gestures} listed={panListed} ghost={ghosts.pan.at(-1)} view={view} />
+      {inserts && pluginsListed(can) ? <InsertRack client={client} track={track} view={view} prefix={prefix} /> : <div className="ins" aria-hidden="true" />}
+      <PanRow track={track} gestures={gestures} listed={panListed} ghost={ghosts.pan.at(-1)} view={view} prefix={prefix} />
       <div className="btns" data-part-of="buttons">
         {mute && mute.step > 0 ? (
           <span className="stepn" data-part-of="mute-step-ghost" {...ghostAttrs(view, [mute.step])} style={{ position: 'absolute', zIndex: 2, left: 0 }} onClick={() => view.pin(mute.step)}>
@@ -411,29 +430,40 @@ export const Strip = memo(function Strip({ trackId, client, gestures, selected =
           </span>
         ) : null}
         {can.command('track.set_mute') ? (
-          <button type="button" className={`msr m${track.mute ? ' on' : ''}${mute ? ' ghost' : ''}`} data-testid={`mute-${trackId}`} data-part-of="mute" {...(mute?.mode ? { 'data-ghost-mode': mute.mode } : {})} disabled={guard !== null} title={guard ?? undefined} aria-label={t('strip.muteLabel', { track: track.name })} aria-pressed={track.mute} onClick={() => toggleTrack(client, track, 'track.set_mute')}>
+          <button type="button" className={`msr m${track.mute ? ' on' : ''}${mute ? ' ghost' : ''}`} data-testid={tid(`mute-${trackId}`)} data-part-of="mute" {...(mute?.mode ? { 'data-ghost-mode': mute.mode } : {})} disabled={guard !== null} title={guard ?? undefined} aria-label={t('strip.muteLabel', { track: track.name })} aria-pressed={track.mute} onClick={() => toggleTrack(client, track, 'track.set_mute')}>
             M
           </button>
         ) : (
           <Hold className="msr-box" />
         )}
         {can.command('track.set_solo') ? (
-          <button type="button" className={`msr s${track.solo ? ' on' : ''}${solo ? ' ghost' : ''}`} data-testid={`solo-${trackId}`} data-part-of="solo" {...(solo?.mode ? { 'data-ghost-mode': solo.mode } : {})} disabled={guard !== null} title={guard ?? undefined} aria-label={t('strip.soloLabel', { track: track.name })} aria-pressed={track.solo} onClick={() => toggleTrack(client, track, 'track.set_solo')}>
+          <button type="button" className={`msr s${track.solo ? ' on' : ''}${solo ? ' ghost' : ''}`} data-testid={tid(`solo-${trackId}`)} data-part-of="solo" {...(solo?.mode ? { 'data-ghost-mode': solo.mode } : {})} disabled={guard !== null} title={guard ?? undefined} aria-label={t('strip.soloLabel', { track: track.name })} aria-pressed={track.solo} onClick={() => toggleTrack(client, track, 'track.set_solo')}>
             S
           </button>
         ) : (
           <Hold className="msr-box" />
         )}
-        <Hold className="msr-box" />
+        <button
+          type="button"
+          className={`msr e${editLit ? ' on' : ''}`}
+          data-testid={tid(`edit-${trackId}`)}
+          data-part-of="edit"
+          aria-label={t('strip.editLabel', { track: track.name })}
+          title={t('strip.editLabel', { track: track.name })}
+          aria-pressed={editLit}
+          onClick={() => onEdit?.(trackId)}
+        >
+          e
+        </button>
       </div>
       <div className="fad" data-part-of="fader-area">
         <Scale />
         {faderListed ? (
-          <Fader entityRef={ref} value={track.gainMilliDb} id={trackId} label={t('strip.gainLabel', { track: track.name })} gestures={gestures} ghosts={ghosts.gain} view={view} />
+          <Fader entityRef={ref} value={track.gainMilliDb} id={trackId} label={t('strip.gainLabel', { track: track.name })} gestures={gestures} ghosts={ghosts.gain} view={view} prefix={prefix} />
         ) : (
           <div aria-hidden="true" />
         )}
-        <Meter meterRef={ref} testId={`meter-${trackId}`} />
+        <Meter meterRef={ref} testId={tid(`meter-${trackId}`)} />
       </div>
       <div className="readout" data-part-of="readout">
         <ValueReadout
@@ -441,28 +471,28 @@ export const Strip = memo(function Strip({ trackId, client, gestures, selected =
           entityRef={ref}
           value={track.gainMilliDb}
           gestures={gestures}
-          testId={`fader-value-${trackId}`}
+          testId={tid(`fader-value-${trackId}`)}
           label={t('strip.levelLabel', { track: track.name })}
-          typing={faderListed ? { testId: `gain-input-${trackId}`, label: t('strip.gainInput', { track: track.name }) } : undefined}
+          typing={faderListed ? { testId: tid(`gain-input-${trackId}`), label: t('strip.gainInput', { track: track.name }) } : undefined}
         />
         {gain ? (
-          <span className="to" data-testid={`fader-value-${trackId}-ghost`} {...ghostAttrs(view, [gain.step], gain.mode)}>
+          <span className="to" data-testid={tid(`fader-value-${trackId}-ghost`)} {...ghostAttrs(view, [gain.step], gain.mode)}>
             {`→ ${formatDb(gain.after).replace(/ dB$/, '')}`}
           </span>
         ) : (
-          <PeakValue meterRef={ref} testId={`peak-value-${trackId}`} label={t('strip.peakLabel', { track: track.name })} />
+          <PeakValue meterRef={ref} testId={tid(`peak-value-${trackId}`)} label={t('strip.peakLabel', { track: track.name })} />
         )}
       </div>
       {recordHost ? (
         <div className="btns">
           <Hold className="msr-box" />
           <Hold className="msr-box" />
-          <RecordEnable host={recordHost} track={track} testId={`strip-record-${trackId}`} partOf="record" />
+          <RecordEnable host={recordHost} track={track} testId={tid(`strip-record-${trackId}`)} partOf="record" />
         </div>
       ) : (
         <div className="btns" aria-hidden="true" />
       )}
-      <div className="nametag" data-testid={`strip-name-${trackId}`} data-part-of="name" dir={ISOLATE.dir} style={{ ...ISOLATE.style }} title={renameTitle(track.name, rename?.after)}>
+      <div className="nametag" data-testid={tid(`strip-name-${trackId}`)} data-part-of="name" dir={ISOLATE.dir} style={{ ...ISOLATE.style }} title={renameTitle(track.name, rename?.after)}>
         {rename ? <RenameGhost before={track.name} after={rename.after} step={rename.step} view={view} /> : track.name}
       </div>
     </div>

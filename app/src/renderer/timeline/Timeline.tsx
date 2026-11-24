@@ -245,6 +245,8 @@ export interface TimelineProps {
   readonly media?: MediaHost | null;
   // The event display's context menu: show the right zone on the Media tab.
   readonly onOpenMedia?: () => void;
+  // A double-click on a clip's body (m5b-ui-editor-channel): the clip in the lower zone's Editor tab.
+  readonly onOpenEditor?: (clipId: string) => void;
 }
 
 const NO_PLACEHOLDERS: readonly Placeholder[] = Object.freeze([]);
@@ -313,6 +315,7 @@ export function Timeline({
   toasts,
   media = null,
   onOpenMedia,
+  onOpenEditor,
 }: TimelineProps) {
   const contentRef = useRef<HTMLCanvasElement | null>(null);
   const overlayRef = useRef<HTMLCanvasElement | null>(null);
@@ -343,6 +346,8 @@ export function Timeline({
   const allowed = useCallback((op: string) => canRef.current.command(op) && !(isStructural(op) && structuralBlocked(heardRef.current)), []);
   const locateRef = useRef(onLocate);
   locateRef.current = onLocate;
+  const openEditorRef = useRef(onOpenEditor);
+  openEditorRef.current = onOpenEditor;
   const gates = editGates(can);
   const canAdd = can.command('track.add');
   const trackIds = selectedTrackIds ?? (selectedTrackId ? [selectedTrackId] : NO_IDS);
@@ -435,6 +440,7 @@ export function Timeline({
         toastsRef.current?.push(translator(localeStore().getSnapshot())(key), (locale) => translator(locale)(key));
       },
       ...(feed ? { recording: feed } : {}),
+      onOpenEditor: (clipId) => openEditorRef.current?.(clipId),
     });
     surface.setSnap(layout.getSnapshot().layout.snap);
     const offAutoScroll = layout.subscribe(() => surface.setAutoScroll(layout.getSnapshot().layout.autoScroll));

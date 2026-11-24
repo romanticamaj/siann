@@ -316,7 +316,7 @@ test('serialize and parse one object; unknown or corrupt JSON falls back to the 
 });
 
 test('the same stored layout serves every session; only the reserved track heights are per session id', () => {
-  const layout: Layout = { ...DEFAULT_LAYOUT, sizes: { left: 250, lower: 200, right: 400 }, trackHeights: { ses_a: { trk_1: 96 } } };
+  const layout: Layout = { ...DEFAULT_LAYOUT, sizes: { channel: 96, left: 250, lower: 200, right: 400 }, trackHeights: { ses_a: { trk_1: 96 } } };
   const a = viewFor(layout, 'ses_a');
   const b = viewFor(layout, 'ses_b');
   assert.deepEqual({ ...a, trackHeights: null }, { ...b, trackHeights: null });
@@ -331,7 +331,7 @@ test('the layout store reads and writes one key and survives storage that throws
     getItem: (key: string) => saved.get(key) ?? null,
     setItem: (key: string, value: string) => void saved.set(key, value),
   };
-  saved.set(LAYOUT_KEY, serializeLayout({ ...DEFAULT_LAYOUT, sizes: { left: 300, lower: 200, right: 400 } }));
+  saved.set(LAYOUT_KEY, serializeLayout({ ...DEFAULT_LAYOUT, sizes: { channel: 96, left: 300, lower: 200, right: 400 } }));
   const store = createLayoutStore({ storage });
   assert.equal(store.getSnapshot().layout.sizes.left, 300);
   let calls = 0;

@@ -158,6 +158,9 @@ export type TrimEdge = 'left' | 'right';
 
 // The width of the resize target along each edge, in pixels.
 export const HANDLE_PX = 4;
+// A pointer that moved less than this is a click (select), not a drag: the
+// event display's and the sample editor's (m5b-ui-editor-channel).
+export const DRAG_THRESHOLD_PX = 3;
 // The resize targets in the lower corners, in pixels.
 export const CORNER_PX = 8;
 // The volume control: draw()'s rr(x+9, y+h-12, 38, 10, 3) in the box, and

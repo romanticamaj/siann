@@ -13,12 +13,17 @@
 // backgrounds count them). The canvas's test hooks (window.__siannMeters
 // under SIANN_SHELL_TEST=1) are handed to index.tsx through onMeterHooks.
 //
+// e on a track strip (m5b-ui-editor-channel) is lit while the Channel zone
+// shows its track (channelTrackId) and reports a press to onEditChannel. The
+// Channel zone draws its strip's meter with a MeterBoard of its own over the
+// same MeterStore (ChannelZone.tsx); useMeterBoard mounts either.
+//
 // The plan under review (m5b-ui-ghosts; UI redesign 4.2): a proposed track's
 // strip (GhostStrip) follows the tracks' strips, before the master, in step
 // order; a request to reveal a step's ghosts (a hovered or located step)
 // scrolls the mixer by the least amount that shows its strips.
 
-import { useContext, useEffect, useRef, useState, useSyncExternalStore } from 'react';
+import { useContext, useEffect, useRef, useState, useSyncExternalStore, type RefObject } from 'react';
 
 import { useT } from '../i18n/t';
 import type { GestureController } from '../model/gesture-controller';
@@ -45,9 +50,43 @@ export interface MixerProps {
   readonly racks?: { readonly inserts: boolean };
   // The meter store the Meter tab shares (m5b-ui-meter); one of its own otherwise.
   readonly meterStore?: MeterStore;
+  // The track the Channel zone shows while it is shown (its strip's e is lit), and e's press.
+  readonly channelTrackId?: string | null;
+  readonly onEditChannel?: (trackId: string) => void;
 }
 
-export function Mixer({ client, gestures, realtime, selectedTrackId = null, onMeterHooks, racks, meterStore }: MixerProps) {
+// Mounts a meter board on its container and canvas while both exist, feeds it
+// the realtime frames and loudness, wakes it when the window shows again, and
+// hands its test hooks out (the MixConsole's canvas, the Channel zone's).
+export function useMeterBoard(
+  board: MeterBoard,
+  container: RefObject<HTMLElement | null>,
+  canvas: RefObject<HTMLCanvasElement | null>,
+  realtime: Pick<RealtimeClient, 'subscribe'> & Partial<Pick<RealtimeClient, 'subscribeLoudness'>>,
+  onMeterHooks?: (hooks: MeterTestHooks | null) => void,
+): void {
+  useEffect(() => {
+    const el = container.current;
+    const surface = canvas.current;
+    if (!el || !surface) return undefined;
+    const meters = board.meters;
+    board.mount(el, surface);
+    const offFrames = realtime.subscribe(() => meters.onFrame());
+    const offLoudness = typeof realtime.subscribeLoudness === 'function' ? realtime.subscribeLoudness(() => meters.onLoudness()) : () => undefined;
+    const visible = () => meters.wake();
+    document.addEventListener('visibilitychange', visible);
+    onMeterHooks?.(meters.testHooks());
+    return () => {
+      offFrames();
+      offLoudness();
+      document.removeEventListener('visibilitychange', visible);
+      onMeterHooks?.(null);
+      board.mount(null, null);
+    };
+  }, [board, container, canvas, realtime, onMeterHooks]);
+}
+
+export function Mixer({ client, gestures, realtime, selectedTrackId = null, onMeterHooks, racks, meterStore, channelTrackId = null, onEditChannel }: MixerProps) {
   const t = useT();
   const order = useSyncExternalStore(
     (listener) => client.model.subscribe(listener),
@@ -74,25 +113,7 @@ export function Mixer({ client, gestures, realtime, selectedTrackId = null, onMe
   const container = useRef<HTMLElement | null>(null);
   const canvas = useRef<HTMLCanvasElement | null>(null);
 
-  useEffect(() => {
-    const el = container.current;
-    const surface = canvas.current;
-    if (!el || !surface) return undefined;
-    const meters = board.meters;
-    board.mount(el, surface);
-    const offFrames = realtime.subscribe(() => meters.onFrame());
-    const offLoudness = typeof realtime.subscribeLoudness === 'function' ? realtime.subscribeLoudness(() => meters.onLoudness()) : () => undefined;
-    const visible = () => meters.wake();
-    document.addEventListener('visibilitychange', visible);
-    onMeterHooks?.(meters.testHooks());
-    return () => {
-      offFrames();
-      offLoudness();
-      document.removeEventListener('visibilitychange', visible);
-      onMeterHooks?.(null);
-      board.mount(null, null);
-    };
-  }, [board, realtime, onMeterHooks]);
+  useMeterBoard(board, container, canvas, realtime, onMeterHooks);
 
   // Strips moved without changing size (a new track order): measure again.
   const proposed = view.ghosts.filter((g) => g.kind === 'track-add').length;
@@ -114,7 +135,7 @@ export function Mixer({ client, gestures, realtime, selectedTrackId = null, onMe
     <MetersContext.Provider value={board}>
       <section className="mixer" data-testid="mixer" data-part="mixer" aria-label={t('mixer.label')} ref={container}>
         {(order ?? []).map((trackId) => (
-          <Strip key={trackId} trackId={trackId} client={client} gestures={gestures} selected={trackId === selectedTrackId} inserts={racks?.inserts ?? true} />
+          <Strip key={trackId} trackId={trackId} client={client} gestures={gestures} selected={trackId === selectedTrackId} inserts={racks?.inserts ?? true} editLit={trackId === channelTrackId} onEdit={onEditChannel} />
         ))}
         {view.ghosts.map((g) => (g.kind === 'track-add' ? <GhostStrip key={`ghost-${g.trackId}`} ghost={g} view={view} /> : null))}
         {hasMaster ? <MasterStrip client={client} gestures={gestures} /> : null}

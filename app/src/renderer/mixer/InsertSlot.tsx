@@ -83,9 +83,11 @@ interface SlotProps {
   readonly view: GhostView;
   readonly host: InsertsHost | null;
   readonly buttons: SlotButtons;
+  // Before every test id (the Channel zone's strip: 'channel-'; m5b-ui-editor-channel).
+  readonly prefix?: string;
 }
 
-function FilledSlot({ variant, slotId, slot, ghosts, view, host, buttons }: SlotProps) {
+function FilledSlot({ variant, slotId, slot, ghosts, view, host, buttons, prefix = '' }: SlotProps) {
   const t = useT();
   const guard = useEditGuard();
   const status = useEngineStatus(host);
@@ -97,7 +99,7 @@ function FilledSlot({ variant, slotId, slot, ghosts, view, host, buttons }: Slot
   const missing = state === 'missing';
   const removal = ghosts.remove.find((g) => g.slotId === slotId);
   const ring = ghosts.bypass.find((g) => g.slotId === slotId);
-  const base = SLOT_CLASS[variant];
+  const base = `${prefix}${SLOT_CLASS[variant]}`;
   const btn = BUTTON_CLASS[variant];
   const classes = [SLOT_CLASS[variant], bypass ? 'bypassed' : '', missing ? 'missing' : '', removal ? 'ghost-removed' : ''].filter(Boolean).join(' ');
   const title = error ? `${name} · ${error.code}: ${error.message}` : name;
@@ -169,8 +171,8 @@ function FilledSlot({ variant, slotId, slot, ghosts, view, host, buttons }: Slot
   );
 }
 
-function GhostSlot({ variant, ghost, view }: { variant: 'strip' | 'inspector'; ghost: Extract<Ghost, { kind: 'insert-add' }>; view: GhostView }) {
-  const base = SLOT_CLASS[variant];
+function GhostSlot({ variant, ghost, view, prefix = '' }: { variant: 'strip' | 'inspector'; ghost: Extract<Ghost, { kind: 'insert-add' }>; view: GhostView; prefix?: string }) {
+  const base = `${prefix}${SLOT_CLASS[variant]}`;
   return (
     <div className={`${SLOT_CLASS[variant]} ghost`} data-testid={`${base}-ghost-${ghost.step}`} {...ghostAttrs(view, [ghost.step], ghost.mode)} title={ghost.name} onClick={() => view.pin(ghost.step)}>
       <span className="stepn">{String(ghost.step)}</span>
@@ -181,8 +183,8 @@ function GhostSlot({ variant, ghost, view }: { variant: 'strip' | 'inspector'; g
 
 // An empty slot; its test id names the track and the position (each is a stop of its own).
 // Held by the edit guard it stays a stop, disabled with the reason, and opens nothing.
-function EmptySlot({ variant, id, label, onOpen, children }: { variant: 'strip' | 'inspector'; id: string; label: string; onOpen: () => void; children: ReactNode }) {
-  const base = SLOT_CLASS[variant];
+function EmptySlot({ variant, id, label, onOpen, children, prefix = '' }: { variant: 'strip' | 'inspector'; id: string; label: string; onOpen: () => void; children: ReactNode; prefix?: string }) {
+  const base = `${prefix}${SLOT_CLASS[variant]}`;
   const guard = useEditGuard();
   const open = guard === null ? onOpen : () => undefined;
   return (
@@ -205,10 +207,12 @@ interface RackProps {
   readonly client: SessionClient;
   readonly track: TrackEntity;
   readonly view: GhostView;
+  // Before every test id (the Channel zone's strip).
+  readonly prefix?: string;
 }
 
 // A track strip's insert rack: strip()'s .ins.
-export function InsertRack({ client, track, view }: RackProps) {
+export function InsertRack({ client, track, view, prefix = '' }: RackProps) {
   const t = useT();
   const can = useCapabilities();
   const host = useInsertsHost();
@@ -221,11 +225,11 @@ export function InsertRack({ client, track, view }: RackProps) {
     <div className="ins" data-part-of="inserts" role="group" aria-label={t('inserts.rack', { track: track.name })}>
       {rows(inserts, slots, ghosts, RACK_POSITIONS).map((row, i) =>
         row.kind === 'slot' ? (
-          <FilledSlot key={row.slotId} variant="strip" slotId={row.slotId} slot={row.slot} ghosts={ghosts} view={view} host={host} buttons={buttons} />
+          <FilledSlot key={row.slotId} variant="strip" slotId={row.slotId} slot={row.slot} ghosts={ghosts} view={view} host={host} buttons={buttons} prefix={prefix} />
         ) : row.kind === 'ghost' ? (
-          <GhostSlot key={`g${row.ghost.step}`} variant="strip" ghost={row.ghost} view={view} />
+          <GhostSlot key={`g${row.ghost.step}`} variant="strip" ghost={row.ghost} view={view} prefix={prefix} />
         ) : (
-          <EmptySlot key={`e${i}`} variant="strip" id={`${track.id}-${i}`} label={t('inserts.addTo', { track: track.name })} onOpen={open}>
+          <EmptySlot key={`e${i}`} variant="strip" id={`${track.id}-${i}`} label={t('inserts.addTo', { track: track.name })} onOpen={open} prefix={prefix}>
             +
           </EmptySlot>
         ),

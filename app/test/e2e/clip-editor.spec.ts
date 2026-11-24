@@ -224,8 +224,13 @@ test('double-clicks on a fade handle or area switch the curve and keep the tab; 
   await drag(handle, 120);
   await expect.poll(async () => (await fetchClip('clp_1')).fadeIn !== undefined).toBe(true);
   const curve = (await fetchClip('clp_1')).fadeIn!.curve;
+  // The window has the fade: its revision and the handle at the fade's end.
+  const { revision: head } = (await engine!.call('session.inspect')) as { revision: string };
+  await expect(page.getByTestId('revision')).toHaveText(head);
+  type Drawn = { clipId: string; fadeIn: { length: string } | null; handles: { fadeIn: Box } | null };
+  await expect.poll(async () => (await timeline<Drawn[]>('fades')).find((f) => f.clipId === 'clp_1')?.fadeIn !== null).toBe(true);
   let before = await revision();
-  const moved = (await timeline<Array<{ clipId: string; handles: { fadeIn: Box } | null }>>('fades')).find((f) => f.clipId === 'clp_1')!;
+  const moved = (await timeline<Drawn[]>('fades')).find((f) => f.clipId === 'clp_1')!;
   const tip = await onCanvas(moved.handles!.fadeIn.x + moved.handles!.fadeIn.width / 2, moved.handles!.fadeIn.y + 1);
   await page.mouse.dblclick(tip.x, tip.y);
   await expect.poll(revision).toBe(before + 1);
@@ -277,9 +282,11 @@ test('dragging the range\'s end resizes the clip in one revision, one undo resto
   await page.keyboard.press(`${MOD}+KeyZ`);
   await expect.poll(async () => (await fetchClip('clp_2')).length).toBe(original.length);
   // Ctrl: unsnapped, the drag's frames exactly.
+  const { revision: head } = (await engine!.call('session.inspect')) as { revision: string };
+  await expect(page.getByTestId('revision')).toHaveText(head);
   before = await revision();
   await drag(end, -60, 0, MOD);
-  await expect.poll(revision).toBe(before + 2);
+  await expect.poll(revision).toBe(before + 1);
   const free = BigInt((await fetchClip('clp_2')).length);
   expect(Number(BigInt(original.length) - free)).toBeGreaterThanOrEqual(Math.round(58 * view.framesPerPixel));
   expect(Number(BigInt(original.length) - free)).toBeLessThanOrEqual(Math.round(62 * view.framesPerPixel));

@@ -49,6 +49,12 @@ export const en = {
   'zone.right': 'Right zone',
   'zone.buttons': 'Zones',
   'zone.resize': 'Resize the {zone}',
+  // The Channel zone and the lower zone's Editor tab (m5b-ui-editor-channel).
+  'zone.channel': 'Channel zone',
+  'tab.editor': 'Editor',
+  'editor.label': 'Sample editor',
+  'editor.none': 'No clip selected',
+  'strip.editLabel': '{track} channel settings',
   'tab.track': 'Track',
   'tab.mixconsole': 'MixConsole',
   'tab.plans': 'Plans',

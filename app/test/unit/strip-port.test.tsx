@@ -225,7 +225,7 @@ test('the Channel zone\'s strip is the same component without data-part-item and
   const node: ReactNode = (
     <CapabilitiesContext.Provider value={FULL}>
       <RecordContext.Provider value={recordHost(snap, FULL)}>
-        <Strip trackId="trk_a" client={fakeClient(snap)} gestures={gestures} variant="channel" edit={{ lit: true, onEdit: () => undefined }} />
+        <Strip trackId="trk_a" client={fakeClient(snap)} gestures={gestures} variant="channel" editLit onEdit={() => undefined} />
       </RecordContext.Provider>
     </CapabilitiesContext.Provider>
   );

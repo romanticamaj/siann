@@ -2,7 +2,9 @@
 // spec 3.2 and 5.2): an imperative class that owns two stacked canvases,
 // outside React state, sized to their container (a ResizeObserver and a
 // device-pixel-ratio media query) and never to the session; scrolling changes
-// what is drawn, not a DOM scroll offset.
+// what is drawn, not a DOM scroll offset. The canvases, their size and their
+// animation frames are the two-layer surface it shares with the sample editor
+// (LayeredSurface.ts; m5b-ui-editor-channel).
 //
 // - The content layer is the mockup's draw() (m5-ui-port-arrange-canvas; UI
 //   redesign 10.9), its sizes from tokens.ts and its colours from tokens.css:
@@ -191,6 +193,7 @@ import {
   CLIP_RADIUS,
   CLIP_TITLE_HEIGHT,
   DEFAULT_LANE_HEIGHT,
+  DRAG_THRESHOLD_PX,
   GAIN_RADIUS,
   LANES_TOP,
   RULER_HEIGHT,
@@ -258,6 +261,7 @@ import { SELECTED_OUTLINE_W, clipPalette, trackColourVar, type ClipPalette } fro
 import { waveformColumns, type WaveColumn } from './waveform';
 import { ZOOM_STEP, maxScrollY, scrollFramesBy, scrollYBy, stepLaneHeight, zoomAbout, zoomFull, zoomToRange } from './zoom';
 import { frameMarks } from '../perf/frame-marks';
+import { LayeredSurface } from './LayeredSurface';
 
 // The tools of P1-8: 1 Object Selection, 3 Split; of m5b-ui-edit-more: 4
 // Glue, 5 Erase (UI redesign spec 3.2).
@@ -357,6 +361,10 @@ export interface TimelineCanvasOptions {
   // features.clipFades and clip.set_fade); off when absent. What a gesture
   // sends still goes through `allows` (the edit guard).
   readonly fadesEnabled?: () => boolean;
+  // A double-click on a clip's body with the Object Selection tool and no
+  // modifier (m5b-ui-editor-channel; UI redesign 2.1, 3.2): the clip, now the
+  // selection's primary, is shown in the lower zone's Editor tab (editor.open).
+  readonly onOpenEditor?: (clipId: string) => void;
 }
 
 // A clip's fades as the canvas draws and hits them (m5b-ui-fades; the e2e
@@ -654,8 +662,6 @@ export const DEFAULT_FRAMES_PER_PIXEL = 100;
 // the cursor's and zoom's below (RULER_LOWER); geometry.ts reads them from
 // tokens.css --ruler-h, --ruler-upper-h and --ruler-lower-h.
 export { RULER_HEIGHT, RULER_LOWER, RULER_UPPER };
-// A pointer that moved less than this is a click (select), not a drag.
-const DRAG_THRESHOLD_PX = 3;
 const PLACE_ATTEMPTS = 3;
 // A vertical ruler drag of this many px halves or doubles the frames per pixel.
 const RULER_DRAG_PX_PER_STEP = 40;
@@ -678,6 +684,9 @@ const MINOR_TICK = 9;
 const QUARTER_TICK = 5;
 const LABEL_X = 4;
 const LABEL_Y = 10;
+// The ruler's ticks and labels as draw() places them, for the sample editor's
+// ruler too (m5b-ui-editor-channel).
+export const RULER_MARKS = Object.freeze({ barsPerMajor: BARS_PER_MAJOR, majorTickTop: MAJOR_TICK_TOP, minorTick: MINOR_TICK, quarterTick: QUARTER_TICK, labelX: LABEL_X, labelY: LABEL_Y });
 // A clip: its title TITLE_X inside the box at the strip's middle, drawn
 // on a box wider than TITLE_MIN_W; the outline half a pixel inside (a
 // quarter when selected).
@@ -717,14 +726,11 @@ export class TimelineCanvas {
   #rulerDrag: RulerDrag | null = null;
   #locatorDrag: LocatorDrag | null = null;
   #locatorBand: LocatorBandDrawn | null = null;
-  #contentFrame: number | null = null;
-  #overlayFrame: number | null = null;
+  // The two canvases, their size and their animation frames (LayeredSurface.ts).
+  #surface: LayeredSurface | null = null;
   #columns = new Map<string, PeakColumns>();
   #rects: ClipRect[] = [];
-  #resize: ResizeObserver | null = null;
   #ratio = 1;
-  #media: { query: MediaQueryList; listener: () => void } | null = null;
-  #destroyed = false;
   #rulerLabels: string[] = [];
   #contentDraws = 0;
   #overlayDraws = 0;
@@ -827,23 +833,24 @@ export class TimelineCanvas {
       overlay.removeEventListener('dblclick', dblclick);
       this.#container.removeEventListener('wheel', wheel);
     });
-    if (typeof ResizeObserver !== 'undefined') {
-      this.#resize = new ResizeObserver(() => this.#sizeChanged());
-      this.#resize.observe(this.#container);
-    }
-    this.#watchRatio();
-    this.#sizeChanged();
+    this.#surface = new LayeredSurface({
+      content: this.#content,
+      overlay: this.#overlay,
+      container: this.#container,
+      // Above the scroll-zoom bar: the cursor ends at its top, as in the mockup.
+      measure: (container) => ({ width: Math.max(1, Math.round(container.clientWidth)), height: Math.max(1, Math.round(container.clientHeight - SCROLLBAR_H)) }),
+      drawContent: () => this.#drawContent(),
+      drawOverlay: () => this.#drawOverlay(),
+      resized: (width, height, ratio) => {
+        this.#ratio = ratio;
+        if (width !== this.#view.width || height !== this.#view.height) this.#view = { ...this.#view, width, height };
+      },
+    });
   }
 
   destroy(): void {
-    this.#destroyed = true;
     for (const off of this.#unsubscribe.splice(0)) off();
-    this.#resize?.disconnect();
-    this.#unwatchRatio();
-    if (this.#contentFrame !== null) cancelAnimationFrame(this.#contentFrame);
-    if (this.#overlayFrame !== null) cancelAnimationFrame(this.#overlayFrame);
-    this.#contentFrame = null;
-    this.#overlayFrame = null;
+    this.#surface?.destroy();
     this.#listeners.clear();
     this.#viewListeners.clear();
     this.#heightRequests = [];
@@ -1218,18 +1225,33 @@ export class TimelineCanvas {
 
   // A double-click on a fade handle or inside a fade's shaded area switches
   // that side's curve, the same length (one clip.set_fade); nothing on a side
-  // without a fade (UI redesign 3.2; 10.11, 23).
+  // without a fade (UI redesign 3.2; 10.11, 23). Behind that hit test
+  // (m5b-ui-editor-channel; UI redesign 2.1, 3.2): a double-click on a clip's
+  // body with the Object Selection tool and no modifier (Alt-click splits,
+  // Shift toggles the selection) selects it alone and opens the sample editor
+  // on it; the volume control, the corners, the edges and the repeat handle
+  // never do. With fades disabled a fade's area is the body.
   #doubleClick(e: MouseEvent): void {
-    if (e.button !== 0 || !this.#fadeHits()) return;
+    if (e.button !== 0) return;
     const snapshot = this.#options.model.getSnapshot();
     if (!snapshot) return;
     const { x, y } = this.#point(e);
     if (y < lanesTopOf(this.#view)) return;
-    const hit = hitTest(clipRects(snapshot, this.#view), x, y, { fades: true });
-    const side = fadeSideOf(hit?.part);
-    if (!hit || !side || !this.#allows('clip.set_fade')) return;
-    const clipId = hit.rect.clipId;
-    void this.#send(() => fadeCurveToggleCommand(snapshot, clipId, side));
+    const fades = this.#fadeHits();
+    const hit = hitTest(clipRects(snapshot, this.#view), x, y, { fades });
+    if (!hit) return;
+    const side = fades ? fadeSideOf(hit.part) : null;
+    if (side) {
+      if (!this.#allows('clip.set_fade')) return;
+      const clipId = hit.rect.clipId;
+      void this.#send(() => fadeCurveToggleCommand(snapshot, clipId, side));
+      return;
+    }
+    if (hit.part !== 'body' || this.#state.tool !== 'select' || e.altKey || e.shiftKey || e.ctrlKey || e.metaKey) return;
+    const open = this.#options.onOpenEditor;
+    if (!open) return;
+    this.#select([hit.rect.clipId], hit.rect.clipId);
+    open(hit.rect.clipId);
   }
 
   // The frame a fade drag's end is at so far: the side's end at the press plus the pointer's travel.
@@ -1293,25 +1315,13 @@ export class TimelineCanvas {
     this.#invalidateOverlay();
   }
 
+  // Each layer on its own animation frame (LayeredSurface.ts, with the perf scenario's frame marks).
   #invalidateContent(): void {
-    if (this.#destroyed || this.#contentFrame !== null) return;
-    this.#contentFrame = requestAnimationFrame(() => {
-      this.#contentFrame = null;
-      // The perf scenario's frame marks (perf/frame-marks.ts; a no-op outside the test hook).
-      frameMarks().begin();
-      this.#drawContent();
-      frameMarks().end();
-    });
+    this.#surface?.invalidateContent();
   }
 
   #invalidateOverlay(): void {
-    if (this.#destroyed || this.#overlayFrame !== null) return;
-    this.#overlayFrame = requestAnimationFrame(() => {
-      this.#overlayFrame = null;
-      frameMarks().begin();
-      this.#drawOverlay();
-      frameMarks().end();
-    });
+    this.#surface?.invalidateOverlay();
   }
 
   #setView(next: Viewport): void {
@@ -1331,44 +1341,6 @@ export class TimelineCanvas {
     if (order.length === 0) return;
     const height = stepLaneHeight(laneHeightOf(order[0]!, this.#view), direction);
     for (const request of [...this.#heightRequests]) request(order, height);
-  }
-
-  #watchRatio(): void {
-    this.#ratio = globalThis.devicePixelRatio || 1;
-    if (typeof matchMedia !== 'function') return;
-    const query = matchMedia(`(resolution: ${this.#ratio}dppx)`);
-    const listener = () => {
-      this.#unwatchRatio();
-      this.#watchRatio();
-      this.#sizeChanged();
-    };
-    query.addEventListener('change', listener);
-    this.#media = { query, listener };
-  }
-
-  #unwatchRatio(): void {
-    if (this.#media) this.#media.query.removeEventListener('change', this.#media.listener);
-    this.#media = null;
-  }
-
-  // The container's size (CSS px) and the device pixel ratio: both canvases follow.
-  #sizeChanged(): void {
-    if (this.#destroyed) return;
-    const width = Math.max(1, Math.round(this.#container.clientWidth));
-    // Above the scroll-zoom bar: the cursor ends at its top, as in the mockup.
-    const height = Math.max(1, Math.round(this.#container.clientHeight - SCROLLBAR_H));
-    const ratio = globalThis.devicePixelRatio || 1;
-    this.#ratio = ratio;
-    for (const canvas of [this.#content, this.#overlay]) {
-      if (canvas.style.width !== `${width}px`) canvas.style.width = `${width}px`;
-      if (canvas.style.height !== `${height}px`) canvas.style.height = `${height}px`;
-      const w = Math.round(width * ratio);
-      const h = Math.round(height * ratio);
-      if (canvas.width !== w) canvas.width = w;
-      if (canvas.height !== h) canvas.height = h;
-    }
-    if (width !== this.#view.width || height !== this.#view.height) this.#view = { ...this.#view, width, height };
-    this.invalidate();
   }
 
   #modelChanged(): void {

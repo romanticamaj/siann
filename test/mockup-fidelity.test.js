@@ -1121,7 +1121,8 @@ test('shell.css names tokens only and holds nothing pinned for unported zones', 
   // and no var() names a custom property tokens.css does not declare, except the ones the app sets on an element.
   const declared = new Set([...read('app', 'renderer', 'tokens.css').matchAll(/(--[\w-]+)\s*:/g)].map((m) => m[1]));
   const set = new Set([...shell.matchAll(/(--[\w-]+)\s*:/g)].map((m) => m[1]));
-  const local = ['--c', '--zoom-at', '--drawer-width'];
+  // --channel-zone-w: the Channel zone's width, which Shell sets on .app (m5b-ui-editor-channel).
+  const local = ['--c', '--zoom-at', '--drawer-width', '--channel-zone-w'];
   for (const m of shell.matchAll(/var\((--[\w-]+)/g)) assert.ok(declared.has(m[1]) || set.has(m[1]) || local.includes(m[1]), `shell.css names ${m[1]}, which tokens.css does not declare`);
   // The header says what is left, and nothing is "not ported yet".
   assert.doesNotMatch(read('app', 'renderer', 'shell.css'), /not ported yet|until their alignment/);

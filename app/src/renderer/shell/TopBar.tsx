@@ -8,14 +8,12 @@
 //               redo (Transport.tsx)
 //   .transport  the transport bar of m5-ui-transport and m5-ui-loop-click
 //   .tb-right   the DSP load (span.dsp: "DSP", .bar > i, .num; m5b-ui-meter),
-//               the zone buttons (the Channel button's box, then left, lower
-//               and right) and the Plans button with the number of plans
+//               the zone buttons (Channel, left, lower and right: the
+//               Channel zone of m5b-ui-editor-channel first, as the mockup
+//               draws it) and the Plans button with the number of plans
 //               waiting for review
 //
-// A part whose feature has not landed keeps its box empty (spec 3.0): the
-// Channel zone button (m5b-ui-editor-channel) is an element with no role, no
-// focus, no id and no text, sized by a --hold-<part> token in shell.css. The
-// DSP load has landed and is absent on an engine that does not list
+// The DSP load has landed and is absent on an engine that does not list
 // features.load (or engine.status): its empty box is .dsp-load-empty,
 // --dsp-load-empty-w wide. Its values change with every poll, so they are
 // written through refs (dsp-load.ts), never through React state (spec 5.6). The
@@ -99,8 +97,8 @@ function DspLoad({ source }: { source: EngineStatusSource }) {
   );
 }
 
-const ZONE_ORDER: readonly Zone[] = ['left', 'lower', 'right'];
-const ZONE_ICON: Readonly<Record<Zone, IconName>> = { left: 'zLeft', lower: 'zLow', right: 'zRight' };
+const ZONE_ORDER: readonly Zone[] = ['channel', 'left', 'lower', 'right'];
+const ZONE_ICON: Readonly<Record<Zone, IconName>> = { channel: 'zCh', left: 'zLeft', lower: 'zLow', right: 'zRight' };
 
 export function TopBar({
   client,
@@ -171,7 +169,6 @@ export function TopBar({
       <div className="tb-right">
         {load ? <DspLoad source={engineStatus} /> : <Hold className="dsp-load-empty" />}
         <span className="zones" data-part="zone-buttons" role="group" aria-label={t('zone.buttons')}>
-          <Hold className="hold-zone-button-channel" />
           {ZONE_ORDER.map((zone) => (
             <button
               key={zone}

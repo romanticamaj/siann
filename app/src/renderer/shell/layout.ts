@@ -20,6 +20,13 @@
 //
 // The project zone is not a Zone: it has no size, no collapse and no action.
 //
+// The Channel zone (m5b-ui-editor-channel; UI redesign 2.1, 2.3, 2.4) is a
+// zone of its own at the window's left edge, left of the Inspector: 96 px by
+// default, 80 to 160, collapsed by default, shown and hidden independently of
+// the left zone. It shares the left zone's grid column (ui/layout.css does not
+// change), gives way after the left zone when the window shrinks and starts
+// collapsed with it under 1100 px. It has one tab, Channel.
+//
 // Two view settings of the event display and the transport (m5-ui-transport;
 // spec 3.1) are kept here too, per viewer and never sent to the engine:
 // auto-scroll (F; on by default, as in Cubase) and the position display's
@@ -29,19 +36,23 @@
 import { DEFAULT_SNAP, isGridType, isSnapType, type GridType, type SnapSettings, type SnapType } from '../timeline/snap';
 import type { TimeFormat } from '../timeline/transport-time';
 
-export type Zone = 'left' | 'lower' | 'right';
-export const ZONES: readonly Zone[] = ['left', 'lower', 'right'];
+export type Zone = 'channel' | 'left' | 'lower' | 'right';
+export const ZONES: readonly Zone[] = ['channel', 'left', 'lower', 'right'];
 
 // The zones' tabs (3.0): the right zone's Media tab arrived with m5b-ui-media
-// and its Meter tab with m5b-ui-meter; the Editor tab arrives with its feature.
+// and its Meter tab with m5b-ui-meter, the lower zone's Editor tab with
+// m5b-ui-editor-channel. The left zone's Editor tab (the Inspector's foot) is
+// not in the usable release (docs/harness/follow-ups.md).
 export interface ZoneTabs {
+  readonly channel: 'channel';
   readonly left: 'track';
-  readonly lower: 'mixconsole';
+  readonly lower: 'mixconsole' | 'editor';
   readonly right: 'plans' | 'media' | 'meter';
 }
 const TABS: { readonly [Z in Zone]: readonly ZoneTabs[Z][] } = {
+  channel: ['channel'],
   left: ['track'],
-  lower: ['mixconsole'],
+  lower: ['mixconsole', 'editor'],
   right: ['plans', 'media', 'meter'],
 };
 
@@ -62,6 +73,18 @@ export function shownRightTab(tab: ZoneTabs['right'], available: RightTabsAvaila
 
 export function rightTab(layout: Pick<Layout, 'tabs'>, available: RightTabsAvailable): ZoneTabs['right'] {
   return shownRightTab(layout.tabs.right, available);
+}
+
+// Ctrl+Alt+Right / Left (zone.tab.next / prev; UI redesign 2.1): the tab
+// `step` from `tab` in the zone's list as the window shows it (the right
+// zone's tabs the engine has), wrapping; a zone with one tab stays on it.
+export function nextTab<Z extends Zone>(zone: Z, tab: ZoneTabs[Z], step: 1 | -1, available: RightTabsAvailable = {}): ZoneTabs[Z] {
+  const all = TABS[zone] as readonly ZoneTabs[Z][];
+  const shown = (t: string) => zone !== 'right' || t === 'plans' || (t === 'media' && available.media === true) || (t === 'meter' && available.meter === true);
+  const tabs = all.filter(shown);
+  const at = tabs.indexOf(tab);
+  if (at < 0 || tabs.length <= 1) return tab;
+  return tabs[(at + step + tabs.length) % tabs.length]!;
 }
 
 export type StripWidth = 'normal' | 'narrow';
@@ -169,7 +192,7 @@ export interface EffectiveLayout {
 }
 
 export const LAYOUT_KEY = 'siann.layout.v1';
-export const DEFAULT_SIZES: Readonly<Record<Zone, number>> = Object.freeze({ left: 216, lower: 280, right: 348 });
+export const DEFAULT_SIZES: Readonly<Record<Zone, number>> = Object.freeze({ channel: 96, left: 216, lower: 280, right: 348 });
 export const ARROW_STEP = 8;
 export const ARROW_STEP_LARGE = 32;
 export const TOP_BAR = 48;
@@ -189,6 +212,7 @@ export const TRACK_HEIGHT_MIN = 24;
 export const TRACK_HEIGHT_MAX = 240;
 
 const STATIC_LIMITS: Readonly<Record<Zone, { readonly min: number; readonly max: number }>> = {
+  channel: { min: 80, max: 160 },
   left: { min: 180, max: 420 },
   lower: { min: 160, max: Number.POSITIVE_INFINITY },
   right: { min: 300, max: 560 },
@@ -196,8 +220,9 @@ const STATIC_LIMITS: Readonly<Record<Zone, { readonly min: number; readonly max:
 
 export const DEFAULT_LAYOUT: Layout = Object.freeze({
   sizes: DEFAULT_SIZES,
-  collapsed: Object.freeze({ left: false, lower: false, right: false }),
-  tabs: Object.freeze({ left: 'track', lower: 'mixconsole', right: 'plans' } as const),
+  // The Channel zone is off by default (m5b-ui-editor-channel).
+  collapsed: Object.freeze({ channel: true, left: false, lower: false, right: false }),
+  tabs: Object.freeze({ channel: 'channel', left: 'track', lower: 'mixconsole', right: 'plans' } as const),
   stripWidth: 'normal',
   trackList: TRACK_LIST_DEFAULT,
   trackHeights: Object.freeze({}),
@@ -208,7 +233,7 @@ export const DEFAULT_LAYOUT: Layout = Object.freeze({
 });
 
 function isZone(zone: unknown): zone is Zone {
-  return zone === 'left' || zone === 'lower' || zone === 'right';
+  return zone === 'channel' || zone === 'left' || zone === 'lower' || zone === 'right';
 }
 
 // The lower zone's top: what leaves the event display EVENT_MIN_HEIGHT high.
@@ -233,6 +258,8 @@ export function initialShellState(layout: Layout): ShellState {
 // The small-window rule that hides `zone` at this size, if any.
 function smallRule(zone: Zone, viewport: Viewport): boolean {
   switch (zone) {
+    // The Channel zone starts collapsed with the left zone (UI redesign 2.4).
+    case 'channel':
     case 'left':
       return viewport.width < LEFT_COLLAPSED_BELOW_WIDTH;
     case 'lower':
@@ -422,16 +449,18 @@ export function effectiveLayout(state: ShellState, viewport: Viewport): Effectiv
   const height = () =>
     viewport.height - TOP_BAR - STATUS_BAR - PROJECT_CHROME - (view.lower.visible ? view.lower.size + DIVIDER : 0);
   giveWay('lower', height, EVENT_MIN_HEIGHT);
-  // Then the right zone and the left zone, to keep it EVENT_MIN_WIDTH wide
-  // right of the track list: the project zone keeps the list, its divider
-  // and EVENT_MIN_WIDTH.
+  // Then the right zone, the left zone and the Channel zone, to keep it
+  // EVENT_MIN_WIDTH wide right of the track list: the project zone keeps the
+  // list, its divider and EVENT_MIN_WIDTH.
   const width = () =>
     viewport.width -
+    (view.channel.visible ? view.channel.size + DIVIDER : 0) -
     (view.left.visible ? view.left.size + DIVIDER : 0) -
     (view.right.visible && !view.right.drawer ? view.right.size + DIVIDER : 0);
   const floor = projectMinWidth(layout.trackList);
   giveWay('right', width, floor);
   giveWay('left', width, floor);
+  giveWay('channel', width, floor);
   return { zones: view, trackList: layout.trackList };
 }
 
@@ -494,7 +523,8 @@ export function parseLayout(text: string | null): Layout {
       ? Math.min(value, STATIC_LIMITS[zone].max)
       : DEFAULT_SIZES[zone];
   };
-  const flag = (zone: Zone): boolean => (typeof collapsed[zone] === 'boolean' ? (collapsed[zone] as boolean) : false);
+  // A layout stored before the Channel zone existed loads it off.
+  const flag = (zone: Zone): boolean => (typeof collapsed[zone] === 'boolean' ? (collapsed[zone] as boolean) : DEFAULT_LAYOUT.collapsed[zone]);
   const tab = <Z extends Zone>(zone: Z): ZoneTabs[Z] =>
     (TABS[zone] as readonly unknown[]).includes(tabs[zone]) ? (tabs[zone] as ZoneTabs[Z]) : DEFAULT_LAYOUT.tabs[zone];
   const trackHeights: Record<string, Record<string, number>> = {};
@@ -506,9 +536,9 @@ export function parseLayout(text: string | null): Layout {
     trackHeights[sessionId] = kept;
   }
   return {
-    sizes: { left: size('left'), lower: size('lower'), right: size('right') },
-    collapsed: { left: flag('left'), lower: flag('lower'), right: flag('right') },
-    tabs: { left: tab('left'), lower: tab('lower'), right: tab('right') },
+    sizes: { channel: size('channel'), left: size('left'), lower: size('lower'), right: size('right') },
+    collapsed: { channel: flag('channel'), left: flag('left'), lower: flag('lower'), right: flag('right') },
+    tabs: { channel: tab('channel'), left: tab('left'), lower: tab('lower'), right: tab('right') },
     stripWidth: object.stripWidth === 'narrow' ? 'narrow' : 'normal',
     trackList:
       typeof object.trackList === 'number' && Number.isFinite(object.trackList) && object.trackList >= TRACK_LIST_MIN

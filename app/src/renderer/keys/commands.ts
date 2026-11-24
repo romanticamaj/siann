@@ -5,9 +5,10 @@
 // key-command editor read the same ids.
 //
 // Scopes: 'window' (everywhere), or one zone ('project', 'left', 'lower',
-// 'right'), which fires only while that zone has the focus frame.
+// 'right', and the Channel zone 'channel' of m5b-ui-editor-channel), which
+// fires only while that zone has the focus frame.
 
-export const SCOPES = ['window', 'project', 'left', 'lower', 'right'] as const;
+export const SCOPES = ['window', 'project', 'left', 'lower', 'right', 'channel'] as const;
 export type Scope = (typeof SCOPES)[number];
 export type ZoneScope = Exclude<Scope, 'window'>;
 
@@ -18,6 +19,14 @@ export const COMMAND_IDS = [
   'zone.lower.mixconsole',
   'zone.right.toggle',
   'zone.right.plans',
+  // The Channel zone, the focused zone's tabs and the lower zone's Editor tab
+  // (m5b-ui-editor-channel; spec 2.1, 3.6): show or hide the Channel zone,
+  // step to the next and the previous tab, and show the selected clip in the
+  // sample editor (a double-click on its body, or Return on the project zone).
+  'zone.channel.toggle',
+  'zone.tab.next',
+  'zone.tab.prev',
+  'editor.open',
   // The focus frame (spec 2.1, "Keyboard focus is per zone"; zone-focus.ts):
   // Tab and Shift+Tab, F6 and Shift+F6, Enter into a zone, Escape out of a control.
   'focus.next',

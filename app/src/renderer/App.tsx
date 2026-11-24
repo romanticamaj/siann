@@ -35,8 +35,21 @@
 //
 // The Meter tab (m5b-ui-meter) is the right zone's second tab: its panel draws
 // the master from the MeterStore the mixer draws from, made here once.
+//
+// The Channel zone and the Editor tab (m5b-ui-editor-channel): the Channel
+// zone shows the primary selected track's strip over the same MeterStore; e
+// on a strip or in the Inspector selects the track and shows the zone, or
+// hides it while it shows that track (mixer/channel-edit.ts). The lower zone's
+// Editor tab shows the selected (primary) clip, the one the info line reads;
+// a double-click on a clip's body or Return on the project zone opens it.
 
 import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react';
+
+import { EditorTab } from './editor/EditorTab';
+import type { EditorTestHooks } from './editor/SampleEditorCanvas';
+import { editChannel } from './mixer/channel-edit';
+import { ChannelZone } from './mixer/ChannelZone';
+import { effectiveLayout } from './shell/layout';
 
 import { localeStore } from './i18n/t';
 import type { CommandRegistry } from './keys/commands';
@@ -72,7 +85,7 @@ import { Counted } from './shell/Counted';
 import { Inspector } from './shell/Inspector';
 import { MeterPanel } from './shell/MeterPanel';
 import type { LayoutStore } from './shell/layout-store';
-import { Shell } from './shell/Shell';
+import { Shell, useViewport } from './shell/Shell';
 import { StartView } from './shell/StartView';
 import { StudioSetup } from './shell/StudioSetup';
 import { TimeFormatContext } from './shell/time-format';
@@ -111,6 +124,9 @@ export interface AppProps {
   readonly history: UndoHistory;
   readonly onTimelineHooks?: (hooks: TimelineTestHooks | null) => void;
   readonly onMeterHooks?: (hooks: MeterTestHooks | null) => void;
+  // The Channel zone's meter canvas and the sample editor (m5b-ui-editor-channel), test-only.
+  readonly onChannelMeterHooks?: (hooks: MeterTestHooks | null) => void;
+  readonly onEditorHooks?: (hooks: EditorTestHooks | null) => void;
   // Projects and Studio Setup (m5b-ui-project).
   readonly project: ProjectController;
   readonly saved: SavedMark;
@@ -143,6 +159,8 @@ export function App({
   history,
   onTimelineHooks,
   onMeterHooks,
+  onChannelMeterHooks,
+  onEditorHooks,
   project,
   saved,
   studioSetup,
@@ -174,9 +192,14 @@ export function App({
   const [clips, setClips] = useState<readonly string[]>([]);
   const selection = useMemo(() => ({ tracks: tracks.ids, clips }), [tracks.ids, clips]);
   const order = () => client.model.getSnapshot()?.trackOrder ?? [];
+  // The selected (primary) clip, the one the info line reads: the Editor tab's (m5b-ui-editor-channel).
+  const [clipId, setClipId] = useState<string | null>(null);
+  const clipRef = useRef<string | null>(null);
   // A clip selected selects its track.
   const selectClip = useCallback(
     (clipId: string | null) => {
+      clipRef.current = clipId;
+      setClipId(clipId);
       if (!clipId) return;
       const clip = client.model.getSnapshot()?.clips.find((c) => c.id === clipId);
       if (clip) setTracks((current) => (current.primary === clip.trackId && current.ids.length === 1 ? current : selectTrack(current, clip.trackId, 'replace', [])));
@@ -236,6 +259,32 @@ export function App({
   const selectedRef = useRef(tracks.primary);
   selectedRef.current = tracks.primary;
   useEffect(() => (record ? bindRecordCommands(commands, record.controller, { selectedTrack: () => selectedRef.current }) : undefined), [record, commands]);
+  // e (m5b-ui-editor-channel): the Channel zone on a track, or hidden while it shows it.
+  const viewport = useViewport();
+  const shellState = useSyncExternalStore(layout.subscribe, layout.getSnapshot);
+  const channelVisible = effectiveLayout(shellState, viewport).zones.channel.visible;
+  const onEditChannel = useCallback(
+    (trackId: string) => {
+      const size = { width: window.innerWidth, height: window.innerHeight };
+      const visible = effectiveLayout(layout.getSnapshot(), size).zones.channel.visible;
+      const action = editChannel({ trackId, selectedTrackId: selectedRef.current, channelVisible: visible });
+      if (!action) return;
+      const select = action.select;
+      if (select) setTracks((current) => (current.primary === select && current.ids.length === 1 ? current : selectTrack(current, select, 'replace', client.model.getSnapshot()?.trackOrder ?? [])));
+      layout.dispatch({ type: action.zone, zone: 'channel', viewport: size });
+    },
+    [client, layout],
+  );
+  // A double-click on a clip's body: the clip, now primary, in the Editor tab.
+  const openEditor = useCallback(
+    (id: string) => {
+      clipRef.current = id;
+      setClipId(id);
+      commands.run('window', 'editor.open');
+    },
+    [commands],
+  );
+  const selectedClip = useCallback(() => clipRef.current, []);
   const can = capabilitySelector(capabilities);
   const recoverable = record !== null && recordGates(can).record && can.has('record.recover_take');
   return (
@@ -261,7 +310,10 @@ export function App({
           transport={transport}
           loopClick={loopClick}
           history={history}
-          left={<Inspector client={client} gestures={gestures} trackId={tracks.primary} plans={plans} />}
+          left={<Inspector client={client} gestures={gestures} trackId={tracks.primary} plans={plans} channelVisible={channelVisible} onEditChannel={onEditChannel} />}
+          channel={<ChannelZone client={client} gestures={gestures} realtime={realtime} store={meterStore} trackId={tracks.primary} racks={racks} onEditChannel={onEditChannel} onMeterHooks={onChannelMeterHooks} />}
+          lowerEditor={<EditorTab key={epoch} client={client} peaks={peaks} clipId={clipId} layout={layout} commands={commands} platform={platform} onHooks={onEditorHooks} />}
+          selectedClip={selectedClip}
           project={
             <Counted id="timeline">
               <Timeline
@@ -285,12 +337,13 @@ export function App({
                 toasts={toasts}
                 media={media}
                 onOpenMedia={openMedia}
+                onOpenEditor={openEditor}
               />
             </Counted>
           }
           lower={
             <Counted id="mixer">
-              <Mixer client={client} gestures={gestures} realtime={realtime} selectedTrackId={tracks.primary} onMeterHooks={onMeterHooks} racks={racks} meterStore={meterStore} />
+              <Mixer client={client} gestures={gestures} realtime={realtime} selectedTrackId={tracks.primary} onMeterHooks={onMeterHooks} racks={racks} meterStore={meterStore} channelTrackId={channelVisible ? tracks.primary : null} onEditChannel={onEditChannel} />
             </Counted>
           }
           right={<PlanPanel key={epoch} client={client} plans={plans} agents={agents} requests={requests} selection={selection} review={review} reconnects={reconnects} commands={commands} />}

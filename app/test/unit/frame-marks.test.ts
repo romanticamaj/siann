@@ -179,7 +179,9 @@ test('the renderer creates the recorder from window.siannTest only, and the draw
   assert.match(index, /readyLineAt\(at, performance\.timeOrigin\)/);
   assert.match(index, /frames\.engineReadyAt\(/);
   assert.doesNotMatch(index, /frames\.engineReady\(\)/);
-  for (const file of ['timeline/TimelineCanvas.ts', 'mixer/MixerMeters.ts', 'timeline/HeaderMeters.ts', 'shell/Transport.tsx']) {
+  // The event display's and the sample editor's layers are marked by their two-layer surface (m5b-ui-editor-channel).
+  assert.match(fs.readFileSync(path.join(RENDERER, 'timeline', 'TimelineCanvas.ts'), 'utf8'), /new LayeredSurface\(/);
+  for (const file of ['timeline/LayeredSurface.ts', 'mixer/MixerMeters.ts', 'timeline/HeaderMeters.ts', 'shell/Transport.tsx']) {
     const source = fs.readFileSync(path.join(RENDERER, file), 'utf8');
     assert.match(source, /frameMarks\(\)\.begin\(\)/, file);
     assert.match(source, /frameMarks\(\)\.end\(\)/, file);
