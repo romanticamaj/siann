@@ -20,7 +20,7 @@
 // renderer rebuilds the model when the side heard changes.
 
 import type { T } from '../i18n/t';
-import type { Binding, CommandId } from '../keys/commands';
+import type { Binding, CommandId, CommandRegistry, Scope } from '../keys/commands';
 import { CUBASE_PRESET } from '../keys/preset-cubase';
 import type { CapabilitySelector } from '../model/capabilities';
 import { RECENT_COMMANDS, type RecentProject } from '../model/project';
@@ -35,15 +35,31 @@ export interface MenuCommandItem {
   readonly chord?: string;
   // Present, and false, only on a disabled item.
   readonly enabled?: false;
+  // The text-field action the shell runs instead while a text field has the focus.
+  readonly text?: TextAction;
 }
+
+export type TextAction = 'undo' | 'redo' | 'cut' | 'copy' | 'paste' | 'selectAll';
+
+export const MENU_IDS = ['file', 'edit', 'project', 'transport', 'studio', 'window', 'help'] as const;
+export type MenuId = (typeof MENU_IDS)[number];
 
 export type MenuItemModel =
   | MenuCommandItem
   | { readonly type: 'separator' }
+  | { readonly type: 'role'; readonly role: 'quit' | 'close' | 'minimize'; readonly label: string }
   | { readonly type: 'submenu'; readonly label: string; readonly items: readonly MenuItemModel[] };
 
 export interface MenuModel {
-  readonly menus: ReadonlyArray<{ readonly id: 'file' | 'studio'; readonly label: string; readonly items: readonly MenuItemModel[] }>;
+  readonly menus: ReadonlyArray<{ readonly id: MenuId; readonly label: string; readonly items: readonly MenuItemModel[] }>;
+}
+
+export function menuScope(_command: CommandId): Scope {
+  return 'window';
+}
+
+export function runMenuCommand(registry: CommandRegistry, command: CommandId): boolean {
+  return registry.run('window', command);
 }
 
 export interface AppMenuOptions {
@@ -57,6 +73,7 @@ export interface AppMenuOptions {
   readonly busSelected?: boolean;
   // The edit guard's reason while a proposal is heard (useEditGuard's text), else null.
   readonly guard?: string | null;
+  readonly platform?: 'mac' | 'other';
 }
 
 export function appMenuModel({ t, recent, shell, can, preset = CUBASE_PRESET, busSelected = false, guard = null }: AppMenuOptions): MenuModel {

@@ -1269,6 +1269,21 @@ test('UX screenshot tour', async () => {
   );
   await page.locator('[data-part="mixer-racks"]').getByTestId('rack-inserts').click();
 
+  // ---- 39 (m5b-ui-keymap; UI redesign 3.6, UR-11; numbered explicitly):
+  // Help > Key Commands, the read-only list of every command with its keys
+  // by category. The mockup draws no such dialog: the review reads it alone.
+  await app!.evaluate(({ Menu }) => Menu.getApplicationMenu()!.getMenuItemById('help.keyCommands')!.click());
+  await expect(page.getByTestId('key-commands')).toBeVisible();
+  await expect(page.getByTestId('key-commands-search')).toBeFocused();
+  await shoot(
+    page,
+    'Key Commands',
+    'Help > Key Commands: every command of the Cubase preset once, grouped by category (Transport, Markers, Tools, Edit, Track, Zoom, Navigate, Zones and windows, File, Plans), each row the command\'s name from the catalogs and its keys written for the platform (Ctrl+Alt+L, Num 0; a command Cubase gives no key, such as Glue or Add Bus, has an empty key cell), under a search field that narrows the list by name or key. Read-only: rebinding is the key-command editor of phase 3. App-only state: the mockup has no such dialog. The application menu (File, Edit, Project, Transport, Studio, Window, Help) and the tooltips read their keys from the same table in every state.',
+    { number: 39 },
+  );
+  await page.keyboard.press('Escape');
+  await expect(page.getByTestId('key-commands')).toBeHidden();
+
 
   // ---- 29 and 30 (m5b-ui-project): the start view, on a launch of its own
   // without SIANN_SESSION_DIR and with a recent list whose last bundle is

@@ -10,6 +10,7 @@ import assert from 'node:assert/strict';
 
 import type { Binding } from '../../src/renderer/keys/commands';
 import { chordOf, composingKey, isTextField, resolveKey, type KeyInput } from '../../src/renderer/keys/dispatcher';
+import { CUBASE_REFERENCE } from '../../src/renderer/keys/cubase-reference';
 import { CUBASE_PRESET } from '../../src/renderer/keys/preset-cubase';
 
 const NONE = { ctrl: false, alt: false, shift: false, meta: false };
@@ -405,4 +406,64 @@ test('the Channel zone resolves the window\'s keys; H and G follow the focused z
   // Ctrl+Right alone stays the project zone's nudge.
   assert.equal(resolveKey({ ...next, modifiers: { ...NONE, ctrl: true }, focusedZone: 'project' }, CUBASE_PRESET)?.commandId, 'edit.nudgeRight');
   assert.equal(resolveKey({ ...next, targetIsTextField: true }, CUBASE_PRESET), null);
+});
+
+// m5b-ui-keymap (acceptance 4; research/cubase.md section 7: "Mac: replace
+// Ctrl with Cmd and Alt with Opt"): on macOS the preset's Mod is Cmd and its
+// Alt is Option. Rows of the reference's Mac column, typed as a Mac user
+// types them, give the reference's chord and so the preset's command; the
+// Control key is never Mod.
+const MAC_KEYS: Readonly<Record<string, string>> = { Space: 'Space', Left: 'ArrowLeft', Right: 'ArrowRight', Up: 'ArrowUp', Down: 'ArrowDown' };
+
+function macInput(mac: string): KeyInput | null {
+  const parts = mac.split('+');
+  const key = parts.pop()!;
+  let code: string | undefined;
+  if (/^[A-Z]$/.test(key)) code = `Key${key}`;
+  else if (/^[0-9]$/.test(key)) code = `Digit${key}`;
+  else if (/^F\d+$/.test(key)) code = key;
+  else if (/^Num \d$/.test(key)) code = `Numpad${key.slice(4)}`;
+  else if (key === 'Num -') code = 'NumpadSubtract';
+  else if (key === 'Num +') code = 'NumpadAdd';
+  else code = MAC_KEYS[key];
+  if (!code) return null;
+  return {
+    code,
+    key: key.toLowerCase(),
+    modifiers: { meta: parts.includes('Cmd'), alt: parts.includes('Opt'), shift: parts.includes('Shift'), ctrl: parts.includes('Ctrl') },
+    targetIsTextField: false,
+    focusedZone: 'project',
+    platform: 'mac',
+  };
+}
+
+test('on macOS Cmd is Mod and Option is Alt, for the rows of the research\'s Mac column', () => {
+  const rows = CUBASE_REFERENCE.filter((row) => row.mac !== undefined && /\b(Cmd|Opt)\+/.test(row.mac));
+  let checked = 0;
+  for (const row of rows) {
+    const input = macInput(row.mac!);
+    if (!input) continue;
+    assert.equal(chordOf(input), row.chord, `${row.command}: ${row.mac}`);
+    if (row.commandId) assert.equal(resolveKey(input, CUBASE_PRESET)?.commandId, row.commandId, `${row.command}: ${row.mac}`);
+    checked += 1;
+  }
+  assert.ok(checked >= 40, `only ${checked} Mac rows checked`);
+  // A sample, by hand: Cmd+Opt+L the left zone, Opt+P Loop Selection, Cmd+Num 1 the left locator.
+  for (const [mac, command] of [['Cmd+Opt+L', 'zone.left.toggle'], ['Opt+P', 'transport.loopSelection'], ['Cmd+Num 1', 'transport.setLeftLocator'], ['Cmd+Num -', 'transport.nudgeCursorLeft'], ['Cmd+D', 'edit.duplicate']] as const) {
+    assert.equal(resolveKey(macInput(mac)!, CUBASE_PRESET)?.commandId, command, mac);
+  }
+});
+
+test('on macOS the Control key never matches a Mod row, and Cmd never does off macOS', () => {
+  for (const binding of CUBASE_PRESET.filter((b) => b.chord.startsWith('Mod+') && /\+(Key|[A-Z0-9]$)/.test(`+${b.chord.split('+').pop()}`))) {
+    const key = binding.chord.split('+').pop()!;
+    const code = /^[A-Z]$/.test(key) ? `Key${key}` : /^[0-9]$/.test(key) ? `Digit${key}` : key;
+    const rest = binding.chord.split('+').slice(1, -1);
+    const modifiers = { alt: rest.includes('Alt'), shift: rest.includes('Shift') };
+    const control: KeyInput = { code, key, modifiers: { ...modifiers, ctrl: true, meta: false }, targetIsTextField: false, focusedZone: binding.scope === 'window' ? 'project' : binding.scope, platform: 'mac' };
+    assert.notEqual(resolveKey(control, CUBASE_PRESET)?.commandId ?? null, binding.commandId, `Control+${binding.chord} on macOS`);
+    assert.ok(chordOf(control).startsWith('Ctrl+'), chordOf(control));
+    const cmdOffMac: KeyInput = { ...control, modifiers: { ...modifiers, ctrl: false, meta: true }, platform: 'other' };
+    assert.equal(resolveKey(cmdOffMac, CUBASE_PRESET), null, `the Windows key with ${binding.chord}`);
+  }
 });

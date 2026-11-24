@@ -5,8 +5,12 @@
 
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
+import * as fs from 'node:fs';
+import * as path from 'node:path';
 
+import { formatChord } from '../../src/renderer/keys/chord-label';
 import { COMMAND_IDS, SCOPES } from '../../src/renderer/keys/commands';
+import { CUBASE_REFERENCE } from '../../src/renderer/keys/cubase-reference';
 import { CUBASE_PRESET } from '../../src/renderer/keys/preset-cubase';
 
 test('the preset is one table of chord, command id and scope', () => {
@@ -293,4 +297,81 @@ test('the record keys: R, Num *, Mod+Shift+R, I and O (m5b-ui-recording)', () =>
   assert.deepEqual(CUBASE_PRESET.filter((b) => b.chord === 'Mod+Alt+R').map((b) => b.commandId), ['zone.right.toggle']);
   assert.deepEqual(CUBASE_PRESET.filter((b) => b.chord === 'Alt+I').map((b) => b.commandId), ['zone.left.toggle']);
   assert.deepEqual(CUBASE_PRESET.filter((b) => b.chord === 'M').map((b) => b.commandId), ['track.muteSelected']);
+});
+
+// m5b-ui-keymap (UI redesign 3.1, 3.6, UR-11; acceptance 2 and 3): every
+// command the numeric keypad reaches has a second chord off it in the same
+// scope, so a laptop reaches the whole transport; the remaining transport
+// keys of Cubase are bound; and every off-keypad fallback is one of the SIANN
+// additions spec 3.6 lists.
+const NUMPAD = /Numpad/;
+
+test('every command bound on the numeric keypad has a binding off it in the same scope', () => {
+  const missing: string[] = [];
+  for (const binding of CUBASE_PRESET.filter((b) => NUMPAD.test(b.chord))) {
+    const off = CUBASE_PRESET.some((b) => b.commandId === binding.commandId && b.scope === binding.scope && !NUMPAD.test(b.chord));
+    if (!off) missing.push(`${binding.scope} ${binding.chord} -> ${binding.commandId}`);
+  }
+  assert.deepEqual(missing, []);
+});
+
+test('wind, nudge cursor and the tempo field: Num -/+, Ctrl+Num -/+ and Shift+T, with their fallbacks (m5b-ui-keymap)', () => {
+  const windowRows: Array<[string, string]> = [
+    ['NumpadSubtract', 'transport.rewind'],
+    ['NumpadAdd', 'transport.forward'],
+    ['Minus', 'transport.rewind'],
+    ['Equal', 'transport.forward'],
+    ['Mod+NumpadSubtract', 'transport.nudgeCursorLeft'],
+    ['Mod+NumpadAdd', 'transport.nudgeCursorRight'],
+    ['Mod+Minus', 'transport.nudgeCursorLeft'],
+    ['Mod+Equal', 'transport.nudgeCursorRight'],
+    ['Shift+T', 'transport.enterTempo'],
+    // The fallbacks of start, stop and the set-locator keys.
+    ['Shift+Enter', 'transport.start'],
+    ['Shift+0', 'transport.stop'],
+    ['Mod+1', 'transport.setLeftLocator'],
+    ['Mod+2', 'transport.setRightLocator'],
+    // Cubase's other keypad key for Go to Project Start.
+    ['NumpadComma', 'transport.toStart'],
+  ];
+  for (const [chord, commandId] of windowRows) {
+    const found = CUBASE_PRESET.filter((b) => b.chord === chord);
+    assert.deepEqual(found.map((b) => [b.scope, b.commandId]), [['window', commandId]], chord);
+  }
+  // Help > Key Commands has no key, as in Cubase.
+  assert.deepEqual(CUBASE_PRESET.filter((b) => b.commandId === 'help.keyCommands'), []);
+  // T stays Add Track, Shift+C unbound.
+  assert.deepEqual(CUBASE_PRESET.filter((b) => b.chord === 'T').map((b) => b.commandId), ['track.add']);
+});
+
+// The keys of spec 3.6's table of SIANN additions, as it writes them.
+function additionsTableKeys(): Set<string> {
+  const spec = fs.readFileSync(path.resolve(__dirname, '..', '..', '..', '..', 'docs', 'superpowers', 'specs', '2026-11-13-siann-ui-redesign.md'), 'utf8');
+  const lines = spec.split(/\r?\n/);
+  const start = lines.findIndex((line) => line.startsWith('- **SIANN additions**'));
+  assert.ok(start > 0, '3.6 has the table of SIANN additions');
+  const keys = new Set<string>();
+  for (const line of lines.slice(start + 1)) {
+    if (line.startsWith('- **')) break;
+    if (!line.startsWith('|')) continue;
+    const cell = line.split('|')[2] ?? '';
+    for (const match of cell.matchAll(/`([^`]+)`/g)) keys.add(match[1]!);
+  }
+  return keys;
+}
+
+test('every off-keypad fallback of a keypad command is listed in spec 3.6\'s table of SIANN additions', () => {
+  const listed = additionsTableKeys();
+  const missing: string[] = [];
+  for (const command of new Set(CUBASE_PRESET.filter((b) => NUMPAD.test(b.chord)).map((b) => b.commandId))) {
+    for (const binding of CUBASE_PRESET.filter((b) => b.commandId === command && !NUMPAD.test(b.chord))) {
+      // Cubase's own key for the command (Shift+3..9 for the markers) is no fallback.
+      if (CUBASE_REFERENCE.some((row) => row.chord === binding.chord && row.commandId === command)) continue;
+      const written = formatChord(binding.chord, 'other');
+      if (!listed.has(written)) missing.push(`${binding.chord} (${written}) -> ${command}`);
+    }
+  }
+  assert.deepEqual(missing, []);
+  // The table is read: the fallbacks of earlier features are in it.
+  for (const key of [',', '/', 'Shift+1', 'Ctrl+Shift+R']) assert.ok(listed.has(key), key);
 });

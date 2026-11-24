@@ -991,3 +991,92 @@ test('the marker head and the marker rename field fit in every locale at either 
   }
   expect(failures).toEqual([]);
 });
+
+// m5b-ui-keymap (acceptance 7): the two dialogs of M5b the fit check did not
+// open yet. The Key Commands list (Help > Key Commands): its title, search
+// field, category heads, command names, keys and Close, in en, zh-TW, zh-CN
+// and the pseudo-locale at both window sizes, and the dialog inside the window.
+test('the Key Commands list fits in every locale at either window size', async () => {
+  test.setTimeout(150_000);
+  scratch = fs.mkdtempSync(path.join(os.tmpdir(), 'siann-fit-keys-'));
+  const sessionDir = seedBundle(scratch, TRACKS);
+  app = await launchApp({ sessionDir, userData: path.join(scratch, 'user-data'), languages: ['en-US'], hook: true });
+  page = await app.firstWindow();
+  await expect(page.getByTestId('status')).toHaveAttribute('data-status', 'connected');
+  const KEYS = '[data-testid=key-commands] h2, [data-testid=key-commands] h3, [data-testid=key-commands] th, [data-testid=key-commands] kbd, [data-testid=key-commands] button, [data-testid=key-commands-search]';
+  const failures: string[] = [];
+  for (const locale of LOCALES) {
+    await page.evaluate((next) => window.__siannLocale!.setLocale(next as never), locale);
+    await expect(page.locator('html')).toHaveAttribute('data-locale', locale);
+    await expect.poll(() => app!.evaluate(({ Menu }) => Menu.getApplicationMenu()?.getMenuItemById('help.keyCommands') !== null)).toBe(true);
+    await app!.evaluate(({ Menu }) => Menu.getApplicationMenu()!.getMenuItemById('help.keyCommands')!.click());
+    const dialog = page.getByTestId('key-commands');
+    await expect(dialog).toBeVisible();
+    for (const size of SIZES) {
+      await resize(size);
+      for (const entry of await overflowing(KEYS)) failures.push(`${locale} ${size.width}x${size.height} (key commands): ${entry}`);
+      for (const entry of await wrapped(KEYS)) failures.push(`${locale} ${size.width}x${size.height} (key commands): ${entry}`);
+      const inside = await dialog.evaluate((el) => {
+        const r = el.getBoundingClientRect();
+        return r.left >= 0 && r.top >= 0 && r.right <= window.innerWidth + 0.5 && r.bottom <= window.innerHeight + 0.5;
+      });
+      if (!inside) failures.push(`${locale} ${size.width}x${size.height}: the Key Commands list leaves the window`);
+    }
+    await page.keyboard.press('Escape');
+    await expect(dialog).toBeHidden();
+  }
+  expect(failures).toEqual([]);
+});
+
+// The pending takes dialog (m5b-ui-recording): a take recorded with a durable
+// second when the engine is killed; the restarted engine lists it, and the
+// dialog with Keep, Discard and Later fits in every locale at both sizes.
+test('the pending takes dialog fits in every locale at either window size', async () => {
+  test.setTimeout(150_000);
+  scratch = fs.mkdtempSync(path.join(os.tmpdir(), 'siann-fit-takes-'));
+  const sessionDir = seedBundle(scratch, [{ id: 'trk_vox', name: 'Vox Lead', input: { port: 0, channels: 1 } }]);
+  app = await launchApp({ sessionDir, userData: path.join(scratch, 'user-data'), languages: ['en-US'], hook: true });
+  page = await app.firstWindow();
+  await expect(page.getByTestId('status')).toHaveAttribute('data-status', 'connected');
+  const engine = await engineClient(page);
+  await engine.call('engine.select_device', { id: 'fake', inputId: 'fake' });
+  await expect.poll(async () => ((await engine.call('engine.status')).device as { input: unknown } | null)?.input ?? null).not.toBeNull();
+  await page.getByTestId('track-header-trk_vox').locator('.name').click();
+  await page.getByTestId('track-record-trk_vox').click();
+  await expect(page.getByTestId('track-record-trk_vox')).toHaveAttribute('aria-pressed', 'true');
+  await page.getByTestId('transport-record').click();
+  await expect
+    .poll(
+      () => {
+        const last = engine.ofType('record.changed').at(-1) as { takes?: Array<{ durableFrames: string }> } | undefined;
+        return (last?.takes ?? []).filter((t) => Number(t.durableFrames) >= 48000).length;
+      },
+      { timeout: 20_000 },
+    )
+    .toBe(1);
+  const pid = await app.evaluate(() => (globalThis as unknown as { __siannShell: { pid(): number | null } }).__siannShell.pid());
+  if (pid === null) throw new Error('the shell has no engine');
+  engine.close();
+  process.kill(pid);
+  await expect(page.getByTestId('status')).not.toHaveAttribute('data-status', 'connected');
+  await expect(page.getByTestId('status')).toHaveAttribute('data-status', 'connected', { timeout: 30_000 });
+  const dialog = page.getByTestId('pending-takes');
+  await expect(dialog).toBeVisible();
+  const TAKES = '[data-testid=pending-takes] h2, [data-testid=pending-takes] th, [data-testid=pending-takes] td, [data-testid=pending-takes] button';
+  const failures: string[] = [];
+  for (const locale of LOCALES) {
+    await page.evaluate((next) => window.__siannLocale!.setLocale(next as never), locale);
+    await expect(page.locator('html')).toHaveAttribute('data-locale', locale);
+    for (const size of SIZES) {
+      await resize(size);
+      for (const entry of await overflowing(TAKES)) failures.push(`${locale} ${size.width}x${size.height} (pending takes): ${entry}`);
+      for (const entry of await wrapped('[data-testid=pending-takes] th, [data-testid=pending-takes] button')) failures.push(`${locale} ${size.width}x${size.height} (pending takes): ${entry}`);
+      const inside = await dialog.evaluate((el) => {
+        const r = el.getBoundingClientRect();
+        return r.left >= 0 && r.top >= 0 && r.right <= window.innerWidth + 0.5 && r.bottom <= window.innerHeight + 0.5;
+      });
+      if (!inside) failures.push(`${locale} ${size.width}x${size.height}: the pending takes dialog leaves the window`);
+    }
+  }
+  expect(failures).toEqual([]);
+});

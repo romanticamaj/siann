@@ -18,6 +18,15 @@ export interface MenuCommandItem {
   readonly chord?: string;
   // false: shown disabled (Remove Bus with no bus selected; m5b-ui-sends-buses).
   readonly enabled?: false;
+  readonly text?: TextAction;
+}
+
+export type TextAction = 'undo' | 'redo' | 'cut' | 'copy' | 'paste' | 'selectAll';
+
+export interface MenuRole {
+  readonly type: 'role';
+  readonly role: 'quit' | 'close' | 'minimize';
+  readonly label: string;
 }
 
 export interface MenuSeparator {
@@ -30,10 +39,12 @@ export interface MenuSubmenu {
   readonly items: readonly MenuItemModel[];
 }
 
-export type MenuItemModel = MenuCommandItem | MenuSeparator | MenuSubmenu;
+export type MenuItemModel = MenuCommandItem | MenuSeparator | MenuRole | MenuSubmenu;
+
+export type MenuId = 'file' | 'edit' | 'project' | 'transport' | 'studio' | 'window' | 'help';
 
 export interface MenuModel {
-  readonly menus: ReadonlyArray<{ readonly id: 'file' | 'studio'; readonly label: string; readonly items: readonly MenuItemModel[] }>;
+  readonly menus: ReadonlyArray<{ readonly id: MenuId; readonly label: string; readonly items: readonly MenuItemModel[] }>;
 }
 
 // Bounds on what the renderer may send.
@@ -134,6 +145,10 @@ export interface MenuOptions {
   readonly devtools: boolean;
   // A click's command id, for the renderer.
   readonly send: (command: string) => void;
+  // A text field has the focus in the window (the renderer says so).
+  readonly textFocused?: () => boolean;
+  // Runs a text-field action on the window's web contents.
+  readonly textEdit?: (action: TextAction) => void;
 }
 
 interface ClickEvent {
@@ -144,6 +159,7 @@ function items(list: readonly MenuItemModel[], send: (command: string) => void):
   return list.map((item): MenuItemConstructorOptions => {
     if (item.type === 'separator') return { type: 'separator' };
     if (item.type === 'submenu') return { label: item.label, submenu: items(item.items, send), enabled: item.items.length > 0 };
+    if (item.type === 'role') return { role: item.role, label: item.label };
     const accelerator = item.chord ? acceleratorOf(item.chord) : undefined;
     return {
       id: item.command,
