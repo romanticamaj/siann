@@ -16,6 +16,7 @@ import { SampleEditorCanvas } from '../../src/renderer/editor/SampleEditorCanvas
 import type { MeterFrame } from '../../src/renderer/model/meter-frames';
 import { chooseLevel, type PeakPyramid } from '../../src/renderer/model/peaks';
 import type { PeaksCache } from '../../src/renderer/model/peaks-cache';
+import type { ClipEntity } from '../../src/renderer/model/document';
 import type { ReadModel, Snapshot } from '../../src/renderer/model/read-model';
 import { frameToX } from '../../src/renderer/timeline/geometry';
 import { DEFAULT_SNAP, SNAP_MAGNET_PX, type SnapSettings } from '../../src/renderer/timeline/snap';
@@ -213,4 +214,42 @@ test('H and G change the editor\'s zoom about the range\'s centre', () => {
   assert.equal(hooks.view().framesPerPixel, Math.round(before / 2));
   assert.equal(editor.zoomOut(), true);
   assert.equal(hooks.view().framesPerPixel, Math.round(before / 2) * 2);
+});
+
+// The snapshot with clp_1 at `position` (a drag, a nudge, a typed Start, an undo of a move) or trimmed.
+function withClp1(position: string, sourceStart = '0', length = '24000', revision = 'r8'): Snapshot {
+  const base = sampleSnapshot();
+  const moved: ClipEntity = { ...(base.entities['clip:clp_1'] as ClipEntity), position: { domain: 'audio', value: position }, sourceStart, length };
+  return Object.freeze({ ...base, revision, entities: { ...base.entities, 'clip:clp_1': moved }, clips: base.clips.map((c) => (c.id === 'clp_1' ? moved : c)) });
+}
+
+test('a move of the shown clip keeps its source and range where they were drawn, at the same zoom', () => {
+  for (const zoomed of [false, true]) {
+    const { editor, hooks, model } = make();
+    if (zoomed) editor.zoomIn();
+    flushFrames();
+    const fpp = hooks.view().framesPerPixel;
+    const source = hooks.source()!;
+    const range = hooks.range()!;
+    // +60 s, back by an undo, then a nudge to the session's start.
+    for (const position of [String(4800 + 60 * 48000), '4800', '0']) {
+      model.set(withClp1(position));
+      flushFrames();
+      assert.equal(hooks.view().framesPerPixel, fpp, `zoomed ${zoomed}: the zoom is kept at ${position}`);
+      assert.deepEqual(hooks.source(), source, `zoomed ${zoomed}: the source at ${position}`);
+      assert.deepEqual(hooks.range(), range, `zoomed ${zoomed}: the range at ${position}`);
+      assert.ok(hooks.columns() > 0, `zoomed ${zoomed}: the waveform is drawn at ${position}`);
+    }
+  }
+});
+
+test('a trim of the shown clip\'s start leaves the source where it was; only the range moves', () => {
+  const { hooks, model } = make();
+  const view = hooks.view();
+  const source = hooks.source()!;
+  model.set(withClp1('9600', '4800', '19200'));
+  flushFrames();
+  assert.deepEqual(hooks.view(), view);
+  assert.deepEqual(hooks.source(), source);
+  assert.equal(hooks.range()!.start, frameToX(9600n, view));
 });
