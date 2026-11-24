@@ -21,6 +21,8 @@ import type { PeakPyramid } from '../../src/renderer/model/peaks';
 import { TOKENS } from '../../src/renderer/tokens';
 import { RULER_HEIGHT, RULER_UPPER, TimelineCanvas, type GhostSource, type PlayheadSource, type LaneHeightSource, type LocatorBandSource } from '../../src/renderer/timeline/TimelineCanvas';
 import type { Ghost } from '../../src/renderer/plans/ghosts';
+import { fadeCurvePoints, fadeHandles, fadeShadePoints } from '../../src/renderer/timeline/fades';
+import { ghostClipBox } from '../../src/renderer/timeline/ghost-geometry';
 import { bandRect, type LocatorRange } from '../../src/renderer/timeline/locators';
 import type { LocatorsEntity } from '../../src/renderer/model/document';
 import { clearFrames, fakeSurface, type Call, flushFrames, installSurfaceGlobals, setDevicePixelRatio } from './support/surface';
@@ -762,7 +764,7 @@ function withNamedTokens<T>(fn: () => T): T {
   }
 }
 
-function drawRig(snapshot: Snapshot, options: { framesPerPixel?: number; band?: boolean; pyramid?: PeakPyramid } = {}) {
+function drawRig(snapshot: Snapshot, options: { framesPerPixel?: number; band?: boolean; pyramid?: PeakPyramid; fadesEnabled?: boolean } = {}) {
   clearFrames();
   setDevicePixelRatio(1);
   const surface = fakeSurface(800, 300);
@@ -781,6 +783,7 @@ function drawRig(snapshot: Snapshot, options: { framesPerPixel?: number; band?: 
     framesPerPixel: options.framesPerPixel ?? 100,
     playhead: playhead.source,
     locators: options.band ? band.source : undefined,
+    ...(options.fadesEnabled ? { fadesEnabled: () => true } : {}),
   });
   flushFrames();
   return { surface, m, canvas, playhead, hooks: canvas.testHooks() };
@@ -896,7 +899,7 @@ test('the title is clipTitle() in --fw-strong --fs-micro, follows a media rename
   });
 });
 
-test('a selected clip has the selected outline, the two corner squares and the repeat handle; no fade or ghost is drawn; a selection redraws the content', () => {
+test('a selected clip without fades has the selected outline, the two corner squares and the repeat handle, no fade shade, curve or triangle; no ghost without a plan; a selection redraws the content', () => {
   withNamedTokens(() => {
     const r = drawRig(sampleSnapshot());
     const rect = r.hooks.clips().find((c) => c.clipId === 'clp_1')!;
@@ -924,7 +927,9 @@ test('a selected clip has the selected outline, the two corner squares and the r
     assert.equal(arcs[0]!.kind, 'fill');
     assert.equal(arcs[0]!.style, '--select');
     assert.deepEqual(arcs[0]!.path!.find((s) => s.op === 'arc')!.args.slice(0, 3), [handle.x, handle.y, 3.2]);
-    // Pending parts (m5b-ui-fades, m5b-ui-ghosts): not drawn, on either layer.
+    // A clip without fades, in a rig without fadesEnabled and without a ghost
+    // source: no fade (shade, curve, triangle) and no ghost on either layer.
+    // The fades drawn are the m5b-ui-fades tests at the end of this file.
     for (const call of [...calls, ...r.surface.overlayCalls.calls]) {
       assert.ok(!call.path?.some((s) => s.op === 'quadraticCurveTo'), 'no fade curve');
       if (call !== arcs[0]) assert.ok(!call.path?.some((s) => s.op === 'arc'), 'no other disc');
@@ -1333,6 +1338,182 @@ test('while the proposal is heard every canvas ghost is solid, unhatched and und
         // so a wait for every clip's waveform (the UX tour's) passes it by.
         assert.deepEqual(r.hooks.peakColumns('clp_1'), { drawn: 0, nonZero: 0, outline: true });
       }
+      r.canvas.destroy();
+    }
+  });
+});
+
+// ---- m5b-ui-fades (UI redesign 3.2, "How a fade is drawn"; 4.2, 4.3): a
+// clip's fades are draw()'s --bg-0-a550 shade and its 1 px --select line on
+// the real gain curve at the real length, with the waveform's columns scaled
+// by the gain; the triangles at the fades' ends are the content layer's on a
+// selected clip and the overlay's on a hovered one, only while the engine
+// lists the fades (fadesEnabled); a plan's fade step is a dashed --ai curve,
+// a removed side's shade cross-hatched, solid while heard.
+
+const FADES = { fadeIn: { length: '4800', curve: 'linear' as const }, fadeOut: { length: '2400', curve: 'equal_power' as const } };
+
+function fadedSnapshot(): Snapshot {
+  const base = sampleSnapshot();
+  const clp1 = { ...(base.entities['clip:clp_1'] as Snapshot['clips'][number]), ...FADES };
+  return { ...base, clips: base.clips.map((c) => (c.id === 'clp_1' ? clp1 : c)), entities: { ...base.entities, 'clip:clp_1': clp1 } };
+}
+
+// The points of a path made of moveTo / lineTo (closePath dropped).
+const pointsOf = (call: Call | undefined) => (call?.path ?? []).filter((s) => s.op === 'moveTo' || s.op === 'lineTo').map((s) => [s.args[0], s.args[1]]);
+const same = (a: ReadonlyArray<readonly number[]>, b: ReadonlyArray<readonly [number, number]>) => a.length === b.length && a.every((p, i) => p[0] === b[i]![0] && p[1] === b[i]![1]);
+// A filled triangle: moveTo, two lineTo and closePath.
+const isTriangle = (c: Call) => c.kind === 'fill' && c.path?.length === 4 && c.path[0]!.op === 'moveTo' && c.path[1]!.op === 'lineTo' && c.path[2]!.op === 'lineTo' && c.path[3]!.op === 'closePath';
+const triangleAt = (calls: readonly Call[], points: ReadonlyArray<readonly [number, number]>) => calls.some((c) => isTriangle(c) && c.style === '--select' && same(pointsOf(c), points));
+
+function loudPyramid(): PeakPyramid {
+  const levelOf = (k: number) => {
+    const binFrames = 256 * 4 ** k;
+    const binCount = Math.ceil(48000 / binFrames);
+    return { binFrames, binCount, values: Int16Array.from(Array.from({ length: binCount }, () => [-30000, 30000]).flat()) };
+  };
+  return { channels: 1, frames: 48000, sampleRate: 48000, levels: [0, 1, 2, 3, 4].map(levelOf) };
+}
+
+test("a clip's fades: draw()'s --bg-0-a550 shade and a 1 px --select line on the gain curve at the real length, on an unselected clip, with or without fadesEnabled", () => {
+  withNamedTokens(() => {
+    for (const fadesEnabled of [true, false]) {
+      const r = drawRig(fadedSnapshot(), { fadesEnabled });
+      const calls = r.surface.contentCalls.calls;
+      const box = clipBox(r.hooks.clips().find((c) => c.clipId === 'clp_1')!);
+      // 4800 and 2400 frames at 100 frames per pixel: 48 and 24 px.
+      for (const [side, px, curve] of [['fadeIn', 48, 'linear'], ['fadeOut', 24, 'equal_power']] as const) {
+        const shade = calls.filter((c) => c.kind === 'fill' && c.style === '--bg-0-a550' && same(pointsOf(c), fadeShadePoints(box, side, px, curve)));
+        assert.equal(shade.length, 1, `${side}: the shade between the curve and the title strip`);
+        assert.equal(shade[0]!.path!.at(-1)!.op, 'closePath');
+        const line = calls.filter((c) => c.kind === 'stroke' && c.style === '--select' && same(pointsOf(c), fadeCurvePoints(box, side, px, curve)));
+        assert.equal(line.length, 1, `${side}: the curve`);
+        assert.equal(line[0]!.lineWidth, 1);
+        assert.ok(calls.indexOf(line[0]!) > calls.indexOf(shade[0]!), 'the line over the shade');
+      }
+      // Exactly the two sides' shades: the other clips have no fade.
+      assert.equal(calls.filter((c) => c.style === '--bg-0-a550').length, 2);
+      // Unselected: no triangle on the content layer.
+      assert.deepEqual(calls.filter(isTriangle), [], 'no triangle on an unselected clip');
+      r.canvas.destroy();
+    }
+  });
+});
+
+test("a faded clip's waveform: each column scaled by the fade gain at its frame, the unfaded middle as before", () => {
+  withNamedTokens(() => {
+    const outerOf = (snapshot: Snapshot) => {
+      const r = drawRig(snapshot, { pyramid: loudPyramid() });
+      const rect = r.hooks.clips().find((c) => c.clipId === 'clp_1')!;
+      const box = clipBox(rect);
+      const columns = r.surface.contentCalls.calls
+        .filter((c) => c.kind === 'fillRect' && c.alpha === 0.5 && c.args[2] === 1 && c.args[0]! >= box.x && c.args[0]! < box.x + box.width && c.args[1]! > box.y + 13 - 1 && c.args[1]! < box.y + box.height)
+        .map((c) => ({ x: c.args[0]!, half: c.args[3]! / 2 }));
+      r.canvas.destroy();
+      return { rect, box, columns };
+    };
+    const plain = outerOf(sampleSnapshot());
+    const faded = outerOf(fadedSnapshot());
+    assert.ok(faded.columns.length >= 230 && faded.columns.length === plain.columns.length, `${faded.columns.length} columns`);
+    const full = (30000 / 32767) * ((faded.box.height - 13) / 2 - 2);
+    // The architecture spec's gains: linear x in, sin(x pi / 2) out, mirrored from the clip's end.
+    const gainAt = (n: number) => {
+      let gain = 1;
+      if (n < 4800) gain *= n / 4800;
+      const m = 24000 - 1 - n;
+      if (m < 2400) gain *= Math.sin(((m / 2400) * Math.PI) / 2);
+      return gain;
+    };
+    let scaled = 0;
+    faded.columns.forEach((c, i) => {
+      const n = Math.min(23999, Math.floor((c.x + 0.5 - faded.rect.x) * 100));
+      const expected = Math.max(full * gainAt(n), 0.5);
+      assert.ok(Math.abs(c.half - expected) < 1e-9, `column at ${c.x} (frame ${n}): ${c.half}, expected ${expected}`);
+      assert.ok(Math.abs(plain.columns[i]!.half - full) < 1e-9, 'unfaded: full height');
+      if (gainAt(n) < 1) scaled += 1;
+    });
+    assert.ok(scaled >= 70, `${scaled} columns inside the fades`);
+  });
+});
+
+test("the fade triangles: on the content layer for a selected clip, on the overlay for a hovered one, at fadeHandles(); none with fadesEnabled off", () => {
+  withNamedTokens(() => {
+    for (const fadesEnabled of [true, false]) {
+      // Selected: the content layer's.
+      const r = drawRig(fadedSnapshot(), { fadesEnabled });
+      const rect = r.hooks.clips().find((c) => c.clipId === 'clp_1')!;
+      const box = clipBox(rect);
+      const handles = fadeHandles(box, FADES, 100);
+      r.surface.fire('pointerdown', { clientX: box.x + 100, clientY: box.y + 20 });
+      r.surface.fire('pointerup', { clientX: box.x + 100, clientY: box.y + 20 });
+      flushFrames();
+      assert.deepEqual(r.hooks.selectedClips(), ['clp_1']);
+      const content = r.surface.contentCalls.calls;
+      for (const side of ['fadeIn', 'fadeOut'] as const) {
+        assert.equal(triangleAt(content, handles[side].points), fadesEnabled, `${side}: the selected clip's triangle on the content layer (fadesEnabled ${fadesEnabled})`);
+      }
+      assert.equal(content.filter(isTriangle).length, fadesEnabled ? 2 : 0);
+      r.canvas.destroy();
+
+      // Hovered, not selected: the overlay's, and none on the content layer.
+      const h = drawRig(fadedSnapshot(), { fadesEnabled });
+      h.surface.contentCalls.clear();
+      h.surface.overlayCalls.clear();
+      h.surface.fire('pointermove', { clientX: box.x + 100, clientY: box.y + 20 });
+      flushFrames();
+      assert.deepEqual(h.hooks.selectedClips(), []);
+      const overlay = h.surface.overlayCalls.calls;
+      for (const side of ['fadeIn', 'fadeOut'] as const) {
+        assert.equal(triangleAt(overlay, handles[side].points), fadesEnabled, `${side}: the hovered clip's triangle on the overlay (fadesEnabled ${fadesEnabled})`);
+      }
+      assert.equal(overlay.filter(isTriangle).length, fadesEnabled ? 2 : 0);
+      assert.deepEqual(h.surface.contentCalls.calls.filter(isTriangle), [], 'no triangle on the content layer for a hovered clip');
+      h.canvas.destroy();
+    }
+  });
+});
+
+test("a plan's fade step: the proposed side a dashed --ai curve at its length, a side set to 0 its current shade cross-hatched, the step's disc; solid while heard", () => {
+  withNamedTokens(() => {
+    const ghost: Ghost = {
+      kind: 'fade',
+      step: 2,
+      clipId: 'clp_1',
+      trackId: 'trk_b',
+      position: '4800',
+      length: '24000',
+      before: { fadeIn: { length: '4800', curve: 'linear' }, fadeOut: null },
+      after: { fadeIn: null, fadeOut: { length: '2400', curve: 'equal_power' } },
+    };
+    for (const mode of [undefined, 'solid'] as const) {
+      const r = ghostRig([mode ? ({ ...ghost, mode } as Ghost) : ghost]);
+      const calls = r.surface.contentCalls.calls;
+      const rect = r.hooks.clips().find((c) => c.clipId === 'clp_1')!;
+      const box = ghostClipBox(rect.y, rect.height, '4800', '24000', r.hooks.view());
+      assert.deepEqual(box, clipBox(rect), "the ghost on the clip's box");
+      // The fade out the step adds: a --ai line on the proposed curve (24 px, equal power).
+      const curve = calls.filter((c) => c.kind === 'stroke' && c.style === '--ai' && same(pointsOf(c), fadeCurvePoints(box, 'fadeOut', 24, 'equal_power')));
+      assert.equal(curve.length, 1, 'the proposed curve');
+      assert.equal(curve[0]!.lineWidth, 1.25);
+      if (mode) assert.deepEqual(curve[0]!.dash, [], 'heard: unbroken');
+      else assert.ok(curve[0]!.dash.length > 0, 'dashed');
+      // The fade in the step removes: its current shade (48 px, linear).
+      const shadePath = (c: Call) => same(pointsOf(c), fadeShadePoints(box, 'fadeIn', 48, 'linear'));
+      const hatch = calls.filter((c) => c.kind === 'stroke' && c.style === '--ai-a160');
+      if (mode) {
+        assert.ok(calls.some((c) => c.kind === 'fill' && c.style === '--ai-a100' && shadePath(c)), 'heard: the removed shade as the ghost body');
+        assert.deepEqual(hatch, [], 'heard: no hatch');
+      } else {
+        const clip = calls.findIndex((c) => c.kind === 'clip' && shadePath(c));
+        assert.ok(clip >= 0, 'the hatch clipped to the removed shade');
+        assert.ok(hatch.length > 0 && hatch.every((c) => calls.indexOf(c) > clip), 'cross-hatched inside it');
+        assert.ok(hatch.some((c) => (c.path ?? []).length >= 4), 'both diagonals: crossed');
+      }
+      // No violet on the side the step leaves alone, and the clip's own fade shade is not drawn (clp_1 has none in main).
+      assert.ok(!calls.some((c) => c.style === '--bg-0-a550'), 'no fade in main');
+      // The step's disc.
+      assert.ok(calls.some((c) => c.kind === 'fill' && c.style === '--ai' && c.path?.some((s) => s.op === 'arc')), 'the step disc');
+      assert.ok(calls.some((c) => c.kind === 'fillText' && c.text === '2'), 'the step number');
       r.canvas.destroy();
     }
   });
