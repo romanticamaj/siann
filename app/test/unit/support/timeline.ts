@@ -3,7 +3,7 @@
 // Built as a plain frozen object (the read model's Snapshot shape); the
 // geometry and command modules read only these fields.
 
-import type { ClipEntity, Entity, MediaEntity, RootEntity, TrackEntity } from '../../../src/renderer/model/document';
+import type { ClipEntity, Entity, MarkerEntity, MediaEntity, RootEntity, TrackEntity } from '../../../src/renderer/model/document';
 import type { Snapshot } from '../../../src/renderer/model/read-model';
 
 export function track(id: string): TrackEntity {
@@ -73,4 +73,17 @@ export function sampleSnapshot(): Snapshot {
       clip('clp_3', 'trk_a', 'med_sq', '48000', '24000', '24000'),
     ],
   );
+}
+
+// The snapshot with these markers (m5b-ui-markers): the markers table in id
+// order, as the read model keeps it, and each one under marker:<id>.
+export function withMarkers(snapshot: Snapshot, markers: readonly MarkerEntity[]): Snapshot {
+  const entities: Record<string, Entity> = { ...snapshot.entities };
+  for (const m of markers) entities[`marker:${m.id}`] = m;
+  return Object.freeze({ ...snapshot, entities, markers: [...markers].sort((a, b) => (a.id < b.id ? -1 : 1)) });
+}
+
+// A position marker, or a cycle marker with a length.
+export function marker(id: string, number: number, position: string, name: string, length?: string): MarkerEntity {
+  return { schema: 'siann.entity.marker.v1', id, number, name, position, ...(length !== undefined ? { length } : {}) };
 }

@@ -32,6 +32,10 @@
 // Ctrl+Shift+A; the toolbar's snap type menu; the info line's typed values
 // (infoLineEditCommand, one command list through the canvas); a refused glue
 // is a toast (the `toasts` store) worded in the locale.
+// m5b-ui-markers: the marker track while the engine lists features.markers
+// and the marker commands (markers.ts markersEnabled), and its keys Insert,
+// Shift+3..9, Num 3..9, Shift+N and Shift+B as window commands; Delete
+// removes the selected marker.
 // m5b-ui-audition (UI redesign 4.5 C5): while a proposal is heard the edit
 // guard (model/edit-guard.ts) holds every structural edit: the canvas's
 // `allows` refuses the structural ops, so no drag, split, place or volume
@@ -89,6 +93,7 @@ import { Toolbar } from './Toolbar';
 import { TrackList, addTrack } from './TrackList';
 import { TrackListDivider } from './TrackListDivider';
 import { MAX_FRAMES_PER_PIXEL } from './zoom';
+import { markersEnabled } from './markers';
 
 const EMPTY_HEIGHTS: Readonly<Record<string, number>> = Object.freeze({});
 const NO_IDS: readonly string[] = Object.freeze([]);
@@ -391,6 +396,8 @@ export function Timeline({
       allows: allowed,
       // m5b-ui-fades: the handles while the engine lists the feature and the command.
       fadesEnabled: () => canRef.current.feature('clipFades') && canRef.current.command('clip.set_fade'),
+      // m5b-ui-markers: the marker track while the engine lists features.markers and the marker commands.
+      markersEnabled: () => markersEnabled(canRef.current),
       playhead: realtime ?? undefined,
       laneHeights: {
         get: heights,
@@ -457,11 +464,28 @@ export function Timeline({
     timeline?.setSnap(snap);
   }, [timeline, snap]);
 
-  // The band follows the capabilities; P and Alt+P take this canvas's selection.
+  // The band and the marker track follow the capabilities; P and Alt+P take this canvas's selection.
   const bandGate = loopClickGates(can).locators;
+  const markerGate = markersEnabled(can);
   useEffect(() => {
     timeline?.invalidate();
-  }, [timeline, bandGate]);
+  }, [timeline, bandGate, markerGate]);
+  // The marker keys (m5b-ui-markers; window commands, as the locator keys):
+  // Insert adds a position marker at the cursor (held while a proposal is
+  // heard, the edit guard), Shift+3..9 and Num 3..9 go to position markers 3
+  // to 9, Shift+N and Shift+B to the next and the previous marker. None
+  // exists without the marker track.
+  useEffect(() => {
+    if (!timeline || !markerGate) return undefined;
+    const goTo = [3, 4, 5, 6, 7, 8, 9] as const;
+    const offs = [
+      commands.register('window', 'marker.insert', () => (structuralBlocked(heardRef.current) ? false : timeline.insertMarker())),
+      ...goTo.map((n) => commands.register('window', `marker.goTo${n}`, () => timeline.goToMarker(n))),
+      commands.register('window', 'marker.next', () => timeline.nextMarker()),
+      commands.register('window', 'marker.previous', () => timeline.previousMarker()),
+    ];
+    return () => offs.forEach((off) => off());
+  }, [timeline, commands, markerGate]);
   useEffect(() => (timeline && loopClick ? loopClick.useSelection(() => timeline.selectionSpan()) : undefined), [timeline, loopClick]);
 
   const state = useSyncExternalStore(

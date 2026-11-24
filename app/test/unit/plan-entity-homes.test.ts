@@ -84,3 +84,16 @@ test('a named ref is under every step that names it, and never also a cascade', 
   assert.deepEqual(homes.steps, [[1], [0], [1]]);
   assert.deepEqual(homes.rest, []);
 });
+
+// m5b-ui-markers: a marker step names its marker:<id>, so its row is under it.
+test('a marker step names marker:<id>, and its row lands under it', () => {
+  for (const op of ['marker.add', 'marker.move', 'marker.rename', 'marker.remove']) assert.deepEqual(refsOf({ op, markerId: 'mk_1' }), ['marker:mk_1'], op);
+  const rows = diffRows(preview([
+    { ref: 'marker:mk_2', before: null, after: { id: 'mk_2', number: 2, name: '', position: '10' } },
+    { ref: 'marker:mk_1', before: { id: 'mk_1', number: 1, name: 'A', position: '0' }, after: { id: 'mk_1', number: 1, name: 'B', position: '0' } },
+  ]));
+  const homes = entityHomes([{ op: 'marker.rename', markerId: 'mk_1', name: 'B' }, { op: 'marker.add', markerId: 'mk_2', position: '10' }], rows);
+  const at = (ref: string) => rows.findIndex((r) => r.ref === ref);
+  assert.deepEqual(homes.steps, [[at('marker:mk_1')], [at('marker:mk_2')]]);
+  assert.deepEqual(homes.rest, []);
+});

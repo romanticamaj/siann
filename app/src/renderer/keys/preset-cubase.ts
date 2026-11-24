@@ -145,4 +145,26 @@ export const CUBASE_PRESET: readonly Binding[] = [
   { chord: 'Mod+Shift+R', commandId: 'transport.record', scope: 'window' },
   { chord: 'I', commandId: 'transport.punchIn', scope: 'window' },
   { chord: 'O', commandId: 'transport.punchOut', scope: 'window' },
+  // The marker track (m5b-ui-markers; spec 3.1, 3.6, UR-9; research/cubase.md
+  // 7.2): Insert adds a position marker at the cursor; Shift+3..9 and Num 3..9
+  // go to position markers 3 to 9 (Shift+1, Shift+2, Num 1 and Num 2 stay the
+  // locators); Shift+N and Shift+B go to the next and the previous marker (N
+  // and B stay the clip locate commands). Window commands, as the locator keys.
+  { chord: 'Insert', commandId: 'marker.insert', scope: 'window' },
+  { chord: 'Shift+3', commandId: 'marker.goTo3', scope: 'window' },
+  { chord: 'Shift+4', commandId: 'marker.goTo4', scope: 'window' },
+  { chord: 'Shift+5', commandId: 'marker.goTo5', scope: 'window' },
+  { chord: 'Shift+6', commandId: 'marker.goTo6', scope: 'window' },
+  { chord: 'Shift+7', commandId: 'marker.goTo7', scope: 'window' },
+  { chord: 'Shift+8', commandId: 'marker.goTo8', scope: 'window' },
+  { chord: 'Shift+9', commandId: 'marker.goTo9', scope: 'window' },
+  { chord: 'Numpad3', commandId: 'marker.goTo3', scope: 'window' },
+  { chord: 'Numpad4', commandId: 'marker.goTo4', scope: 'window' },
+  { chord: 'Numpad5', commandId: 'marker.goTo5', scope: 'window' },
+  { chord: 'Numpad6', commandId: 'marker.goTo6', scope: 'window' },
+  { chord: 'Numpad7', commandId: 'marker.goTo7', scope: 'window' },
+  { chord: 'Numpad8', commandId: 'marker.goTo8', scope: 'window' },
+  { chord: 'Numpad9', commandId: 'marker.goTo9', scope: 'window' },
+  { chord: 'Shift+N', commandId: 'marker.next', scope: 'window' },
+  { chord: 'Shift+B', commandId: 'marker.previous', scope: 'window' },
 ];

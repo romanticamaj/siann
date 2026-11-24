@@ -23,6 +23,8 @@ const NAMES: StepNames = {
   track: (id) => ({ trk_a: 'Lead', trk_v: 'Vox BG 主唱', trk_k: 'Keys' } as Record<string, string>)[id],
   clip: (id) => ({ clp_1: { trackId: 'trk_k', position: '72000' } } as Record<string, { trackId: string; position: string }>)[id],
   slot: (id) => ({ slt_1: { trackId: 'trk_k', name: 'Pro-Q 3' } } as Record<string, { trackId: string; name: string }>)[id],
+  // m5b-ui-markers: a position marker 3 named Chorus and an unnamed cycle marker 1.
+  marker: (id) => ({ mk_3: { number: 3, name: 'Chorus', cycle: false }, mk_c: { number: 1, name: '', cycle: true } } as Record<string, { number: number; name: string; cycle: boolean }>)[id],
   sampleRate: 48000,
   // m5b-ui-sends-buses: a bus by its name, a send by its track and bus.
   bus: (id) => ({ bus_v: 'Verb', bus_d: 'Delay 雙' } as Record<string, string>)[id],
@@ -117,6 +119,16 @@ const STEPS = {
   sendOff: { op: 'send.set_enabled', sendId: 'snd_1', enabled: false },
   trackOutput: { op: 'track.set_output', trackId: 'trk_a', output: { busId: 'bus_v' } },
   trackOutputMaster: { op: 'track.set_output', trackId: 'trk_a', output: null },
+  // m5b-ui-markers: positions in the primary format (384000 frames are bar 5 at 120 BPM).
+  markerAdd: { op: 'marker.add', markerId: 'mk_new', position: '384000', name: 'Verse' },
+  markerAddUnnamed: { op: 'marker.add', markerId: 'mk_new', position: '384000' },
+  cycleAdd: { op: 'marker.add', markerId: 'mk_new', position: '384000', length: '384000', name: 'Loop' },
+  cycleAddUnnamed: { op: 'marker.add', markerId: 'mk_new', position: '384000', length: '384000' },
+  markerMove: { op: 'marker.move', markerId: 'mk_3', position: '768000' },
+  cycleResize: { op: 'marker.move', markerId: 'mk_c', position: '96000', length: '96000' },
+  markerRename: { op: 'marker.rename', markerId: 'mk_3', name: 'Outro' },
+  markerRemove: { op: 'marker.remove', markerId: 'mk_3' },
+  markerRemoveUnknown: { op: 'marker.remove', markerId: 'mk_x' },
   unknown: { op: 'track.set_colour', trackId: 'trk_a', colour: '#ff0000' },
 } as const satisfies Record<string, Record<string, unknown>>;
 
@@ -196,9 +208,44 @@ test('English wording for every op the engine accepts, and a generic line for an
     sendOff: `Turn off the send from ${n('Keys')} to ${n('Verb')}`,
     trackOutput: `Route ${n('Lead')} to ${n('Verb')}`,
     trackOutputMaster: `Route ${n('Lead')} to the master`,
+    markerAdd: `Add marker ${n('Verse')} at 5.1.000`,
+    markerAddUnnamed: 'Add a marker at 5.1.000',
+    cycleAdd: `Add cycle marker ${n('Loop')} from 5.1.000 to 9.1.000`,
+    cycleAddUnnamed: 'Add a cycle marker from 5.1.000 to 9.1.000',
+    markerMove: `Move marker 3 ${n('Chorus')} to 9.1.000`,
+    cycleResize: 'Set cycle marker 1 to 2.1.000 – 3.1.000',
+    markerRename: `Rename marker 3 ${n('Chorus')} to ${n('Outro')}`,
+    markerRemove: `Remove marker 3 ${n('Chorus')}`,
+    markerRemoveUnknown: 'Remove a marker',
     unknown: 'Change (details below)',
   };
   for (const [step, text] of Object.entries(expected)) assert.equal(describe('en', step as StepName), text, step);
+});
+
+// m5b-ui-markers: a marker an earlier step adds or renames is named from it; positions are byte-identical.
+test('a marker made or renamed by an earlier step is named from it; marker positions are the same in every locale', () => {
+  const t = translator('en');
+  const plan = [
+    { op: 'marker.add', markerId: 'mk_new', position: '0', name: 'Bridge' },
+    { op: 'marker.move', markerId: 'mk_new', position: '96000' },
+    { op: 'marker.rename', markerId: 'mk_3', name: 'Outro' },
+    { op: 'marker.remove', markerId: 'mk_3' },
+    { op: 'marker.add', markerId: 'mk_num', position: '0', number: 5 },
+    { op: 'marker.remove', markerId: 'mk_num' },
+  ];
+  assert.deepEqual(describePlan(plan, t, NAMES), [
+    `Add marker ${n('Bridge')} at 1.1.000`,
+    `Move marker ${n('Bridge')} to 2.1.000`,
+    `Rename marker 3 ${n('Chorus')} to ${n('Outro')}`,
+    // A rename in the plan does not hide the name the user sees now.
+    `Remove marker 3 ${n('Chorus')}`,
+    'Add a marker at 1.1.000',
+    'Remove marker 5',
+  ]);
+  for (const locale of LOCALES) {
+    assert.ok(describe(locale, 'markerAdd').includes('5.1.000') && describe(locale, 'markerAdd').includes(n('Verse')), locale);
+    assert.ok(describe(locale, 'cycleAdd').includes('9.1.000'), locale);
+  }
 });
 
 test('a track, clip or plugin made by an earlier step of the plan is named from that step', () => {
@@ -241,7 +288,7 @@ test('positions follow the primary display format and the tempo map', () => {
 });
 
 test('no step description shows an entity id, a raw pan value or a milli-dB integer', () => {
-  const ids = ['trk_a', 'trk_b', 'trk_v', 'trk_k', 'trk_x', 'trk_pad', 'clp_1', 'clp_9', 'clp_new', 'med_1', 'med_2', 'slt_1', 'slt_new', 'com.example.eq', 'bus_v', 'bus_d', 'bus_n', 'bus_x', 'snd_1', 'snd_n', 'snd_x'];
+  const ids = ['trk_a', 'trk_b', 'trk_v', 'trk_k', 'trk_x', 'trk_pad', 'clp_1', 'clp_9', 'clp_new', 'med_1', 'med_2', 'slt_1', 'slt_new', 'com.example.eq', 'bus_v', 'bus_d', 'bus_n', 'bus_x', 'snd_1', 'snd_n', 'snd_x', 'mk_new', 'mk_3', 'mk_c', 'mk_x'];
   for (const locale of LOCALES) {
     for (const step of Object.keys(STEPS) as StepName[]) {
       const text = describe(locale, step);
@@ -255,8 +302,8 @@ test('no step description shows an entity id, a raw pan value or a milli-dB inte
 
 test('Chinese step descriptions use the glossary terms', () => {
   const terms: Record<'zh-Hant' | 'zh-Hans', Partial<Record<StepName, string>>> = {
-    'zh-Hant': { add: '音軌', removeUnknown: '音軌', gain: '音量', pan: '聲相', mute: '靜音', unmute: '靜音', solo: '獨奏', unsolo: '獨奏', move: '片段', clipRemove: '片段', insert: '外掛', tempo: '速度', inputMono: '輸入', inputClear: '輸入', monitorOff: '監聽', monitorAuto: '監聽', monitorInput: '監聽', notes: '記事本', notesClear: '記事本', fadeIn: '淡入', fadeOut: '淡出', fades: '淡出', fadeInRemove: '淡入', fadesRemove: '淡入', fadeOutRemoveIn: '淡出', busAdd: '匯流排', busRemoveUnknown: '匯流排', busGain: '音量', busPan: '聲相', sendAdd: '傳送', sendLevel: '傳送', sendRemoveUnknown: '傳送', busOutputMaster: '主輸出', trackOutputMaster: '主輸出' },
-    'zh-Hans': { add: '音轨', removeUnknown: '音轨', gain: '音量', pan: '声像', mute: '静音', unmute: '静音', solo: '独奏', unsolo: '独奏', move: '片段', clipRemove: '片段', insert: '插件', tempo: '速度', inputMono: '输入', inputClear: '输入', monitorOff: '监听', monitorAuto: '监听', monitorInput: '监听', notes: '记事本', notesClear: '记事本', fadeIn: '淡入', fadeOut: '淡出', fades: '淡出', fadeInRemove: '淡入', fadesRemove: '淡入', fadeOutRemoveIn: '淡出', busAdd: '总线', busRemoveUnknown: '总线', busGain: '音量', busPan: '声像', sendAdd: '发送', sendLevel: '发送', sendRemoveUnknown: '发送', busOutputMaster: '主输出', trackOutputMaster: '主输出' },
+    'zh-Hant': { add: '音軌', removeUnknown: '音軌', gain: '音量', pan: '聲相', mute: '靜音', unmute: '靜音', solo: '獨奏', unsolo: '獨奏', move: '片段', clipRemove: '片段', insert: '外掛', tempo: '速度', inputMono: '輸入', inputClear: '輸入', monitorOff: '監聽', monitorAuto: '監聽', monitorInput: '監聽', notes: '記事本', notesClear: '記事本', fadeIn: '淡入', fadeOut: '淡出', fades: '淡出', fadeInRemove: '淡入', fadesRemove: '淡入', fadeOutRemoveIn: '淡出', busAdd: '匯流排', busRemoveUnknown: '匯流排', busGain: '音量', busPan: '聲相', sendAdd: '傳送', sendLevel: '傳送', sendRemoveUnknown: '傳送', busOutputMaster: '主輸出', trackOutputMaster: '主輸出', markerAdd: '標記', cycleAdd: '循環標記', markerMove: '標記', cycleResize: '循環標記', markerRename: '標記', markerRemoveUnknown: '標記' },
+    'zh-Hans': { add: '音轨', removeUnknown: '音轨', gain: '音量', pan: '声像', mute: '静音', unmute: '静音', solo: '独奏', unsolo: '独奏', move: '片段', clipRemove: '片段', insert: '插件', tempo: '速度', inputMono: '输入', inputClear: '输入', monitorOff: '监听', monitorAuto: '监听', monitorInput: '监听', notes: '记事本', notesClear: '记事本', fadeIn: '淡入', fadeOut: '淡出', fades: '淡出', fadeInRemove: '淡入', fadesRemove: '淡入', fadeOutRemoveIn: '淡出', busAdd: '总线', busRemoveUnknown: '总线', busGain: '音量', busPan: '声像', sendAdd: '发送', sendLevel: '发送', sendRemoveUnknown: '发送', busOutputMaster: '主输出', trackOutputMaster: '主输出', markerAdd: '标记', cycleAdd: '循环标记', markerMove: '标记', cycleResize: '循环标记', markerRename: '标记', markerRemoveUnknown: '标记' },
   };
   for (const [locale, table] of Object.entries(terms) as Array<['zh-Hant' | 'zh-Hans', Record<string, string>]>) {
     for (const [step, term] of Object.entries(table)) {

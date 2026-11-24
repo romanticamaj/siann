@@ -54,6 +54,18 @@ test('every kind in its order, the removals with a minus sign, the rest as edits
   assert.deepEqual(chipsOf([], translator('en')), []);
 });
 
+// m5b-ui-markers (UI redesign 4.2): the four marker ops count under "edit".
+test('marker steps count under "edit"', () => {
+  const steps = [
+    { op: 'marker.add', markerId: 'mk_1', position: '0' },
+    { op: 'marker.move', markerId: 'mk_1', position: '10' },
+    { op: 'marker.rename', markerId: 'mk_1', name: 'A' },
+    { op: 'marker.remove', markerId: 'mk_1' },
+    { op: 'clip.move', clipId: 'c1', position: { domain: 'audio', value: '0' } },
+  ];
+  assert.deepEqual(text(chipsOf(steps, translator('en'))), ['1 move', '4 edit']);
+});
+
 test('the words per locale; zh-Hant is the mockup\'s', () => {
   const zh = mockupZh();
   for (const word of ['track', 'clip', 'move', 'mix']) assert.ok(zh[word], `the mockup's ZH table has ${word}`);

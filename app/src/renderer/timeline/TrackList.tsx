@@ -12,8 +12,10 @@
 // column (HeaderMeters) that paints inside each .hmeter well, with no React
 // commit.
 //
-// Absent parts keep their space empty (spec 3.0): the marker row's box until
-// m5b-ui-markers, the boxes of read and write in .r1 (m6a-ui-automation), and
+// The marker row is the mockup's div.mk[marker-head] (the flag icon and
+// "Markers", m5b-ui-markers) while the engine lists features.markers and the
+// marker commands. Absent parts keep their space empty (spec 3.0): the marker
+// row's box on an engine without them, the boxes of read and write in .r1 (m6a-ui-automation), and
 // M, S, record enable and the add button when engine.capabilities does not
 // list their commands. Record enable (m5b-ui-recording) is th()'s .msr.r with
 // its dot, lit while the engine says the track is armed (shell/Recording.tsx).
@@ -75,6 +77,7 @@ import type { LayoutStore } from '../shell/layout-store';
 import { dimmedTracks } from './dimming';
 import { DEFAULT_LANE_HEIGHT, clampLaneHeight } from './geometry';
 import { HeaderMeters, type SlotRect } from './HeaderMeters';
+import { markersEnabled } from './markers';
 import type { TrackSelectMode } from './selection';
 import { addTrackCommand, nextTrackName, renameTrackCommand } from './track-commands';
 import { trackColourVar } from './track-colour';
@@ -234,10 +237,19 @@ export function TrackList({ client, realtime, timeline, layout, sessionId = null
           {t('tracklist.count', { tracks: order.length, clips: snapshot?.clips.length ?? 0 })}
         </span>
       </div>
-      {/* The marker track row beside the event display's (--marker-h): empty
-          until m5b-ui-markers, so headers and lanes stay level (UI redesign 3.0).
-          Not .mk, which draws the marker row. */}
-      <div aria-hidden="true" />
+      {/* The marker head beside the event display's marker track row
+          (--marker-h; m5b-ui-markers): the mockup's div.mk[marker-head] with
+          the flag icon and "Markers" when the engine lists features.markers
+          and the marker commands; otherwise the row's box stays, empty, so
+          headers and lanes stay level (UI redesign 3.0). */}
+      {markersEnabled(can) ? (
+        <div className="mk" data-part="marker-head">
+          <Icon name="flag" />
+          {t('markers.label')}
+        </div>
+      ) : (
+        <div aria-hidden="true" />
+      )}
       <div
         className="track-list-body"
         data-testid="track-list-body"

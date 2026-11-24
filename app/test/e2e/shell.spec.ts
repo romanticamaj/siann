@@ -380,7 +380,8 @@ test('the whole window has no id of a pending part and every landed id of the mo
     const named = [...new Set([...mockup.matchAll(/\$\{d[pr]\('([a-z0-9-]+)'\)\}/g)].map((m) => m[1]!))];
     const landed = named.filter((id) => mode(id) === 'report' && !matches(manifest.pixels.dynamic, id));
     expect(landed.length).toBeGreaterThan(60);
-    expect(named.filter((id) => mode(id) === 'pending').length).toBeGreaterThan(10);
+    // Ten since m5b-ui-markers landed marker-head; the check is that some are still pending.
+    expect(named.filter((id) => mode(id) === 'pending').length).toBeGreaterThan(5);
     expect(landed.filter((id) => !shown.includes(id)), 'landed ids of the mockup missing from the window').toEqual([]);
     // The ids the mockup's markup computes: a plan step that names a clip
     // (step()'s sixth argument true) wraps its title in plan-step-N-title

@@ -27,7 +27,7 @@ import {
   snapperFor,
 } from '../../src/renderer/timeline/snap';
 import { moveSelectionCommand } from '../../src/renderer/timeline/edit-commands';
-import { clip, media, snapshotOf, track } from './support/timeline';
+import { clip, marker, media, snapshotOf, track, withMarkers } from './support/timeline';
 
 const RATE = 48000;
 const NO_TEMPO: readonly TempoPoint[] = [];
@@ -195,6 +195,29 @@ test('Events never snaps to a clip being dragged; the context lists the other cl
   const events = snapperFor({ on: true, grid: 'bar', type: 'events' }, 100, NO_TEMPO, RATE, false, 0n, context);
   assert.equal(events(4900n), 4900n, 'clp_1\'s own start is not a target');
   assert.equal(events(29500n), 30000n);
+});
+
+// m5b-ui-markers (UI redesign 3.2, "Snap types"): Events is magnetic to the
+// position markers and to the start and end of each cycle marker too; a
+// dragged marker is not a target of its own drag; Grid does not change.
+test('Events reaches position markers and both ends of cycle markers; the dragged marker is excluded; Grid is unchanged', () => {
+  const base = snapshotOf(['trk_a'], [track('trk_a')], [media('med_sq', '48000')], [clip('clp_1', 'trk_a', 'med_sq', '4800', '0', '24000')]);
+  const snapshot = withMarkers(base, [marker('mk_1', 1, '60000', 'Verse'), marker('mk_2', 2, '150000', 'Chorus'), marker('mk_c', 1, '200000', 'Loop', '40000')]);
+  const sorted = (edges: readonly bigint[]) => [...edges].sort((a, b) => (a < b ? -1 : a > b ? 1 : 0));
+  assert.deepEqual(sorted(snapContext(snapshot, [], null).edges), [4800n, 28800n, 60000n, 150000n, 200000n, 240000n]);
+  // The dragged marker (by id) is not a target; a dragged clip still is not either.
+  assert.deepEqual(sorted(snapContext(snapshot, ['mk_2'], null).edges), [4800n, 28800n, 60000n, 200000n, 240000n]);
+  assert.deepEqual(sorted(snapContext(snapshot, ['mk_c', 'clp_1'], null).edges), [60000n, 150000n]);
+  const events = snapperFor({ on: true, grid: 'bar', type: 'events' }, 100, NO_TEMPO, RATE, false, 0n, snapContext(snapshot, [], null));
+  assert.equal(events(60500n), 60000n, 'onto a position marker');
+  assert.equal(events(199300n), 200000n, 'onto a cycle marker\'s start');
+  assert.equal(events(240600n), 240000n, 'onto its end');
+  const move = moveSnapperFor({ on: true, grid: 'bar', type: 'events' }, { framesPerPixel: 100, tempo: NO_TEMPO, sampleRate: RATE, context: snapContext(snapshot, ['clp_1'], null) });
+  assert.equal(move(4800n, 24000n, 55500n), 55200n, 'a clip\'s start lands on a marker');
+  // Grid ignores the markers.
+  const gridSnap = snapperFor({ on: true, grid: 'bar', type: 'grid' }, 100, NO_TEMPO, RATE, false, 0n, snapContext(snapshot, [], null));
+  assert.equal(gridSnap(60500n), 96000n);
+  assert.equal(gridSnap(150000n), 192000n);
 });
 
 test('Magnetic Cursor: the project cursor within the tolerance, else the frame itself', () => {

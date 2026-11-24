@@ -130,7 +130,7 @@ test('each component of M5 has the port feature that owns its parts', () => {
   for (const [id, gate] of Object.entries(owner)) assert.equal(ruleOf(id).gate, gate, id);
   for (const gate of PORTS) assert.ok(Object.values(owner).includes(gate), gate);
   // Parts of a later feature inside a ported component stay that feature's, pending.
-  for (const [id, gate] of Object.entries({ 'tool-2': 'm6a-ui-tools', 'strip-3-edit': 'm5b-ui-editor-channel', 'marker-head': 'm5b-ui-markers' })) {
+  for (const [id, gate] of Object.entries({ 'tool-2': 'm6a-ui-tools', 'strip-3-edit': 'm5b-ui-editor-channel' })) {
     assert.equal(ruleOf(id).gate, gate, id);
     assert.equal(MANIFEST.gates[gate], 'pending', gate);
   }
@@ -150,6 +150,9 @@ test('each component of M5 has the port feature that owns its parts', () => {
   // The record buttons and the monitor stay m5b-ui-recording's, which landed them (report).
   for (const id of ['track-2-record', 'strip-3-record', 'inspector-record', 'inspector-monitor', 'transport-record']) assert.equal(ruleOf(id).gate, 'm5b-ui-recording', id);
   assert.equal(MANIFEST.gates['m5b-ui-recording'], 'report');
+  // The marker head and the marker track stay m5b-ui-markers', which landed them (report).
+  for (const id of ['marker-head', 'marker-track']) assert.equal(ruleOf(id).gate, 'm5b-ui-markers', id);
+  assert.equal(MANIFEST.gates['m5b-ui-markers'], 'report');
   // The Notepad section stays m5b-ui-notepad's, which landed it (report).
   assert.equal(ruleOf('inspector-notepad').gate, 'm5b-ui-notepad');
   assert.equal(MANIFEST.gates['m5b-ui-notepad'], 'report');

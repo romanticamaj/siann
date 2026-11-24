@@ -381,3 +381,38 @@ test('the fade fields and the fade step words are in every catalog, the mockup\'
     }
   }
 });
+
+test("the marker track's words and the marker step words are in every catalog, the mockup's in en and zh-TW (m5b-ui-markers)", () => {
+  // The marker head's label: the mockup's L('Markers'), and the glossary's 标记 (UI redesign 6.5).
+  assert.equal(en['markers.label'], 'Markers');
+  assert.equal(zhHant['markers.label'], '標記');
+  assert.equal(zhHans['markers.label'], '标记');
+  const keys: Array<[Key, string[]]> = [
+    ['markers.rename', ['marker']],
+    ['step.addMarker', ['name', 'time']],
+    ['step.addMarkerUnnamed', ['time']],
+    ['step.addCycleMarker', ['name', 'time', 'end']],
+    ['step.addCycleMarkerUnnamed', ['time', 'end']],
+    ['step.moveMarker', ['marker', 'time']],
+    ['step.resizeMarker', ['marker', 'time', 'end']],
+    ['step.renameMarker', ['marker', 'name']],
+    ['step.removeMarker', ['marker']],
+    ['step.aMarker', []],
+    ['step.markerNamed', ['name']],
+    ['step.positionMarker', ['number']],
+    ['step.positionMarkerNamed', ['number', 'name']],
+    ['step.cycleMarker', ['number']],
+    ['step.cycleMarkerNamed', ['number', 'name']],
+  ];
+  for (const [key, placeholders] of keys) {
+    for (const [name, catalog] of [['en', en], ['zh-Hant', zhHant], ['zh-Hans', zhHans]] as const) {
+      assert.equal(typeof catalog[key], 'string', `${name} ${key}`);
+      for (const p of placeholders) assert.ok(String(catalog[key]).includes(`{${p}}`), `${name} ${key} has {${p}}`);
+      if (name !== 'en') assert.notEqual(catalog[key], en[key], `${name} ${key} is translated`);
+    }
+    // Each wording names the marker in the glossary's word, unless its {marker} does.
+    if (placeholders.includes('marker')) continue;
+    assert.ok(String(zhHant[key]).includes('標記'), `zh-Hant ${key}`);
+    assert.ok(String(zhHans[key]).includes('标记'), `zh-Hans ${key}`);
+  }
+});
