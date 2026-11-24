@@ -35,7 +35,10 @@ const CHORD = /(^|[^\p{L}])(Ctrl|Cmd|Alt|Opt|Option|Shift|Mod|Meta|Control)\+(\S
 const SINGLE = /^(?:[A-Z0-9]|[,./\-=;`]|Space|Enter|Return|Esc|Escape|Tab|Delete|Backspace|Insert|Home|End|PageUp|PageDown)$/;
 const KEY_POSITIONS = new Set(['title', 'aria-keyshortcuts']);
 // A single key written in brackets inside a catalog sentence: 'Auto-Scroll (F)', '自動捲動（F）', 'Play [Space]'.
-const BRACKETED = /[(（[]\s*(?:[A-Z0-9]|[,./\-=;`]|Space|Enter|Return|Esc|Escape|Tab|Delete|Backspace|Insert|Home|End|Page ?Up|Page ?Down|Arrow ?(?:Left|Right|Up|Down)?|[←→↑↓])\s*[)）\]]/u;
+// A named key written bare in a catalog sentence: 'Enter changes ...', 'Shift for fine steps', '按 Esc 顯示'.
+// Command names (command.*) name commands, not keys: 'Enter Tempo', 'Delete', 'Next Tab'.
+const BARE = /(^|[^\p{L}])(Enter|Return|Esc|Escape|Shift|Ctrl|Control|Alt|Option|Opt|Cmd|Command|Backspace)($|[^\p{L}])/u;
+const BRACKETED =/[(（[]\s*(?:[A-Z0-9]|[,./\-=;`]|Space|Enter|Return|Esc|Escape|Tab|Delete|Backspace|Insert|Home|End|Page ?Up|Page ?Down|Arrow ?(?:Left|Right|Up|Down)?|[←→↑↓])\s*[)）\]]/u;
 
 export interface Finding {
   readonly file: string;
@@ -140,15 +143,21 @@ test('no key literal in the renderer or the shell outside the key table', () => 
 test('no catalog string writes a key: a key is a {key} placeholder filled by formatChord', () => {
   const found: string[] = [];
   for (const [name, catalog] of [['en', en], ['zh-Hant', zhHant], ['zh-Hans', zhHans]] as const) {
-    for (const [key, value] of Object.entries(catalog)) if (typeof value === 'string' && (CHORD.test(value) || BRACKETED.test(value))) found.push(`${name} ${key}: ${value}`);
+    for (const [key, value] of Object.entries(catalog)) if (typeof value === 'string' && (CHORD.test(value) || BRACKETED.test(value) || (!key.startsWith('command.') && BARE.test(value)))) found.push(`${name} ${key}: ${value}`);
   }
   assert.deepEqual(found, []);
   // The catalog check sees a bare key in brackets, not only chords: 'Auto-Scroll (F)' wrapped in tipWithKey showed the key twice.
   for (const written of ['Auto-Scroll (F)', '自動捲動（F）', 'Play [Space]', 'Step (Arrow Left)', 'Locate (Home)']) assert.ok(BRACKETED.test(written), written);
   for (const prose of ['Volume (dB)', 'Grid (1/16)', '(optional)', 'Tempo (BPM)']) assert.ok(!BRACKETED.test(prose), prose);
-  // The two strings that named keys take them as placeholders now.
+  // ... and a named key written bare in prose, in English and in Chinese.
+  for (const written of ['Enter changes every clip', 'Shift for fine steps', 'Escape cancels', '按住 Shift 微調', '按 Esc 顯示', 'Enter 依差值']) assert.ok(BARE.test(written), written);
+  for (const prose of ['Entering', 'Shifted', 'Optional', 'Commands', 'Alternate']) assert.ok(!BARE.test(prose), prose);
+  // The strings that named keys take them as placeholders now.
   for (const catalog of [en, zhHant, zhHans]) {
     assert.ok(String(catalog['pill.toggle']).includes('{key}'), String(catalog['pill.toggle']));
     assert.ok(String(catalog['info.editHint']).includes('{key}'), String(catalog['info.editHint']));
+    for (const placeholder of ['{commit}', '{cancel}']) assert.ok(String(catalog['info.editHint']).includes(placeholder), String(catalog['info.editHint']));
+    assert.ok(String(catalog['clip.gainControl']).includes('{key}'), String(catalog['clip.gainControl']));
+    assert.ok(String(catalog['notepad.changedElsewhere']).includes('{key}'), String(catalog['notepad.changedElsewhere']));
   }
 });

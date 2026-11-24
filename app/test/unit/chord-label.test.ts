@@ -9,7 +9,8 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 
-import { chordsOf, formatChord, tipWithKey } from '../../src/renderer/keys/chord-label';
+import { CANCEL_CHORD, COMMIT_CHORD, SET_EACH_CHORD, chordsOf, formatChord, formatModifier, tipWithKey } from '../../src/renderer/keys/chord-label';
+import { TOOL_MODIFIERS } from '../../src/renderer/keys/tool-modifiers';
 import { COMMAND_IDS } from '../../src/renderer/keys/commands';
 import { CUBASE_PRESET } from '../../src/renderer/keys/preset-cubase';
 import { translator } from '../../src/renderer/i18n/t';
@@ -102,4 +103,26 @@ test('tipWithKey: the label, then the first key in the locale\'s brackets; the l
   assert.equal(tipWithKey(zh, '停止', 'transport.stop', 'other'), '停止（Num 0）');
   assert.equal(tipWithKey(en, 'Left zone', 'zone.left.toggle', 'mac'), 'Left zone (⌥⌘L)');
   assert.equal(tipWithKey(en, 'Glue', 'edit.glue', 'other'), 'Glue');
+});
+
+test('the keys catalog sentences name come from here: Enter, Escape, the set-each chord, a tool modifier', () => {
+  assert.equal(formatChord(COMMIT_CHORD, 'other'), 'Enter');
+  assert.equal(formatChord(COMMIT_CHORD, 'mac'), '↩');
+  assert.equal(formatChord(CANCEL_CHORD, 'other'), 'Esc');
+  assert.equal(formatChord(CANCEL_CHORD, 'mac'), 'Esc');
+  assert.equal(formatChord(SET_EACH_CHORD, 'other'), 'Ctrl+Enter');
+  assert.equal(formatChord(SET_EACH_CHORD, 'mac'), '⌘↩');
+  assert.equal(formatModifier(TOOL_MODIFIERS.fine, 'other'), 'Shift');
+  assert.equal(formatModifier(TOOL_MODIFIERS.fine, 'mac'), '⇧');
+  assert.equal(formatModifier('Mod', 'other'), 'Ctrl');
+  assert.equal(formatModifier('Mod', 'mac'), '⌘');
+  assert.equal(formatModifier('Alt', 'mac'), '⌥');
+  // The info line's tooltip names Enter one way on each platform.
+  const en = translator('en');
+  for (const platform of ['other', 'mac'] as const) {
+    const hint = en('info.editHint', { commit: formatChord(COMMIT_CHORD, platform), key: formatChord(SET_EACH_CHORD, platform), cancel: formatChord(CANCEL_CHORD, platform) });
+    assert.ok(!hint.includes('{'), hint);
+    if (platform === 'mac') assert.ok(!hint.includes('Enter') && !hint.includes('Return'), hint);
+  }
+  assert.equal(en('clip.gainControl', { key: formatModifier(TOOL_MODIFIERS.fine, 'mac') }), 'Clip volume: drag up or down, ⇧ for fine steps');
 });

@@ -25,6 +25,7 @@ import * as os from 'node:os';
 import * as path from 'node:path';
 
 import { en } from '../../src/renderer/i18n/en';
+import { chordsOf, formatChord, type Platform } from '../../src/renderer/keys/chord-label';
 import { engineClient, type EngineClient } from './support/engine-client';
 import { launchApp, seedBundle } from './support/seed';
 import { chooseGrid } from './support/toolbar';
@@ -33,6 +34,8 @@ const RATE = 48000;
 // 120 BPM: a bar is 2 s, a beat 0.5 s.
 const BAR = 2 * RATE;
 const MOD = 'ControlOrMeta';
+// The list writes keys for the platform it runs on (Apple's glyphs on macOS).
+const PLATFORM: Platform = process.platform === 'darwin' ? 'mac' : 'other';
 const TRACK = 'trk_a';
 
 let scratch = '';
@@ -263,12 +266,15 @@ test('(e) Help > Key Commands opens the list, the search narrows it, Escape clos
   const rows = dialog.locator('tr[data-command]');
   const all = await rows.count();
   expect(all).toBeGreaterThan(100);
-  await expect(dialog.locator('tr[data-command="transport.stop"] kbd')).toHaveText(['Num 0', 'Shift+0']);
+  // Num 0 and Shift+0 on Windows and Linux, Num 0 and ⇧0 on macOS.
+  const stopKeys = chordsOf('transport.stop').map((chord) => formatChord(chord, PLATFORM));
+  expect(stopKeys).toEqual(PLATFORM === 'mac' ? ['Num 0', '⇧0'] : ['Num 0', 'Shift+0']);
+  await expect(dialog.locator('tr[data-command="transport.stop"] kbd')).toHaveText(stopKeys);
   const search = page.getByTestId('key-commands-search');
   await expect(search).toBeFocused();
   await search.fill('glue');
   await expect(rows).toHaveCount(2);
-  await search.fill('Num 0');
+  await search.fill(stopKeys[0]!);
   await expect(rows).toHaveCount(1);
   await search.fill('zzzz');
   await expect(page.getByTestId('key-commands-none')).toBeVisible();
