@@ -18,7 +18,7 @@
 
 namespace siann::model {
 
-enum class EntityType { root, media, track, clip, plugin_slot, locators, master, bus, send };
+enum class EntityType { root, media, track, clip, plugin_slot, locators, master, bus, send, marker };
 
 std::string_view entityTypeName(EntityType type) noexcept;
 
@@ -64,13 +64,13 @@ public:
     // An empty session with one constant tempo.
     static Document create(std::string name, std::int64_t sampleRate, std::int32_t milliBpm = 120'000);
 
-    // Parses and validates a siann.session_document.v3 JSON value, or a v1 or v2
-    // one through a migration that adds nothing (v1 has no locators and no
-    // master; v1 and v2 have no buses, sends, busOrder, Track.sends,
-    // Track.output or slot busId; an earlier document that carries a later
-    // version's entity or field is rejected as unknown_field). Unknown fields
-    // and versions are rejected.
-    // toJson always writes v3.
+    // Parses and validates a siann.session_document.v4 JSON value, or a v1, v2
+    // or v3 one through a migration that adds nothing (v1 has no locators and
+    // no master; v1 and v2 have no buses, sends, busOrder, Track.sends,
+    // Track.output or slot busId; v1 to v3 have no markers; an earlier
+    // document that carries a later version's entity or field is rejected as
+    // unknown_field). Unknown fields and versions are rejected.
+    // toJson always writes v4.
     static Document fromJson(const json::Value& value);
     json::Value toJson() const;
 
@@ -85,6 +85,7 @@ public:
     const Master* master() const noexcept;
     const Bus* bus(std::string_view id) const noexcept;
     const Send* send(std::string_view id) const noexcept;
+    const Marker* marker(std::string_view id) const noexcept;
 
     std::vector<const Media*> allMedia() const;
     std::vector<const Track*> tracksInOrder() const;
@@ -100,6 +101,8 @@ public:
     // In the track's sends order; ids that name no send are skipped.
     std::vector<const Send*> sendsOnTrack(std::string_view trackId) const;
     std::vector<const Send*> allSends() const;
+    // In id order.
+    std::vector<const Marker*> allMarkers() const;
     std::size_t clipCount() const noexcept { return clips_->size(); }
 
     // Each returns a new document. with* inserts or replaces by id.
@@ -116,6 +119,8 @@ public:
     Document withoutBus(std::string_view id) const;
     Document withSend(Send send) const;
     Document withoutSend(std::string_view id) const;
+    Document withMarker(Marker value) const;
+    Document withoutMarker(std::string_view id) const;
     Document withLocators(Locators value) const;
     // Throws ModelError unknown_entity when no locators are set.
     Document withoutLocators() const;
@@ -146,6 +151,7 @@ private:
 
     Document() = default;
     void validateRouting(std::vector<ValidationIssue>& out) const;
+    void validateMarkers(std::vector<ValidationIssue>& out) const;
 
     StoredPtr<Root> root_;
     Table<Media> media_;
@@ -156,6 +162,7 @@ private:
     StoredPtr<Master> master_;      // null while absent (0 dB)
     Table<Bus> buses_;
     Table<Send> sends_;
+    Table<Marker> markers_;
 };
 
 std::vector<DiffEntry> diff(const Document& before, const Document& after);
@@ -170,6 +177,7 @@ json::Value toJson(const Locators& value);
 json::Value toJson(const Master& value);
 json::Value toJson(const Bus& bus);
 json::Value toJson(const Send& send);
+json::Value toJson(const Marker& value);
 
 // The locators entity's id, the only one it has.
 inline constexpr std::string_view kLocatorsId = "locators";

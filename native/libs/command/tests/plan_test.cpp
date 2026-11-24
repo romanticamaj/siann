@@ -865,3 +865,115 @@ TEST_CASE("Rolling back a plan that added a bus restores the bus order after ano
     CHECK(history.head().document.root().busOrder == std::vector<std::string>{"b2"});
     CHECK(before.empty());
 }
+
+// m5b-engine-markers: plans write marker:<id>; a marker plan validates, approves,
+// applies and rolls back, and goes stale when its marker changes after submit.
+TEST_CASE("A plan with marker steps writes marker refs, applies and rolls back", "[plan][markers]") {
+    History history = base();
+    history.commit({cmd(R"({"op":"marker.add","markerId":"mk_old","position":"0","name":"Old"})")}, "user", "t");
+    const auto before = history.head().envelope.documentHash;
+    PlanStore store;
+    const Plan& plan = store.submit(history,
+                                    {cmd(R"({"op":"marker.add","markerId":"mk_new","position":"96000","length":"48000"})"),
+                                     cmd(R"({"op":"marker.rename","markerId":"mk_old","name":"Intro"})"),
+                                     cmd(R"({"op":"marker.move","markerId":"mk_new","position":"192000"})")},
+                                    {}, history.head().envelope.id);
+    std::vector<std::string> keys;
+    for (const auto& snapshot : plan.writeSet) {
+        keys.push_back(std::string(siann::model::entityTypeName(snapshot.ref.type)) + ":" + snapshot.ref.id);
+    }
+    CHECK(keys == std::vector<std::string>{"marker:mk_new", "marker:mk_old"});
+    CHECK_FALSE(plan.writeSet[0].entityHash.has_value());  // absent at the base
+    REQUIRE(plan.writeSet[1].entityHash.has_value());
+    CHECK(*plan.writeSet[1].entityHash ==
+          history.head().document.entityHash(EntityRef{EntityType::marker, "mk_old"}));
+    const std::string hash = *plan.hashText;
+    const Plan reread = Plan::fromJson(plan.toJson());
+    CHECK(formatHash(planHash(reread)) == hash);
+    REQUIRE(reread.writeSet.size() == 2);
+    CHECK(reread.writeSet[0].ref == EntityRef{EntityType::marker, "mk_new"});
+    CHECK(store.validate(history, hash).empty());
+
+    store.approve(history, hash, "user", "t1");
+    const Revision& applied = store.apply(history, hash, "agent", "t2");
+    CHECK(refsOf(applied.diff) ==
+          std::vector<EntityRef>{EntityRef{EntityType::marker, "mk_new"}, EntityRef{EntityType::marker, "mk_old"}});
+    const auto* added = history.head().document.marker("mk_new");
+    REQUIRE(added != nullptr);
+    CHECK(added->position == 192'000);
+    CHECK(added->number == 1);
+    CHECK(history.head().document.marker("mk_old")->name == "Intro");
+
+    const Revision& inverse = store.rollback(history, hash, "user", "t3");
+    CHECK(inverse.envelope.documentHash == before);
+    CHECK(history.head().document.marker("mk_new") == nullptr);
+    CHECK(history.head().document.marker("mk_old")->name == "Old");
+    CHECK(store.find(hash)->state == PlanState::rolled_back);
+}
+
+TEST_CASE("A marker plan goes stale when its marker changes after submit, not on a rename", "[plan][markers]") {
+    History history = base();
+    history.commit({cmd(R"({"op":"marker.add","markerId":"mk_1","position":"0"})")}, "user", "t");
+    PlanStore store;
+    const std::string hash =
+        *store.submit(history, {cmd(R"({"op":"marker.move","markerId":"mk_1","position":"500"})")}, {},
+                      history.head().envelope.id)
+             .hashText;
+    history.commit({cmd(R"({"op":"session.rename","name":"Renamed"})")}, "user", "t");
+    history.commit({cmd(R"({"op":"marker.add","markerId":"mk_2","position":"9"})")}, "user", "t");
+    CHECK(store.validate(history, hash).empty());
+
+    history.commit({cmd(R"({"op":"marker.rename","markerId":"mk_1","name":"Changed"})")}, "user", "t");
+    const auto error = staleError([&] { store.approve(history, hash, "user", "t"); });
+    REQUIRE(error.has_value());
+    CHECK(error->changedEntityKeys() == std::vector<std::string>{"marker:mk_1"});
+    REQUIRE(error->changedEntities().size() == 1);
+    CHECK(error->changedEntities()[0].change == DiffEntry::Change::modified);
+
+    // A removed marker is reported removed.
+    const std::string rename = *store.submit(history, {cmd(R"({"op":"marker.rename","markerId":"mk_2","name":"x"})")},
+                                             {}, history.head().envelope.id)
+                                    .hashText;
+    history.commit({cmd(R"({"op":"marker.remove","markerId":"mk_2"})")}, "user", "t");
+    const auto removed = staleError([&] { store.approve(history, rename, "user", "t"); });
+    REQUIRE(removed.has_value());
+    CHECK(removed->changedEntityKeys() == std::vector<std::string>{"marker:mk_2"});
+    CHECK(removed->changedEntities()[0].change == DiffEntry::Change::removed);
+}
+
+// A marker.add without a number takes the lowest free one of its kind in the
+// document it is applied to, a state its write set does not hold. A plan that
+// would now write a marker other than the one it previewed is stale on its
+// write: validate reports it and approve and apply refuse it.
+TEST_CASE("A marker.add plan whose number main took meanwhile is stale, not applied as another marker",
+          "[plan][markers]") {
+    History history = base();
+    PlanStore store;
+    const std::string hash =
+        *store.submit(history, {cmd(R"({"op":"marker.add","markerId":"mk_new","position":"0","name":"Intro"})")}, {},
+                      history.head().envelope.id)
+             .hashText;
+    // Another kind's number 1 does not change the outcome.
+    history.commit({cmd(R"({"op":"marker.add","markerId":"mk_cyc","position":"0","length":"10"})")}, "user", "t");
+    CHECK(store.validate(history, hash).empty());
+    store.approve(history, hash, "user", "t");
+
+    // A position marker takes number 1 after approval: apply would add mk_new as 2.
+    history.commit({cmd(R"({"op":"marker.add","markerId":"mk_main","position":"9"})")}, "user", "t");
+    const auto stale = store.validate(history, hash);
+    REQUIRE(stale.size() == 1);
+    CHECK(stale[0].entity == EntityRef{EntityType::marker, "mk_new"});
+    const std::string before = history.head().envelope.id;
+    const auto error = staleError([&] { store.apply(history, hash, "agent", "t"); });
+    REQUIRE(error.has_value());
+    CHECK(error->changedEntityKeys() == std::vector<std::string>{"marker:mk_new"});
+    CHECK(history.head().envelope.id == before);
+    CHECK(history.head().document.marker("mk_new") == nullptr);
+    CHECK(store.find(hash)->state == PlanState::approved);
+
+    // Once number 1 is free again the plan applies as previewed.
+    history.commit({cmd(R"({"op":"marker.remove","markerId":"mk_main"})")}, "user", "t");
+    store.apply(history, hash, "agent", "t");
+    REQUIRE(history.head().document.marker("mk_new") != nullptr);
+    CHECK(history.head().document.marker("mk_new")->number == 1);
+}

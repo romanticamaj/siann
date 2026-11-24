@@ -69,12 +69,12 @@ bool contains(const std::string& text, const std::string& part) {
     return text.find(part) != std::string::npos;
 }
 
-// Rewrites every "siann.session_document.v3" (what the engine writes since
-// m5b-engine-buses-sends) in a JCS text as v1, and the
+// Rewrites every "siann.session_document.v4" (what the engine writes since
+// m5b-engine-markers) in a JCS text as v1, and the
 // journal line's checksum to match: the bundle an M1 to M5 engine wrote.
 std::string asV1(const std::string& text) {
     std::string out = text;
-    const std::string from = "siann.session_document.v3";
+    const std::string from = "siann.session_document.v4";
     for (auto pos = out.find(from); pos != std::string::npos; pos = out.find(from, pos)) {
         out.replace(pos, from.size(), "siann.session_document.v1");
     }
@@ -117,7 +117,7 @@ TEST_CASE("Locators survive a checkpoint and a reopen", "[session][locators]") {
     REQUIRE(value != nullptr);
     CHECK(*value == Locators{96'000, 480'000});
     const Value checkpoint = siann::json::parse(siann::io::readFile(dir.bundle() / "session.json"));
-    CHECK(checkpoint.find("document")->find("schemaVersion")->asString() == "siann.session_document.v3");
+    CHECK(checkpoint.find("document")->find("schemaVersion")->asString() == "siann.session_document.v4");
     CHECK(checkpoint.find("document")->find("locators") != nullptr);
 }
 
@@ -167,9 +167,9 @@ TEST_CASE("A v1 bundle opens with no locators, takes set_locators and is written
     siann::io::writeFileAtomic(dir.bundle() / "journal.ndjson", journalAsV1(journal));
     siann::io::writeFileAtomic(dir.bundle() / "session.json", asV1(checkpoint));
     REQUIRE(contains(siann::io::readFile(dir.bundle() / "journal.ndjson"), "siann.session_document.v1"));
-    REQUIRE_FALSE(contains(siann::io::readFile(dir.bundle() / "journal.ndjson"), "siann.session_document.v3"));
+    REQUIRE_FALSE(contains(siann::io::readFile(dir.bundle() / "journal.ndjson"), "siann.session_document.v4"));
     REQUIRE(contains(siann::io::readFile(dir.bundle() / "session.json"), "siann.session_document.v1"));
-    REQUIRE_FALSE(contains(siann::io::readFile(dir.bundle() / "session.json"), "siann.session_document.v3"));
+    REQUIRE_FALSE(contains(siann::io::readFile(dir.bundle() / "session.json"), "siann.session_document.v4"));
 
     {
         OpenReport report;
@@ -181,7 +181,7 @@ TEST_CASE("A v1 bundle opens with no locators, takes set_locators and is written
         session.commit({setLocators("1000", "2000")}, "a", "t2");
         session.checkpoint();
         const std::string written = siann::io::readFile(dir.bundle() / "session.json");
-        CHECK(contains(written, "siann.session_document.v3"));
+        CHECK(contains(written, "siann.session_document.v4"));
         CHECK_FALSE(contains(written, "siann.session_document.v1"));
         // The journal is append-only: its v1 records stay as they were.
         CHECK(contains(siann::io::readFile(dir.bundle() / "journal.ndjson"), "siann.session_document.v1"));

@@ -216,6 +216,11 @@ model::Document restoreEntity(const model::Document& document, const model::Docu
                 return document.withSend(*value);
             }
             return document.withoutSend(ref.id);
+        case EntityType::marker:
+            if (const model::Marker* value = source.marker(ref.id)) {
+                return document.withMarker(*value);
+            }
+            return document.withoutMarker(ref.id);
     }
     return document;
 }
@@ -592,13 +597,30 @@ const Revision& History::rollback(std::string_view planRevisionId, std::string a
         inverse = restoreEntity(inverse, before, entry.entity, change);
     }
     // A later revision may reference an entity the plan added (a clip on a
-    // plan-added track or media): that entity is the conflict.
+    // plan-added track or media): that entity is the conflict. A restored
+    // marker whose number a later marker took (m5b-engine-markers): the marker
+    // that holds the number is the conflict.
+    std::set<EntityRef> restored;
+    for (const DiffEntry& entry : affectedEntities(plan)) {
+        restored.insert(entry.entity);
+    }
     for (const model::ValidationIssue& issue : inverse.validate()) {
         const model::Clip* clip = issue.entity.type == EntityType::clip ? inverse.clip(issue.entity.id) : nullptr;
+        const model::Marker* taken =
+            issue.entity.type == EntityType::marker ? inverse.marker(issue.entity.id) : nullptr;
         if (issue.code == "unknown_track" && clip != nullptr) {
             conflicts.push_back(EntityRef{EntityType::track, clip->trackId});
         } else if (issue.code == "unknown_media" && clip != nullptr) {
             conflicts.push_back(EntityRef{EntityType::media, clip->mediaId});
+        } else if (issue.code == "marker_number_taken" && taken != nullptr) {
+            for (const model::Marker* holder : inverse.allMarkers()) {
+                const EntityRef ref{EntityType::marker, holder->id};
+                if (holder->isCycle() == taken->isCycle() && holder->number == taken->number &&
+                    restored.count(ref) == 0 &&
+                    std::find(conflicts.begin(), conflicts.end(), ref) == conflicts.end()) {
+                    conflicts.push_back(ref);
+                }
+            }
         } else {
             throw CommandError(issue.code, "rolling back " + plan.envelope.id + ": " + issue.message);
         }
