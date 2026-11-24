@@ -27,12 +27,14 @@ export interface PluginPickerProps {
   readonly picker: PickerController;
   // The name of the track the picker inserts on.
   readonly trackName?: (trackId: string) => string;
+  // The name of the bus it inserts on (m5b-ui-sends-buses: a bus strip's rack).
+  readonly busName?: (busId: string) => string;
 }
 
 // The install's file name, whatever the separators of its path.
 export const fileOf = (entry: RegistryEntry) => fileName(entry.path);
 
-export function PluginPicker({ picker, trackName }: PluginPickerProps) {
+export function PluginPicker({ picker, trackName, busName }: PluginPickerProps) {
   const t = useT();
   const can = useCapabilities();
   const guard = useEditGuard();
@@ -57,7 +59,8 @@ export function PluginPicker({ picker, trackName }: PluginPickerProps) {
   };
   const buttons = buttonsListed(can);
   const visible = picker.visible();
-  const track = state.trackId !== null ? (trackName?.(state.trackId) ?? '') : '';
+  const owner = state.owner;
+  const track = owner === null ? '' : 'trackId' in owner ? (trackName?.(owner.trackId) ?? '') : (busName?.(owner.busId) ?? '');
   const confirm = state.confirm;
   return (
     <dialog

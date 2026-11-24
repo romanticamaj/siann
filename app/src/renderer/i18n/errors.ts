@@ -43,6 +43,8 @@ const ERROR_KEYS = {
   agent_not_connected: 'error.agent_not_connected',
   invalid_request_text: 'error.invalid_request_text',
   invalid_notes: 'error.invalid_notes',
+  // A bus routed into a loop (m5b-ui-sends-buses).
+  routing_cycle: 'error.routing_cycle',
 } as const satisfies Record<string, MessageKey>;
 
 type KnownCode = keyof typeof ERROR_KEYS;

@@ -32,6 +32,10 @@ export interface RegistryEntry {
   readonly approved: boolean;
 }
 
+// Where an insert goes: a track's chain, or a bus's (m5b-ui-sends-buses;
+// plugin.instantiate takes exactly one of trackId or busId).
+export type InsertOwner = { readonly trackId: string } | { readonly busId: string };
+
 // What the engine refused: its code and message.
 export interface PluginFailure {
   readonly code: string;
@@ -109,13 +113,16 @@ export class PluginActions {
     return entryOf(result) ?? { ...entry, approved: true };
   }
 
-  // Inserts the install at the end of the track's chain: one revision. Resolves
-  // with the new slot id; a refused request or a failed job throws its code.
-  async instantiate(trackId: string, entry: RegistryEntry): Promise<string> {
+  // Inserts the install at the end of the track's (or the bus's) chain: one
+  // revision. Resolves with the new slot id; a refused request or a failed
+  // job throws its code.
+  async instantiate(target: string | InsertOwner, entry: RegistryEntry): Promise<string> {
+    const owner: InsertOwner = typeof target === 'string' ? { trackId: target } : target;
     const snapshot = this.#options.client.model.getSnapshot();
-    const track = this.#options.client.model.select(`track:${trackId}`) as { inserts?: readonly string[] } | undefined;
-    const index = track?.inserts?.length ?? 0;
-    const job = (await this.#request('plugin.instantiate', { trackId, index, descriptor: { format: entry.format, path: entry.path } }, snapshot?.revision)) as {
+    const ref = 'trackId' in owner ? `track:${owner.trackId}` : `bus:${owner.busId}`;
+    const entity = this.#options.client.model.select(ref) as { inserts?: readonly string[] } | undefined;
+    const index = entity?.inserts?.length ?? 0;
+    const job = (await this.#request('plugin.instantiate', { ...owner, index, descriptor: { format: entry.format, path: entry.path } }, snapshot?.revision)) as {
       state?: unknown;
       result?: { slotId?: unknown };
       error?: { code?: unknown; message?: unknown };

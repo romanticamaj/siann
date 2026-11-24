@@ -35,11 +35,11 @@ export interface GestureControllerOptions {
 
 export interface GestureTarget {
   readonly ref: string;
-  readonly param: 'gain' | 'pan' | 'mute';
+  readonly param: 'gain' | 'pan' | 'mute' | 'level';
 }
 
 // The read model's field to the protocol's parameter.
-const PARAMS: Readonly<Record<GestureField, GestureTarget['param']>> = { gainMilliDb: 'gain', pan: 'pan' };
+const PARAMS: Readonly<Record<GestureField, GestureTarget['param']>> = { gainMilliDb: 'gain', pan: 'pan', levelMilliDb: 'level' };
 
 // Until gesture.begin answers with the engine's lease.
 const DEFAULT_LEASE_MS = 5000;

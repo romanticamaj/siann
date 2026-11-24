@@ -406,7 +406,12 @@ test('the pill names the plan and toggles the ghosts, as Ctrl+Alt+G does', async
 
 test('while playing with ghosts on, only the cursor moves: the content layer is not redrawn', async () => {
   await expect.poll(async () => (await ghosts()).length).toBe(EXPECTED.length);
-  await engine.call('transport.locate', { frames: '0' });
+  // The cursor starts at the view's left edge, in view. The earlier tests'
+  // reveal() and zoom leave the view scrolled past frame 0, and a cursor out of
+  // view while playing turns the page (auto-scroll), which redraws the content
+  // by design: from frame 0 that redraw came or not with the timing.
+  const left = (await timeline<{ scrollFrames: string }>('view')).scrollFrames;
+  await engine.call('transport.locate', { frames: left });
   // Count from a settled content layer: a frame the toggle or the locate
   // asked for may still be pending (two animation frames without a draw).
   await expect.poll(async () => {
@@ -482,4 +487,37 @@ test('a plan\'s master.set_gain: the ghost cap and its line on the master fader,
   await page.getByTestId('plan-reject').click();
   await expect.poll(async () => (await ghosts()).length).toBe(0);
   await expect(strip.locator('.cap.ghost')).toHaveCount(0);
+});
+
+// m5b-ui-sends-buses (UI redesign 4.2; 10.11, 25): a plan's bus.add is a
+// dashed strip labelled new after the bus strips (strip-bus-ghost), and its
+// send.add a dashed slot numbered by its step in the track's sends rack and
+// in the Inspector's Sends section.
+test('a plan\'s bus.add and send.add: the dashed bus strip and the dashed send slot', async () => {
+  const plan = await submit([
+    { op: 'bus.add', busId: 'bus_new', name: 'Verb' },
+    { op: 'send.add', sendId: 'snd_new', trackId: 'trk_a', busId: 'bus_new', levelMilliDb: 0, pre: false },
+  ]);
+  await selectPlan(page, plan);
+  await expect.poll(async () => pairs(await ghosts())).toEqual(['bus-add 1', 'send-add 2']);
+  const strip = page.getByTestId('mixer-strip-bus-ghost');
+  await expect(strip).toBeVisible();
+  await expect(strip).toHaveClass(/\bghost\b/);
+  await expect(strip).toHaveAttribute('data-ghost', '1');
+  await expect(strip.locator('.nametag')).toHaveText('Verb');
+  // It stands after the tracks' strips and before the master.
+  const order = await page.locator('[data-testid^="mixer-strip-"]').evaluateAll((els) => els.map((el) => el.getAttribute('data-testid')));
+  expect(order.indexOf('mixer-strip-bus-ghost')).toBe(order.indexOf('mixer-strip-master') - 1);
+  // The send slot: the Sends rack of Keys, and the Inspector.
+  await page.locator('[data-part="mixer-racks"]').getByTestId('rack-sends').click();
+  const slot = page.getByTestId('mixer-strip-trk_a').locator('.ins .slot.ghost');
+  await expect(slot).toHaveCount(1);
+  await expect(slot).toHaveAttribute('data-ghost', '2');
+  await expect(slot.locator('.stepn')).toHaveText('2');
+  await page.getByTestId('track-header-trk_a').click({ position: { x: 30, y: 30 } });
+  await expect(page.locator('[data-part="inspector-sends"] .islot.ghost .stepn')).toHaveText('2');
+  await page.getByTestId('plan-reject').click();
+  await page.getByTestId('plan-reject').click();
+  await expect.poll(async () => (await ghosts()).length).toBe(0);
+  await expect(page.getByTestId('mixer-strip-bus-ghost')).toHaveCount(0);
 });

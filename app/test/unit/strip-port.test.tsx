@@ -27,9 +27,10 @@ import { renderToStaticMarkup } from 'react-dom/server';
 import type { Locale, LocaleStore } from '../../src/renderer/i18n/locale';
 import { installLocaleStore, localeStore } from '../../src/renderer/i18n/t';
 import { Mixer } from '../../src/renderer/mixer/Mixer';
+import { percent } from '../../src/renderer/mixer/Strip';
 import { milliDbToPosition } from '../../src/renderer/mixer/taper';
 import type { Capabilities } from '../../src/renderer/model/capabilities';
-import type { PluginSlotEntity, TrackEntity } from '../../src/renderer/model/document';
+import type { BusEntity, PluginSlotEntity, SendEntity, TrackEntity } from '../../src/renderer/model/document';
 import type { GestureController } from '../../src/renderer/model/gesture-controller';
 import type { MeterLegend } from '../../src/renderer/model/meter-frames';
 import type { Snapshot } from '../../src/renderer/model/read-model';
@@ -42,6 +43,9 @@ import { GhostContext, type GhostView } from '../../src/renderer/plans/ghost-con
 import type { Ghost } from '../../src/renderer/plans/ghosts';
 import { byAttr, byClass, classes, elements, find, findAll, loadMockup, parse, sig, styleOf, text, type Element } from './support/mockup';
 import { snapshotOf, track } from './support/timeline';
+import { bus, busSnapshot, send } from './support/buses';
+import { BusSelection } from '../../src/renderer/mixer/bus-selection';
+import { trackColourVar } from '../../src/renderer/timeline/track-colour';
 
 const FIXTURES = path.resolve(__dirname, '..', '..', '..', 'test', 'unit', 'fixtures');
 const FULL = JSON.parse(fs.readFileSync(path.join(FIXTURES, 'capabilities-full.json'), 'utf8')) as Capabilities;
@@ -78,7 +82,7 @@ interface RenderOptions {
   locale?: Locale;
   // m5b-ui-inserts-master: the plugin slots in the session, and the Inserts rack switch.
   slots?: PluginSlotEntity[];
-  racks?: { inserts: boolean };
+  racks?: { shown: 'routing' | 'inserts' | 'sends' | null };
 }
 
 function withSlots(snap: Snapshot, slots: readonly PluginSlotEntity[]): Snapshot {
@@ -381,7 +385,7 @@ test('the rack is an empty box without plugins, without plugin.instantiate or pl
     ['no features.plugins', { caps: noPlugins }],
     ['no plugin.instantiate', { caps: { ...FULL, methods: (FULL.methods ?? []).filter((m) => m !== 'plugin.instantiate') } }],
     ['no plugin.registry', { caps: { ...FULL, methods: (FULL.methods ?? []).filter((m) => m !== 'plugin.registry') } }],
-    ['the switch off', { racks: { inserts: false } }],
+    ['the switch off', { racks: { shown: null } }],
   ] as const) {
     const strip = strips(render([withOne], { slots, ...options }))[0]!;
     assertEmptyBox(find(strip, byClass('ins')), `${what}: .ins`);
@@ -670,4 +674,200 @@ test('a stored gain above +6 dB pins the cap at the top and warns on the fader a
   const level = elements(find(strip, byClass('readout')))[0]!;
   assert.equal(text(level), '+9.0 dB');
   assert.ok(classes(level).includes('warn'));
+});
+
+// ---- m5b-ui-sends-buses (UI redesign 3.4, 3.0, 4.2; 10.11, 25). A bus strip
+// has the track strip's controls: strip()'s rows in its order and classes,
+// its fader to +6 dB on bus:<id>, the pan knob, M and S, the meter on
+// bus:<id>, the readout, its insert rack; the box of e and the R, W and
+// record row stay empty, and its Sends rack is an empty box. Bus strips
+// stand after the track strips in busOrder, then the ghost strips, then the
+// master. The rack row shows the rack of the lit switch: Routing (one .slot,
+// the output selector), Inserts, or Sends (a .slot per send by the two-slot
+// rule); none lit, the empty box. Without features.buses nothing of it is in
+// the DOM.
+
+function renderBuses(
+  tracks: TrackEntity[],
+  buses: BusEntity[],
+  sends: SendEntity[],
+  options: { caps?: Capabilities | null; racks?: { shown: 'routing' | 'inserts' | 'sends' | null }; ghosts?: readonly Ghost[]; selectedBus?: string | null; locale?: Locale } = {},
+): Element {
+  const snap = busSnapshot(buses, sends, tracks);
+  const caps = options.caps === undefined ? FULL : options.caps;
+  const legend: MeterLegend = { epoch: '1', entities: ['master', ...tracks.map((t) => `track:${t.id}`), ...buses.map((b) => `bus:${b.id}`)] };
+  const view: GhostView = { ghosts: options.ghosts ?? [], outline: null, pin: () => undefined };
+  const selection = new BusSelection();
+  if (options.selectedBus) selection.set(options.selectedBus);
+  const node: ReactNode = (
+    <CapabilitiesContext.Provider value={caps}>
+      <RecordContext.Provider value={recordHost(snap, caps)}>
+        <GhostContext.Provider value={view}>
+          <Mixer client={fakeClient(snap, legend)} gestures={gestures} realtime={realtime} racks={options.racks} busSelection={selection} />
+        </GhostContext.Provider>
+      </RecordContext.Provider>
+    </CapabilitiesContext.Provider>
+  );
+  const before = localeStore();
+  if (options.locale) installLocaleStore({ subscribe: () => () => undefined, getSnapshot: () => options.locale, setLocale: () => undefined } as unknown as LocaleStore);
+  try {
+    return parse(renderToStaticMarkup(node));
+  } finally {
+    installLocaleStore(before);
+  }
+}
+
+const busStrips = (root: Element) => strips(root).filter((s) => (s.attrs['data-testid'] ?? '').startsWith('mixer-strip-bus-'));
+const verb = (): BusEntity => ({ ...bus('bus_v', 'Verb'), gainMilliDb: -6000, pan: -2500 });
+const delay = (): BusEntity => ({ ...bus('bus_d', 'Delay'), mute: true });
+
+test('a bus strip has strip()\'s rows in its order and classes, its colour the palette entry of its id', () => {
+  const root = renderBuses([kick()], [verb()], []);
+  const app = busStrips(root)[0]!;
+  const mockup = mockupStrip(0);
+  assert.equal(sig(app), sig(mockup));
+  assert.deepEqual(elements(app).map(sig), ['div.ins', 'div.panrow', 'div.btns', 'div.fad', 'div.readout', 'div.btns', 'div.nametag']);
+  assert.equal(styleOf(app, '--c'), `var(${trackColourVar('bus_v')})`);
+  assert.equal(app.attrs['data-part-item'], 'strip');
+  assert.equal(app.attrs['data-part-key'], 'bus-bus_v', 'a bus takes no strip number from the tracks');
+  assert.equal(app.attrs.role, 'group');
+  assert.equal(app.attrs['aria-label'], 'Verb');
+  assert.equal(text(find(app, byClass('nametag'))), 'Verb');
+  // The pan row: strip()'s label, knob and value, the bus's pan.
+  assert.deepEqual(elements(find(app, byClass('panrow'))).filter((el) => !classes(el).includes('value-tooltip')).map(sig), ['span.lab', 'svg.knob', 'span.lab']);
+  assert.equal(text(find(app, byAttr('data-testid', 'pan-value-bus_v'))), 'L25');
+  // M and S, then the empty box of e.
+  const [m, s, e] = elements(find(app, byClass('btns')));
+  assert.equal(sig(m!), 'button.m.msr');
+  assert.equal(sig(s!), 'button.msr.s');
+  assertEmptyBox(e!, 'the bus\'s e');
+  // The fader on bus:<id> with the taper (+6 dB at the top), the meter with two channels.
+  const fader = find(app, byAttr('data-testid', 'fader-bus_v'));
+  assert.equal(fader.attrs.role, 'slider');
+  assert.equal(fader.attrs['aria-valuemax'], '6000');
+  assert.equal(styleOf(find(fader, byClass('cap')), 'bottom'), percent(milliDbToPosition(-6000)));
+  assert.deepEqual(elements(find(app, byAttr('data-testid', 'meter-bus_v'))).map(sig), ['div.ch', 'div.ch']);
+  // The readout: the level and the peak value.
+  assert.equal(text(find(app, byAttr('data-testid', 'fader-value-bus_v'))), '-6.0 dB');
+  assert.ok(find(app, byAttr('data-testid', 'peak-value-bus_v')));
+  // R, W and record: the empty row.
+  assertEmptyBox(elements(app)[5]!, 'the bus\'s R W record row');
+  // Its insert rack (the Inserts switch is lit by default): two empty slots, adding to the bus.
+  const ins = find(app, byClass('ins'));
+  assert.deepEqual(elements(ins).map(sig), ['div.empty.slot', 'div.empty.slot']);
+  assert.equal(elements(ins)[0]!.attrs['aria-label'], 'Add insert to Verb');
+});
+
+test('the strips stand tracks, buses in busOrder, ghost strips, then the master; a muted or selected bus is .muted, .sel', () => {
+  const ghosts: Ghost[] = [{ kind: 'bus-add', step: 2, busId: 'bus_n', name: 'Hall', key: 'bus-ghost' }, { kind: 'track-add', step: 1, trackId: 'trk_n', name: 'Pad', channels: 2, key: 'ghost' }];
+  const root = renderBuses([kick(), snare()], [delay(), verb()], [], { ghosts, selectedBus: 'bus_v' });
+  const ids = strips(root).map((s) => s.attrs['data-testid']);
+  assert.deepEqual(ids, ['mixer-strip-trk_a', 'mixer-strip-trk_b', 'mixer-strip-bus-bus_d', 'mixer-strip-bus-bus_v', 'mixer-strip-ghost', 'mixer-strip-bus-ghost', 'mixer-strip-master']);
+  const [d, v] = busStrips(root);
+  assert.ok(classes(d!).includes('muted'));
+  assert.ok(!classes(d!).includes('sel'));
+  assert.equal(d!.attrs['aria-selected'], 'false');
+  assert.ok(classes(v!).includes('sel'));
+  assert.equal(v!.attrs['aria-selected'], 'true');
+  assert.equal(find(d!, byAttr('data-testid', 'mute-bus_d')).attrs['aria-pressed'], 'true');
+});
+
+test('a proposed bus is a dashed strip labelled new after the bus strips, keyed bus-ghost; a removed bus dims with its badge', () => {
+  const ghosts: Ghost[] = [
+    { kind: 'bus-add', step: 1, busId: 'bus_n', name: 'Hall', key: 'bus-ghost' },
+    { kind: 'bus-add', step: 3, busId: 'bus_m', name: 'Room', key: 'bus-ghost-2' },
+    { kind: 'bus-remove', step: 2, busId: 'bus_v' },
+  ];
+  const root = renderBuses([kick()], [verb()], [], { ghosts });
+  const all = strips(root);
+  const proposed = all.filter((s) => classes(s).includes('ghost'));
+  assert.deepEqual(proposed.map((s) => s.attrs['data-part-key']), ['bus-ghost', 'bus-ghost-2']);
+  assert.deepEqual(elements(proposed[0]!).map(sig), ['div.ins', 'div.panrow', 'div.btns', 'div.fad', 'div.readout', 'div.btns', 'div.nametag']);
+  assert.equal(text(find(proposed[0]!, byClass('nametag'))), 'Hall');
+  assert.equal(findAll(proposed[0]!, (el) => el.attrs.role === 'slider' || el.tag === 'button').length, 0, 'nothing to operate on a proposed bus');
+  const removed = busStrips(root)[0]!;
+  assert.ok(classes(removed).includes('ghost-removed'));
+  assert.equal(removed.attrs['data-ghost'], '2');
+  assert.equal(text(find(removed, byClass('stepn'))), '2');
+});
+
+test('the Routing rack: one .slot, the output selector naming the master or the bus; the list offers the master and the buses', () => {
+  const tracks: TrackEntity[] = [kick(), { ...snare(), output: { busId: 'bus_v' } }];
+  const root = renderBuses(tracks, [verb(), { ...delay(), output: { busId: 'bus_v' } }], [], { racks: { shown: 'routing' } });
+  const [one, two] = strips(root);
+  const rack = find(one!, byClass('ins'));
+  assert.equal(rack.attrs.role, 'group');
+  assert.deepEqual(elements(rack).map(sig), ['div.slot']);
+  const slot = elements(rack)[0]!;
+  assert.equal(text(find(slot, byClass('slot-name'))), 'Master');
+  const select = find(slot, (el) => el.tag === 'select');
+  assert.equal(select.attrs['data-testid'], 'output-trk_a');
+  assert.deepEqual(findAll(select, (el) => el.tag === 'option').map((o) => [o.attrs.value, text(o)]), [['', 'Master'], ['bus_v', 'Verb'], ['bus_d', 'Delay']]);
+  assert.equal(text(find(find(two!, byClass('ins')), byClass('slot-name'))), 'Verb');
+  // A bus's selector: the master and the other buses.
+  const delayStrip = busStrips(root)[1]!;
+  const busSelect = find(find(delayStrip, byClass('ins')), (el) => el.tag === 'select');
+  assert.deepEqual(findAll(busSelect, (el) => el.tag === 'option').map((o) => o.attrs.value), ['', 'bus_v']);
+  assert.equal(text(find(find(delayStrip, byClass('ins')), byClass('slot-name'))), 'Verb');
+});
+
+test('the Sends rack: a .slot per send with on, the bus name as the level, pre/post and Remove; the two-slot rule; a bus\'s is empty', () => {
+  const sends = [send('snd_1', 'trk_a', 'bus_v', -6000, false, true), send('snd_2', 'trk_a', 'bus_d', 0, true, false)];
+  const root = renderBuses([{ ...kick(), sends: ['snd_2', 'snd_1'] }, snare()], [verb(), delay()], sends, { racks: { shown: 'sends' } });
+  const [one, two] = strips(root);
+  const rack = find(one!, byClass('ins'));
+  // Two sends: every slot in the track's sends order, then one empty slot.
+  // A send slot carries .send-slot (shell.css keeps its level the room in the
+  // strip's 80 px), a pre-fader one .send-pre too; its tooltip names PRE or POST.
+  assert.deepEqual(elements(rack).map(sig), ['div.off.send-pre.send-slot.slot', 'div.send-slot.slot', 'div.empty.slot']);
+  const [off, on, empty] = elements(rack);
+  assert.equal(off!.attrs.title, 'Delay · 0.0 dB · PRE');
+  assert.equal(on!.attrs.title, 'Verb · -6.0 dB · POST');
+  assert.deepEqual(findAll(off!, (el) => el.tag === 'button').map((b) => b.attrs['data-testid']), ['send-on-snd_2', 'send-pre-snd_2', 'send-remove-snd_2']);
+  assert.equal(find(off!, byAttr('data-testid', 'send-on-snd_2')).attrs['aria-pressed'], 'false');
+  assert.equal(text(find(off!, byAttr('data-testid', 'send-pre-snd_2'))), 'PRE');
+  assert.equal(text(find(on!, byAttr('data-testid', 'send-pre-snd_1'))), 'POST');
+  const level = find(on!, byAttr('data-testid', 'send-level-snd_1'));
+  assert.ok(classes(level).includes('slot-name'));
+  assert.equal(text(level), 'Verb');
+  assert.equal(level.attrs.role, 'slider');
+  assert.equal(level.attrs['aria-valuetext'], '-6.0 dB');
+  assert.equal(level.attrs.tabindex, '0');
+  assert.equal(empty!.attrs.role, 'button');
+  assert.equal(empty!.attrs['aria-label'], 'Add send from Kick');
+  // No send: two empty slots.
+  assert.deepEqual(elements(find(two!, byClass('ins'))).map(sig), ['div.empty.slot', 'div.empty.slot']);
+  // A bus strip's Sends rack: the empty box.
+  assertEmptyBox(find(busStrips(root)[0]!, byClass('ins')), 'a bus\'s sends rack');
+  // None lit: every rack row the empty box.
+  for (const strip of strips(renderBuses([kick()], [verb()], [], { racks: { shown: null } })).slice(0, 2)) assertEmptyBox(find(strip, byClass('ins')), 'none lit');
+});
+
+test('a send ghost: a dashed slot numbered by step in the sends rack; a removed send\'s slot dims', () => {
+  const sends = [send('snd_1', 'trk_a', 'bus_v')];
+  const ghosts: Ghost[] = [
+    { kind: 'send-add', step: 2, sendId: 'snd_9', trackId: 'trk_a', busId: 'bus_v', busName: 'Verb' },
+    { kind: 'send-remove', step: 3, sendId: 'snd_1', trackId: 'trk_a', busId: 'bus_v', cascade: false },
+  ];
+  const rack = find(strips(renderBuses([{ ...kick(), sends: ['snd_1'] }], [verb()], sends, { racks: { shown: 'sends' }, ghosts }))[0]!, byClass('ins'));
+  assert.deepEqual(elements(rack).map(sig), ['div.ghost-removed.send-slot.slot', 'div.ghost.slot', 'div.empty.slot']);
+  const added = elements(rack)[1]!;
+  assert.equal(text(find(added, byClass('stepn'))), '2');
+  assert.equal(text(find(added, byClass('slot-name'))), 'Verb');
+  assert.equal(elements(rack)[0]!.attrs['data-ghost'], '3');
+});
+
+test('without features.buses no bus strip, routing selector or sends rack is in the DOM (capabilities-reduced.json too)', () => {
+  const reduced = JSON.parse(fs.readFileSync(path.join(FIXTURES, 'capabilities-reduced.json'), 'utf8')) as Capabilities;
+  const noBuses: Capabilities = { ...FULL, features: { ...FULL.features, buses: false, sends: false } };
+  const sends = [send('snd_1', 'trk_a', 'bus_v')];
+  for (const [what, caps] of [['reduced', reduced], ['no features.buses', noBuses]] as const) {
+    for (const shown of ['routing', 'sends'] as const) {
+      const root = renderBuses([{ ...kick(), sends: ['snd_1'] }], [verb()], sends, { caps, racks: { shown } });
+      assert.deepEqual(busStrips(root), [], `${what}: no bus strip`);
+      assert.equal(findAll(root, (el) => el.tag === 'select').length, 0, `${what}: no selector`);
+      assert.equal(findAll(root, (el) => (el.attrs['data-testid'] ?? '').startsWith('send-')).length, 0, `${what}: no send slot`);
+      assertEmptyBox(find(strips(root)[0]!, byClass('ins')), `${what} ${shown}: the empty rack box`);
+    }
+  }
 });

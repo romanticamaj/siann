@@ -761,3 +761,26 @@ test('the markers model fixture syncs with its document hash', async () => {
   assert.equal(snapshot.markers[1]!.length, '192000');
   assert.equal(snapshot.markers[0]!.name, '');
 });
+
+// m5b-ui-sends-buses (protocol-gestures-v0.md): a bus fader's gain and a
+// send's level take a gesture overlay, as a track's gain does; a bus's pan
+// does not (the gesture protocol takes only gain on a bus: its pan is one
+// bus.set_pan when the drag ends), nor does any send field but the level.
+test('(j) a gesture overlay on a bus gain and on a send level; select() shows it, the snapshot stays', async () => {
+  const model = new ReadModel();
+  await model.fromSync(seq.buses.sync as unknown as SyncChunk[], 'ses_1');
+  const committedBus = model.getSnapshot()!.entities['bus:b1'] as unknown as { gainMilliDb: number };
+  model.beginGesture('bus:b1', 'gainMilliDb');
+  model.setGesture(-7000);
+  assert.equal(gainOf(model.select('bus:b1')), -7000);
+  assert.equal(gainOf(model.getSnapshot()!.buses[0]), committedBus.gainMilliDb, 'the snapshot is untouched');
+  model.cancelGesture();
+  model.beginGesture('send:s1', 'levelMilliDb');
+  model.setGesture(-15000);
+  assert.equal((model.select('send:s1') as unknown as { levelMilliDb: number }).levelMilliDb, -15000);
+  assert.equal((model.select('bus:b1') as unknown as { gainMilliDb: number }).gainMilliDb, committedBus.gainMilliDb, 'the bus shows its committed gain');
+  model.cancelGesture();
+  for (const [ref, field] of [['bus:b1', 'pan'], ['send:s1', 'gainMilliDb'], ['track:trk_1', 'levelMilliDb']] as const) {
+    assert.throws(() => model.beginGesture(ref, field), (e: unknown) => e instanceof ReadModelError && e.code === 'not_continuous', `${ref} ${field}`);
+  }
+});

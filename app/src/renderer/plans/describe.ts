@@ -52,6 +52,14 @@ export interface StepNames {
   // m5-ui-port-plans: "after <last track>", the placed clip's media).
   readonly trackOrder?: readonly string[];
   media?(id: string): string | undefined;
+  // A bus by its name and a send by its track and bus (m5b-ui-sends-buses).
+  bus?(id: string): string | undefined;
+  send?(id: string): SendName | undefined;
+}
+
+export interface SendName {
+  readonly trackId: string;
+  readonly busId: string;
 }
 
 export const NO_NAMES: StepNames = {
@@ -91,6 +99,14 @@ export function namesFromSnapshot(snapshot: Snapshot | null, timeFormat: TimeFor
       if (typeof slot?.trackId !== 'string' || typeof slot.name !== 'string' || slot.name === '') return undefined;
       return { trackId: slot.trackId, name: slot.name };
     },
+    bus: (id) => {
+      const name = entity(`bus:${id}`)?.name;
+      return typeof name === 'string' && name !== '' ? name : undefined;
+    },
+    send: (id) => {
+      const send = entity(`send:${id}`);
+      return typeof send?.trackId === 'string' && typeof send.busId === 'string' ? { trackId: send.trackId, busId: send.busId } : undefined;
+    },
     sampleRate: snapshot.root?.sampleRate,
     tempo: snapshot.root?.tempo ?? [],
     timeFormat,
@@ -109,6 +125,8 @@ export function overlay(names: StepNames, earlier: readonly Record<string, unkno
   const tracks = new Map<string, string>();
   const clips = new Map<string, ClipName>();
   const slots = new Map<string, SlotName>();
+  const buses = new Map<string, string>();
+  const sends = new Map<string, SendName>();
   for (const step of earlier) {
     const trackId = str(step.trackId);
     const clipId = str(step.clipId);
@@ -138,6 +156,18 @@ export function overlay(names: StepNames, earlier: readonly Record<string, unkno
         if (slotId && trackId && name) slots.set(slotId, { trackId, name });
         break;
       }
+      case 'bus.add':
+      case 'bus.rename': {
+        const busId = str(step.busId);
+        if (busId && typeof step.name === 'string') buses.set(busId, step.name);
+        break;
+      }
+      case 'send.add': {
+        const sendId = str(step.sendId);
+        const busId = str(step.busId);
+        if (sendId && trackId && busId) sends.set(sendId, { trackId, busId });
+        break;
+      }
       default:
         break;
     }
@@ -152,6 +182,9 @@ export function overlay(names: StepNames, earlier: readonly Record<string, unkno
     timeFormat: names.timeFormat,
     ...(names.trackOrder ? { trackOrder: names.trackOrder } : {}),
     ...(names.media ? { media: names.media } : {}),
+    // A rename in the plan does not hide the bus name the user sees now.
+    bus: (id) => names.bus?.(id) ?? buses.get(id),
+    send: (id) => sends.get(id) ?? names.send?.(id),
   };
 }
 
@@ -190,6 +223,25 @@ function clipOf(id: unknown, names: StepNames, t: T, at: boolean): string {
   return time ? t('step.clipOnAt', { track, time }) : t('step.clipOn', { track });
 }
 
+function busOf(id: unknown, names: StepNames): string | undefined {
+  return named(typeof id === 'string' ? names.bus?.(id) : undefined);
+}
+
+// "the send from Keys to Verb", or undefined when its track or bus is unknown.
+function sendOf(id: unknown, names: StepNames, t: T): string | undefined {
+  const send = typeof id === 'string' ? names.send?.(id) : undefined;
+  if (!send) return undefined;
+  const track = named(names.track(send.trackId));
+  const bus = busOf(send.busId, names);
+  return track && bus ? t('step.sendOf', { track, bus }) : undefined;
+}
+
+// An output: a bus by its name, or the master (null).
+function targetOf(output: unknown, names: StepNames, t: T): string | undefined {
+  if (output === null) return t('step.theMaster');
+  return busOf((output as { busId?: unknown } | undefined)?.busId, names);
+}
+
 function pluginOf(slot: SlotName | undefined, names: StepNames, t: T): string {
   if (!slot) return t('step.aPlugin');
   const track = named(names.track(slot.trackId));
@@ -207,6 +259,8 @@ export function describeRef(ref: string, t: T = english, names: StepNames = NO_N
   if (type === 'track') return trackOf(id, names, t);
   if (type === 'clip') return clipOf(id, names, t, false);
   if (type === 'plugin_slot') return pluginOf(names.slot(id), names, t);
+  if (type === 'bus') return busOf(id, names) ?? t('step.aBus');
+  if (type === 'send') return sendOf(id, names, t) ?? t('step.aSend');
   return t('step.anEntity');
 }
 
@@ -331,6 +385,52 @@ export function describeStep(
     case 'plugin.set_bypass': {
       const plugin = pluginOf(str(step.slotId) ? names.slot(step.slotId as string) : undefined, names, t);
       return t(step.bypass ? 'step.bypassPlugin' : 'step.unbypassPlugin', { plugin });
+    }
+    // m5b-ui-sends-buses: the fourteen bus, send and routing commands.
+    case 'bus.add':
+      if (typeof step.name === 'string') return t('step.addBus', { name: isolateName(step.name) });
+      break;
+    case 'bus.remove': {
+      const bus = busOf(step.busId, names);
+      return bus ? t('step.removeBus', { bus }) : t('step.removeABus');
+    }
+    case 'bus.rename':
+    case 'bus.set_gain':
+    case 'bus.set_pan':
+    case 'bus.set_mute':
+    case 'bus.set_solo':
+    case 'bus.set_output': {
+      const bus = busOf(step.busId, names) ?? t('step.aBus');
+      if (step.op === 'bus.rename' && typeof step.name === 'string') return t('step.renameBus', { bus, name: isolateName(step.name) });
+      if (step.op === 'bus.set_gain' && typeof step.gainMilliDb === 'number') return t('step.setBusGain', { bus, gain: formatMilliDb(step.gainMilliDb) });
+      if (step.op === 'bus.set_pan' && typeof step.pan === 'number') return t('step.setBusPan', { bus, pan: formatPan(step.pan) });
+      if (step.op === 'bus.set_mute') return t(step.mute ? 'step.muteBus' : 'step.unmuteBus', { bus });
+      if (step.op === 'bus.set_solo') return t(step.solo ? 'step.soloBus' : 'step.unsoloBus', { bus });
+      if (step.op === 'bus.set_output') {
+        const target = targetOf(step.output, names, t);
+        if (target) return t('step.routeBus', { bus, target });
+      }
+      break;
+    }
+    case 'track.set_output': {
+      const target = targetOf(step.output, names, t);
+      if (target) return t('step.routeTrack', { track: track(), target });
+      break;
+    }
+    case 'send.add':
+      return t('step.addSend', { track: track(), bus: busOf(step.busId, names) ?? t('step.aBus') });
+    case 'send.remove': {
+      const send = sendOf(step.sendId, names, t);
+      return send ? t('step.removeSend', { send }) : t('step.removeASend');
+    }
+    case 'send.set_level':
+    case 'send.set_pre':
+    case 'send.set_enabled': {
+      const send = sendOf(step.sendId, names, t) ?? t('step.aSend');
+      if (step.op === 'send.set_level' && typeof step.levelMilliDb === 'number') return t('step.setSendLevel', { send, gain: formatMilliDb(step.levelMilliDb) });
+      if (step.op === 'send.set_pre') return t(step.pre ? 'step.sendPre' : 'step.sendPost', { send });
+      if (step.op === 'send.set_enabled') return t(step.enabled ? 'step.sendOn' : 'step.sendOff', { send });
+      break;
     }
     case 'session.rename':
       if (typeof step.name === 'string') return t('step.renameSession', { name: isolateName(step.name) });

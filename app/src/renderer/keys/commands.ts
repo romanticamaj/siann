@@ -131,6 +131,10 @@ export const COMMAND_IDS = [
   'transport.record',
   'transport.punchIn',
   'transport.punchOut',
+  // Add Bus and Remove Bus (m5b-ui-sends-buses; spec 3.6): unbound, as in
+  // Cubase, and reached from the application menu's Studio menu.
+  'mixer.bus.add',
+  'mixer.bus.remove',
 ] as const;
 export type CommandId = (typeof COMMAND_IDS)[number];
 

@@ -19,6 +19,11 @@
 // ghost pins its step. While the proposal is heard (m5b-ui-audition; 4.3,
 // 4.5 C5) those ghosts are solid, and bypass, Remove and the empty slot are
 // held by the edit guard with its reason: they commit onto main. e stays.
+//
+// A bus strip has the track strip's insert rack (m5b-ui-sends-buses; UI
+// redesign 3.4): InsertRack takes its owner, a track or a bus, and the
+// picker inserts on that owner (plugin.instantiate with trackId or busId).
+// A plan's insert ghosts are a track's only (the ghost model gives none on a bus).
 
 import { useRef, useSyncExternalStore, type KeyboardEvent, type ReactNode } from 'react';
 
@@ -207,16 +212,27 @@ interface RackProps {
   readonly view: GhostView;
 }
 
-// A track strip's insert rack: strip()'s .ins.
-export function InsertRack({ client, track, view }: RackProps) {
+// The owner of a strip's insert rack: a track, or a bus (m5b-ui-sends-buses).
+export interface RackOwner {
+  readonly kind: 'track' | 'bus';
+  readonly id: string;
+  readonly name: string;
+  readonly inserts?: readonly string[];
+}
+
+const NO_SLOT_GHOSTS: SlotGhosts = Object.freeze({ add: [], remove: [], bypass: [] });
+
+// A strip's insert rack: strip()'s .ins.
+export function InsertRack({ client, owner, view }: { client: SessionClient; owner: RackOwner; view: GhostView }) {
   const t = useT();
   const can = useCapabilities();
   const host = useInsertsHost();
-  const inserts = track.inserts ?? [];
+  const inserts = owner.inserts ?? [];
   const slots = useSlots(client, inserts);
-  const ghosts = slotGhosts(view.ghosts, track.id);
+  const ghosts = owner.kind === 'track' ? slotGhosts(view.ghosts, owner.id) : NO_SLOT_GHOSTS;
   const buttons = buttonsListed(can);
-  const open = () => void host?.picker.open(track.id);
+  const open = () => void host?.picker.open(owner.kind === 'track' ? { trackId: owner.id } : { busId: owner.id });
+  const track = { id: owner.id, name: owner.name };
   return (
     <div className="ins" data-part-of="inserts" role="group" aria-label={t('inserts.rack', { track: track.name })}>
       {rows(inserts, slots, ghosts, RACK_POSITIONS).map((row, i) =>

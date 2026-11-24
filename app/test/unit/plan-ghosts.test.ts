@@ -15,7 +15,7 @@ import assert from 'node:assert/strict';
 import type { LocatorsEntity, PluginSlotEntity, TrackEntity } from '../../src/renderer/model/document';
 import type { Snapshot } from '../../src/renderer/model/read-model';
 import type { PlanPreview } from '../../src/renderer/plans/diff';
-import { ghostsOf, hasStripGhost, masterGhosts, slotGhosts, type Ghost } from '../../src/renderer/plans/ghosts';
+import { busGhosts, ghostsOf, hasStripGhost, masterGhosts, sendGhosts, slotGhosts, type Ghost } from '../../src/renderer/plans/ghosts';
 import { clip, media, snapshotOf, track } from './support/timeline';
 
 const A = 'trk_a';
@@ -413,4 +413,110 @@ test('an unticked fade step gives none; a clip neither the snapshot nor a ticked
   assert.deepEqual(fades(unticked(4)).map((g) => g.step), [1, 3, 7]);
   // A fade ghost sits on the clip, not on a strip.
   assert.equal(hasStripGhost(ghostsOf(FADE_STEPS, fadePreview(fadedSession(), []), fadedSession(), null), 1), false);
+});
+
+// ---- m5b-ui-sends-buses (UI redesign 4.2; 10.11, 25): the kinds bus-add,
+// bus-remove, send-add and send-remove. The first bus.add keeps the id
+// strip-bus-ghost (key "bus-ghost"), later ones take -2, -3 in step order; a
+// bus.remove dims the bus's strip and the send slots that go with it (the
+// bus's sends as the ticked steps before it leave them); a send ghost needs
+// its track in the snapshot and its bus in the snapshot or in a ticked
+// bus.add. The other bus and send steps get no ghost.
+
+function busSession(): Snapshot {
+  const base = session();
+  const a = { ...(base.entities[`track:${A}`] as TrackEntity), sends: ['snd_1'] };
+  const b = { ...(base.entities[`track:${B}`] as TrackEntity), sends: ['snd_2'] };
+  const verb = { schema: 'siann.entity.bus.v1', id: 'bus_v', name: 'Verb', channels: 2, gainMilliDb: 0, pan: 0, mute: false, solo: false };
+  const s1 = { schema: 'siann.entity.send.v1', id: 'snd_1', trackId: A, busId: 'bus_v', levelMilliDb: 0, pre: false, enabled: true };
+  const s2 = { schema: 'siann.entity.send.v1', id: 'snd_2', trackId: B, busId: 'bus_v', levelMilliDb: -6000, pre: true, enabled: true };
+  const root = { ...base.root!, busOrder: ['bus_v'] };
+  const entities: Record<string, unknown> = { ...base.entities, 'root:root': root, [`track:${A}`]: a, [`track:${B}`]: b, 'bus:bus_v': verb, 'send:snd_1': s1, 'send:snd_2': s2 };
+  return { ...base, root, entities: entities as Snapshot['entities'] };
+}
+
+const BUS_STEPS: ReadonlyArray<Record<string, unknown>> = [
+  /* 1 */ { op: 'bus.add', busId: 'bus_new', name: 'Delay' },
+  /* 2 */ { op: 'send.add', sendId: 'snd_9', trackId: C, busId: 'bus_new', levelMilliDb: 0, pre: false },
+  /* 3 */ { op: 'send.add', sendId: 'snd_10', trackId: A, busId: 'bus_v' },
+  /* 4 */ { op: 'send.remove', sendId: 'snd_1' },
+  /* 5 */ { op: 'bus.add', busId: 'bus_two', name: 'Room' },
+  /* 6 */ { op: 'bus.remove', busId: 'bus_v' },
+  /* 7 */ { op: 'send.add', sendId: 'snd_11', trackId: NEW, busId: 'bus_new' },
+  /* 8 */ { op: 'send.add', sendId: 'snd_12', trackId: A, busId: 'bus_none' },
+  /* 9 */ { op: 'bus.set_gain', busId: 'bus_new', gainMilliDb: -3000 },
+  /* 10 */ { op: 'send.set_pre', sendId: 'snd_9', pre: true },
+  /* 11 */ { op: 'track.set_output', trackId: A, output: { busId: 'bus_new' } },
+  /* 12 */ { op: 'track.add', trackId: NEW, name: 'Pad', channels: 2 },
+  /* 13 */ { op: 'bus.rename', busId: 'bus_two', name: 'Hall' },
+];
+
+function busPreview(): PlanPreview {
+  const s = busSession();
+  const e = (ref: string) => s.entities[ref] as unknown as Record<string, unknown>;
+  return {
+    revision: 'r7',
+    documentHash: `sha256:${'d'.repeat(64)}`,
+    stale: [],
+    entities: [
+      { ref: 'bus:bus_new', before: null, after: { id: 'bus_new', name: 'Delay' } },
+      { ref: 'bus:bus_v', before: e('bus:bus_v'), after: null },
+      { ref: 'send:snd_1', before: e('send:snd_1'), after: null },
+      { ref: 'send:snd_2', before: e('send:snd_2'), after: null },
+    ],
+  };
+}
+
+const buses = (ticked: ReadonlySet<number> | null = null) => ghostsOf(BUS_STEPS, busPreview(), busSession(), ticked);
+const busWithout = (...steps: number[]) => new Set(BUS_STEPS.map((_, i) => i).filter((i) => !steps.includes(i + 1)));
+
+test('bus.add: a dashed strip per proposed bus, the first keyed bus-ghost, later ones -2 in step order', () => {
+  assert.deepEqual(ofKind(buses(), 'bus-add'), [
+    { kind: 'bus-add', step: 1, busId: 'bus_new', name: 'Delay', key: 'bus-ghost' },
+    { kind: 'bus-add', step: 5, busId: 'bus_two', name: 'Room', key: 'bus-ghost-2' },
+  ]);
+  assert.deepEqual(ofKind(buses(busWithout(1)), 'bus-add').map((g) => [g.busId, g.key]), [['bus_two', 'bus-ghost']]);
+});
+
+test('bus.remove: the bus dims, and the send slots its removal takes dim with its step', () => {
+  assert.deepEqual(ofKind(buses(), 'bus-remove'), [{ kind: 'bus-remove', step: 6, busId: 'bus_v' }]);
+  // snd_1 was removed by step 4: snd_2 and step 3's snd_10 go with the bus, in send id order.
+  assert.deepEqual(ofKind(buses(), 'send-remove'), [
+    { kind: 'send-remove', step: 4, sendId: 'snd_1', trackId: A, busId: 'bus_v', cascade: false },
+    { kind: 'send-remove', step: 6, sendId: 'snd_10', trackId: A, busId: 'bus_v', cascade: true },
+    { kind: 'send-remove', step: 6, sendId: 'snd_2', trackId: B, busId: 'bus_v', cascade: true },
+  ]);
+  // With step 4 unticked, snd_1 goes with the bus too.
+  assert.deepEqual(ofKind(buses(busWithout(4)), 'send-remove').map((g) => [g.step, g.sendId]), [[6, 'snd_1'], [6, 'snd_10'], [6, 'snd_2']]);
+  assert.deepEqual(ghostsOf([{ op: 'bus.remove', busId: 'bus_x' }], busPreview(), busSession(), null), [], 'an unknown bus');
+});
+
+test('send.add: on a track of the snapshot, to a bus of the snapshot or of a ticked bus.add; else none', () => {
+  assert.deepEqual(ofKind(buses(), 'send-add'), [
+    { kind: 'send-add', step: 2, sendId: 'snd_9', trackId: C, busId: 'bus_new', busName: 'Delay' },
+    { kind: 'send-add', step: 3, sendId: 'snd_10', trackId: A, busId: 'bus_v', busName: 'Verb' },
+  ]);
+  // Step 7 is on a track no snapshot holds (step 12 proposes it later); step 8's bus is nowhere.
+  assert.ok(!ofKind(buses(), 'send-add').some((g) => g.step === 7 || g.step === 8));
+  // Unticking the bus.add takes its send ghost with it.
+  assert.deepEqual(ofKind(buses(busWithout(1)), 'send-add').map((g) => g.step), [3]);
+});
+
+test('send.remove: the slot dims; the other bus and send steps get no ghost; untick filters', () => {
+  assert.deepEqual(ofKind(buses(busWithout(6)), 'send-remove'), [{ kind: 'send-remove', step: 4, sendId: 'snd_1', trackId: A, busId: 'bus_v', cascade: false }]);
+  const kinds = new Set(buses().filter((g) => g.step >= 9 && g.step !== 12).map((g) => g.kind));
+  assert.deepEqual([...kinds], [], 'bus.set_gain, send.set_pre, track.set_output, bus.rename: no ghost');
+  assert.deepEqual(buses(new Set()), []);
+});
+
+test('the bus and send ghosts by owner, and the strip ghosts of their steps', () => {
+  const ghosts = buses();
+  const onA = sendGhosts(ghosts, A);
+  assert.deepEqual(onA.add.map((g) => g.sendId), ['snd_10']);
+  assert.deepEqual(onA.remove.map((g) => g.sendId), ['snd_1', 'snd_10']);
+  assert.deepEqual(sendGhosts(ghosts, C).add.map((g) => g.step), [2]);
+  assert.equal(busGhosts(ghosts, 'bus_v').remove?.step, 6);
+  assert.equal(busGhosts(ghosts, 'bus_new').remove, null);
+  for (const step of [1, 2, 3, 4, 5, 6]) assert.equal(hasStripGhost(ghosts, step), true, `step ${step} is on a strip`);
+  assert.equal(hasStripGhost(ghosts, 9), false);
 });
