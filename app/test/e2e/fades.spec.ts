@@ -371,8 +371,14 @@ test('a resize below the fades shortens them in the same revision; the handles f
   expect(trimmed.fadeIn).toEqual({ length: '9600', curve: 'linear' });
   expect(trimmed.fadeOut).toEqual({ length: String(length - 9600), curve: 'linear' });
   // The handles follow: the fade out's tip at the new end less its new length.
-  const after = await rect('clp_2');
-  await expect.poll(async () => Math.round((await fades('clp_2')).handles!.fadeOut.x + 4)).toBe(Math.round(after.x + after.width - 1 - (length - 9600) / v.framesPerPixel));
+  // The clip's box is read with the handle in each poll: read once right after
+  // the revision it can still be the box before the trim's content frame.
+  const offset = async () => {
+    const after = await rect('clp_2');
+    const tip = (await fades('clp_2')).handles!.fadeOut.x + 4;
+    return Math.round(tip) - Math.round(after.x + after.width - 1 - (length - 9600) / v.framesPerPixel);
+  };
+  await expect.poll(offset).toBe(0);
   await expect(page.getByTestId('info-fade-out')).toHaveText(`${Math.floor(((length - 9600) * 1000) / RATE + 0.5)} ms`);
   // One undo restores the clip's length and both fades.
   await engine!.call('session.undo');
