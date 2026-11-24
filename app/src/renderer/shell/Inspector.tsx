@@ -9,8 +9,10 @@
 //     .i-name    the colour swatch, the name, mono or stereo (<small>)
 //     .i-btns    M and S (.msr.m, .msr.s; .on from the track), record enable
 //                (.msr.r, lit while armed) and monitor (.msr with the mon
-//                icon, lit while not off; m5b-ui-recording), then the boxes of
-//                read, write and e
+//                icon, lit while not off; m5b-ui-recording), the boxes of read
+//                and write, then e (.msr.e at the row's end; m5b-ui-editor-
+//                channel): the Channel zone on the selected track, lit while
+//                it shows it
 //     .i-row     Volume: the label, the slider (.hs: its fill <i> and thumb <u>
 //                at the taper's position), the value (b.num, dB)
 //     .i-row     Pan: the label, the slider (its thumb only), the value (C, L35)
@@ -18,7 +20,9 @@
 //                and between the last two the Agent changes section (the
 //                Notepad is sec() since m5b-ui-notepad: NotepadSection.tsx);
 //                the pending one (Automation) is an empty box
-//   .z-foot      the Track tab and the box of Editor
+//   .z-foot      the Track tab and the box of Editor (the left zone's Editor
+//                tab, Cubase's editor Inspector: no feature of the usable
+//                release, empty through M5b; docs/harness/follow-ups.md)
 //
 // The track is the app's selected track (trackId: a header clicked, or the
 // selected clip's track), read with the strip's own select() (useTrack), so a
@@ -131,6 +135,9 @@ export interface InspectorProps {
   // Whether the Notepad section is open (siann.layout.v1) and its head's toggle.
   readonly notepadOpen?: boolean;
   readonly onNotepadToggle?: () => void;
+  // e (m5b-ui-editor-channel): the Channel zone is shown (on the selected track), and e's press.
+  readonly channelVisible?: boolean;
+  readonly onEditChannel?: (trackId: string) => void;
 }
 
 // The zone's key hint: the preset's last chord that shows it (Alt+I, as the mockup writes it).
@@ -312,7 +319,10 @@ function Head() {
   );
 }
 
-// The Track tab, and the box of Editor (m5b-ui-editor-channel).
+// The Track tab, and the box of the left zone's Editor tab: Cubase's editor
+// Inspector, which is no feature of the usable release (UI redesign 2.1;
+// docs/harness/follow-ups.md), so the box stays empty through M5b. (The lower
+// zone's Editor tab is m5b-ui-editor-channel's, and another tab.)
 function Foot() {
   const t = useT();
   return (
@@ -333,7 +343,7 @@ function useOwnNotepad(client: SessionClient, given: NotepadStore | undefined): 
   return given ?? own!;
 }
 
-export function Inspector({ client, gestures, trackId, plans, notepad, notepadOpen = false, onNotepadToggle }: InspectorProps) {
+export function Inspector({ client, gestures, trackId, plans, notepad, notepadOpen = false, onNotepadToggle, channelVisible = false, onEditChannel }: InspectorProps) {
   const t = useT();
   const can = useCapabilities();
   const notes = useOwnNotepad(client, notepad);
@@ -393,10 +403,23 @@ export function Inspector({ client, gestures, trackId, plans, notepad, notepadOp
           )}
           {record && recordable.record ? <RecordEnable host={record} track={track} testId="inspector-record" part="inspector-record" /> : <Hold className="msr-box" />}
           {record && recordable.monitor ? <MonitorButton host={record} track={track} /> : <Hold className="msr-box" />}
-          {/* Read and write (m6a-ui-automation), e (m5b-ui-editor-channel). */}
+          {/* Read and write (m6a-ui-automation). */}
           <Hold className="msr-box" />
           <Hold className="msr-box" />
-          <Hold className="msr-box" />
+          {/* e (m5b-ui-editor-channel): the mockup's span.msr.e, at the row's end. */}
+          <button
+            type="button"
+            className={`msr e${channelVisible ? ' on' : ''}`}
+            data-testid="inspector-edit"
+            data-part="inspector-edit"
+            style={{ marginLeft: 'auto' }}
+            aria-label={t('strip.editLabel', { track: track.name })}
+            title={t('strip.editLabel', { track: track.name })}
+            aria-pressed={channelVisible}
+            onClick={() => onEditChannel?.(track.id)}
+          >
+            e
+          </button>
         </div>
         <div className="i-row" data-part="inspector-volume">
           <span>{t('inspector.volume')}</span>

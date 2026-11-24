@@ -230,6 +230,11 @@ async function painted(page: Page): Promise<void> {
   await page.evaluate(() => new Promise<void>((resolve) => requestAnimationFrame(() => requestAnimationFrame(() => resolve()))));
 }
 
+// What every state shows of m5b-ui-editor-channel's parts, wherever the window
+// shows the top bar, the lower zone and the Inspector.
+const EDITOR_CHANNEL_NOTE =
+  'The top bar\'s zone buttons start with the Channel zone\'s (zCh; off unless a state opens the zone), the lower zone\'s tab row has the Editor tab (wave) after MixConsole, and e (Edit Channel Settings: the Channel zone on that track) follows M and S on every track strip and ends the Inspector\'s button row.';
+
 // A state is numbered by its order, or by `number` when a later ticket's
 // state goes after numbers left free for another (UI redesign spec, section 7:
 // new states are appended, never renumbered; 23 and 24 are m5-ui-loop-click's).
@@ -239,7 +244,7 @@ async function shoot(page: Page, state: string, notes: string, options: { fullPa
   const number = options.number ?? shots.filter((s) => s.file !== null).length + 1;
   const file = `${String(number).padStart(2, '0')}-${slug(state)}.png`;
   await page.screenshot({ path: path.join(OUT, file), fullPage: options.fullPage === true });
-  shots.push({ file, state, notes: `${notes} [viewport ${size}${options.fullPage ? ', full page' : ''}]` });
+  shots.push({ file, state, notes: `${notes} ${EDITOR_CHANNEL_NOTE} [viewport ${size}${options.fullPage ? ', full page' : ''}]` });
   fs.writeFileSync(path.join(OUT, 'index.json'), `${JSON.stringify(shots, null, 2)}\n`);
 }
 
@@ -1163,6 +1168,55 @@ test('UX screenshot tour', async () => {
     `The Keys clip selected with a linear fade in (${fadeMs(keysLength / 8n)}) and an equal power fade out (${fadeMs(keysLength / 4n)}), one clip.set_fade: each fade is drawn as draw() draws it, the --bg-0-a550 shade between the real gain curve and the top edge below the title strip and a 1 px --select line, at its real length, with the waveform scaled by the gain; the 8 x 6 px --select triangles at the fades' ends are the handles (drag: the length, snapped, Ctrl unsnapped; double-click: linear or equal power). The info line ends with Fade In and Fade Out in whole milliseconds, typed values in ms.`,
     { number: 33 },
   );
+
+  // ---- 44 and 45 (m5b-ui-editor-channel; UI redesign 2.1, 5.2, UR-18): the
+  // selected Keys clip in the lower zone's Editor tab (Return on the project
+  // zone with a clip selected is editor.open), then the Channel zone open on
+  // its track. The mockup draws the tab's label and the zone button only.
+  await page.getByTestId('zone-project').focus();
+  await page.keyboard.press('Enter');
+  await expect(page.getByTestId('tab-lower-editor')).toHaveAttribute('aria-selected', 'true');
+  await expect(page.getByTestId('editor')).toHaveAttribute('data-clip', 'clp_06_keys');
+  await expect.poll(() => page.evaluate(() => (window as unknown as { __siannEditor?: { columns(): number } }).__siannEditor?.columns() ?? 0)).toBeGreaterThan(0);
+  await shoot(
+    page,
+    'Editor tab with a clip',
+    'Return on the project zone with the Keys clip selected (editor.open; a double-click on a clip\'s body does the same): the lower zone on its Editor tab, the sample editor of the selected clip. Its ruler reads the session\'s bars; the whole source\'s waveform is drawn from the peak pyramid, the part outside the clip\'s range dimmed and the range\'s ends as 1 px lines; the volume control is the clip\'s. Dragging an end resizes the clip and the volume control sets its gain, with the event display\'s snap and modifiers, one revision each; H and G zoom it while the lower zone has the focus. App-only content: the mockup draws the tab\'s label only.',
+    { number: 44 },
+  );
+  await page.getByTestId('zone-button-channel').click();
+  await expect(page.getByTestId('zone-channel')).toBeVisible();
+  await expect(page.getByTestId('zone-channel').locator('.strip')).toHaveCount(1);
+  // The zone's opening animates the columns: the editor has followed the last size and drawn at it.
+  await expect
+    .poll(() =>
+      page.evaluate(() => {
+        const hooks = (window as unknown as { __siannEditor?: { view(): { width: number } } }).__siannEditor;
+        const el = document.querySelector<HTMLElement>('[data-testid="editor"]');
+        return hooks !== undefined && el !== null && hooks.view().width === Math.max(1, Math.round(el.clientWidth));
+      }),
+    )
+    .toBe(true);
+  // ...and has stopped redrawing: two animation frames draw nothing more.
+  await expect
+    .poll(() =>
+      page.evaluate(async () => {
+        const hooks = (window as unknown as { __siannEditor?: { contentDraws(): number } }).__siannEditor;
+        const before = hooks?.contentDraws() ?? -1;
+        await new Promise<void>((resolve) => requestAnimationFrame(() => requestAnimationFrame(() => requestAnimationFrame(() => resolve()))));
+        return before === (hooks?.contentDraws() ?? -2);
+      }),
+    )
+    .toBe(true);
+  await shoot(
+    page,
+    'Channel zone open',
+    'The first zone button (or Ctrl+Alt+C) shows the Channel zone at the window\'s left edge, left of the Inspector, 96 px: one full MixConsole strip of the selected track (the one the Inspector shows), the strip component of the MixConsole with its controls, gestures and meter; its e is lit (Ctrl+Alt+C, e again or the Inspector\'s e hide it). Its boundary with the Inspector is a divider (80 to 160 px). App-only content: the mockup draws the zone button only.',
+    { number: 45 },
+  );
+  await page.getByTestId('zone-button-channel').click();
+  await expect(page.getByTestId('zone-channel')).toBeHidden();
+  await page.getByTestId('tab-lower-mixconsole').click();
 
   // ---- 37 (m5b-ui-markers; UI redesign 3.2, "Marker track"; numbered
   // explicitly, written after 33): two position markers and a cycle marker on

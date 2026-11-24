@@ -290,7 +290,10 @@ jobs:
           ELECTRON_SKIP_BINARY_DOWNLOAD=1 npm ci
           for i in 1 2 3 4 5; do node node_modules/electron/install.js && break; [ $i = 5 ] && exit 1; sleep 30; done
           npm run build
-          npx playwright test editor.spec.ts
+          # editor.spec.ts alone: Playwright's file filter is a regex, and a bare
+          # editor.spec.ts also matches clip-editor.spec.ts (m5b-ui-editor-channel),
+          # which needs siann-cli and the core engine.
+          npx playwright test '(^|[\\/])editor\.spec\.ts'
           # A slot's e opens and closes the CLAP editor (inserts.spec.ts block B, m5b-ui-inserts-master);
           # its session is prepared with siann-cli.
           cli=$(find ../native/build/desktop -type f -name siann-cli.exe | head -n 1)

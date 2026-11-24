@@ -104,9 +104,11 @@ interface SlotProps {
   readonly busName: string;
   readonly ghosts: SendGhosts;
   readonly view: GhostView;
+  // Before every test id (the Channel zone's strip: 'channel-'; m5b-ui-editor-channel).
+  readonly prefix?: string;
 }
 
-function FilledSlot({ variant, client, gestures, sendId, entity, busName, ghosts, view }: SlotProps) {
+function FilledSlot({ variant, client, gestures, sendId, entity, busName, ghosts, view, prefix: before = '' }: SlotProps) {
   const t = useT();
   const guard = useEditGuard();
   const name = useRef<HTMLSpanElement | null>(null);
@@ -128,7 +130,7 @@ function FilledSlot({ variant, client, gestures, sendId, entity, busName, ghosts
     tooltip: (text) => showTooltip(tooltip.current, text),
   });
   const removal = ghosts.remove.find((g) => g.sendId === sendId);
-  const prefix = TEST_PREFIX[variant];
+  const prefix = `${before}${TEST_PREFIX[variant]}`;
   const btn = BUTTON_CLASS[variant];
   const classes = [SLOT_CLASS[variant], 'send-slot', enabled ? '' : 'off', pre ? 'send-pre' : '', removal ? 'ghost-removed' : ''].filter(Boolean).join(' ');
   const text = formatValue('gain', level);
@@ -217,9 +219,9 @@ function FilledSlot({ variant, client, gestures, sendId, entity, busName, ghosts
   );
 }
 
-function GhostSlot({ variant, ghost, view }: { variant: Variant; ghost: Extract<Ghost, { kind: 'send-add' }>; view: GhostView }) {
+function GhostSlot({ variant, ghost, view, prefix = '' }: { variant: Variant; ghost: Extract<Ghost, { kind: 'send-add' }>; view: GhostView; prefix?: string }) {
   return (
-    <div className={`${SLOT_CLASS[variant]} ghost`} data-testid={`${TEST_PREFIX[variant]}send-ghost-${ghost.step}`} {...ghostAttrs(view, [ghost.step], ghost.mode)} title={ghost.busName} onClick={() => view.pin(ghost.step)}>
+    <div className={`${SLOT_CLASS[variant]} ghost`} data-testid={`${prefix}${TEST_PREFIX[variant]}send-ghost-${ghost.step}`} {...ghostAttrs(view, [ghost.step], ghost.mode)} title={ghost.busName} onClick={() => view.pin(ghost.step)}>
       <span className="stepn">{String(ghost.step)}</span>
       <span className={NAME_CLASS[variant]}>{ghost.busName}</span>
     </div>
@@ -293,7 +295,7 @@ export function BusPicker({ client, track, onClose }: { client: SessionClient; t
 }
 
 // An empty slot: the bus picker for the track, or aria-disabled with the reason (no bus, the guard).
-function EmptySlot({ variant, client, track, id, children }: { variant: Variant; client: SessionClient; track: Pick<TrackEntity, 'id' | 'name'>; id: string; children: ReactNode }) {
+function EmptySlot({ variant, client, track, id, children, prefix = '' }: { variant: Variant; client: SessionClient; track: Pick<TrackEntity, 'id' | 'name'>; id: string; children: ReactNode; prefix?: string }) {
   const t = useT();
   const guard = useEditGuard();
   const buses = useBuses(client);
@@ -309,7 +311,7 @@ function EmptySlot({ variant, client, track, id, children }: { variant: Variant;
       tabIndex={0}
       aria-label={t('sends.addFrom', { track: track.name })}
       {...(reason !== null ? { 'aria-disabled': true, title: reason } : {})}
-      data-testid={`${TEST_PREFIX[variant]}send-add-${id}`}
+      data-testid={`${prefix}${TEST_PREFIX[variant]}send-add-${id}`}
       onClick={press}
       onKeyDown={activate(press)}
     >
@@ -338,6 +340,8 @@ interface RackProps {
   readonly gestures?: GestureController;
   readonly track: TrackEntity;
   readonly view: GhostView;
+  // Before every test id (the Channel zone's strip: 'channel-').
+  readonly prefix?: string;
 }
 
 const NO_GESTURES = { begin: () => undefined, move: () => undefined, end: () => undefined } as unknown as GestureController;
@@ -347,7 +351,7 @@ function useBusName(client: SessionClient) {
   return (busId: string | undefined) => buses.find((b) => b.id === busId)?.name ?? '';
 }
 
-function Slots({ variant, client, gestures = NO_GESTURES, track, view, positions, plus }: RackProps & { variant: Variant; positions: number; plus: string }) {
+function Slots({ variant, client, gestures = NO_GESTURES, track, view, positions, plus, prefix = '' }: RackProps & { variant: Variant; positions: number; plus: string }) {
   const ids = track.sends ?? [];
   const entities = useSends(client, ids);
   const busName = useBusName(client);
@@ -356,11 +360,11 @@ function Slots({ variant, client, gestures = NO_GESTURES, track, view, positions
     <>
       {rows(ids, entities, ghosts, positions).map((row, i) =>
         row.kind === 'send' ? (
-          <FilledSlot key={row.sendId} variant={variant} client={client} gestures={gestures} sendId={row.sendId} entity={row.entity} busName={busName(row.entity?.busId)} ghosts={ghosts} view={view} />
+          <FilledSlot key={row.sendId} variant={variant} client={client} gestures={gestures} sendId={row.sendId} entity={row.entity} busName={busName(row.entity?.busId)} ghosts={ghosts} view={view} prefix={prefix} />
         ) : row.kind === 'ghost' ? (
-          <GhostSlot key={`g${row.ghost.step}`} variant={variant} ghost={row.ghost} view={view} />
+          <GhostSlot key={`g${row.ghost.step}`} variant={variant} ghost={row.ghost} view={view} prefix={prefix} />
         ) : (
-          <EmptySlot key={`e${i}`} variant={variant} client={client} track={track} id={variant === 'strip' ? `${track.id}-${i}` : track.id}>
+          <EmptySlot key={`e${i}`} variant={variant} client={client} track={track} id={variant === 'strip' ? `${track.id}-${i}` : track.id} prefix={prefix}>
             {plus}
           </EmptySlot>
         ),

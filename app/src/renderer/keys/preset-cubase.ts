@@ -22,6 +22,13 @@ export const CUBASE_PRESET: readonly Binding[] = [
   { chord: 'Mod+Alt+R', commandId: 'zone.right.toggle', scope: 'window' },
   // SIANN addition: show the right zone on the Plans tab.
   { chord: 'Mod+Alt+P', commandId: 'zone.right.plans', scope: 'window' },
+  // m5b-ui-editor-channel (spec 2.1, 3.6): the Channel zone, and the focused
+  // zone's tabs, first used by the lower zone's MixConsole and Editor. Return
+  // reaches editor.open through focus.enterZone (zone-focus.ts) and has no row
+  // of its own; Num Enter stays the transport's start.
+  { chord: 'Mod+Alt+C', commandId: 'zone.channel.toggle', scope: 'window' },
+  { chord: 'Mod+Alt+ArrowRight', commandId: 'zone.tab.next', scope: 'window' },
+  { chord: 'Mod+Alt+ArrowLeft', commandId: 'zone.tab.prev', scope: 'window' },
   // The plan review (m5b-ui-ghosts; spec 4.2, 3.6): the ghosts of the overlaid plan on and off.
   { chord: 'Mod+Alt+G', commandId: 'plans.toggleGhosts', scope: 'window' },
   // The audition (m5b-ui-audition; spec 4.3, 3.6, on keys Cubase leaves free):
@@ -53,6 +60,10 @@ export const CUBASE_PRESET: readonly Binding[] = [
   { chord: 'Shift+H', commandId: 'view.tracksTaller', scope: 'project' },
   { chord: 'Shift+G', commandId: 'view.tracksShorter', scope: 'project' },
   { chord: 'Shift+F', commandId: 'view.zoomFull', scope: 'project' },
+  // The sample editor's own horizontal zoom while the lower zone has the focus
+  // (m5b-ui-editor-channel; spec 5.2); it declines on the MixConsole tab.
+  { chord: 'H', commandId: 'view.zoomIn', scope: 'lower' },
+  { chord: 'G', commandId: 'view.zoomOut', scope: 'lower' },
   // Add a track (spec 3.3).
   { chord: 'T', commandId: 'track.add', scope: 'project' },
   // The transport (m5-ui-transport; spec 3.1, research/cubase.md 7.1): Space

@@ -97,7 +97,7 @@ function fixedHistory(value: UndoAvailability): Pick<UndoHistory, 'getSnapshot' 
   return { getSnapshot: () => value, subscribe: () => () => undefined };
 }
 
-function render(options: { snapshot?: Snapshot | null; history?: UndoAvailability; status?: EngineStatus | null; plans?: PlanStore; marked?: boolean; nameHidden?: boolean; capabilities?: Capabilities; load?: CountingLoad } = {}): string {
+function render(options: { snapshot?: Snapshot | null; history?: UndoAvailability; status?: EngineStatus | null; plans?: PlanStore; marked?: boolean; nameHidden?: boolean; capabilities?: Capabilities; load?: CountingLoad; channel?: boolean } = {}): string {
   const snapshot = options.snapshot === undefined ? withLocators(sampleSnapshot()) : options.snapshot;
   const model = { getSnapshot: () => snapshot, subscribe: () => () => undefined } as unknown as ReadModel;
   const session = new SessionClient({
@@ -122,6 +122,7 @@ function render(options: { snapshot?: Snapshot | null; history?: UndoAvailabilit
   });
   const transport = new TransportController({ client: session, playing: () => false, toasts, locale: () => 'en' });
   const layout = createLayoutStore({ storage: null });
+  if (options.channel) layout.dispatch({ type: 'show', zone: 'channel', viewport: { width: 1440, height: 900 } });
   const zones = effectiveLayout(layout.getSnapshot(), { width: 1440, height: 900 }).zones;
   const status = options.status === undefined ? WITH_DEVICE : options.status;
   const load = options.load ?? countingLoad();
@@ -219,14 +220,15 @@ test('the top bar has the mockup\'s structure: header.topbar > .tb-left + .trans
   assert.deepEqual(children(markup, /<div class="tgroup" data-testid="transport-click" data-part="transport-click"/), ['button.tbtn[transport-metronome]']);
   assert.deepEqual(children(markup, /<div class="tb-right">/), ['span.dsp[dsp-load]', 'span.zones[zone-buttons]', 'button.aibtn[plans-button]']);
   assert.deepEqual(children(markup, /<span class="zones" /), [
-    'span.hold-zone-button-channel',
+    // m5b-ui-editor-channel: the Channel zone button, first of the four, off by default.
+    'button.iconbtn[zone-button-channel]',
     'button.iconbtn.on[zone-button-left]',
     'button.iconbtn.on[zone-button-lower]',
     'button.iconbtn.on[zone-button-right]',
   ]);
   // The icons are the mockup's: svg.i in the buttons, svg.i.s by the session name and in the Plans button.
-  // undo, redo, start, cycle, stop, play, the metronome, three zone buttons and the Plans button's spark
-  assert.equal((markup.match(/<svg class="i" viewBox="0 0 16 16"/g) ?? []).length, 11);
+  // undo, redo, start, cycle, stop, play, the metronome, four zone buttons and the Plans button's spark
+  assert.equal((markup.match(/<svg class="i" viewBox="0 0 16 16"/g) ?? []).length, 12);
   // the session's chevron and the branch chip's icon (m5b-ui-audition)
   assert.equal((markup.match(/<svg class="i s" viewBox="0 0 16 16"/g) ?? []).length, 2);
   assert.match(markup, /<button[^>]*class="aibtn"[^>]*data-part="plans-button"[^>]*><svg class="i" viewBox="0 0 16 16"/);
@@ -236,12 +238,29 @@ test('the top bar has the mockup\'s structure: header.topbar > .tb-left + .trans
   }
 });
 
+// m5b-ui-editor-channel (mockup.html line 243: span.iconbtn[zone-button-channel] with ic('zCh')).
+test('the Channel zone button is the mockup\'s first zone button: .iconbtn with the zCh drawing, pressed while the zone shows', () => {
+  const markup = render();
+  const button = /<button[^>]*data-part="zone-button-channel"[^>]*>(.*?)<\/button>/.exec(markup);
+  assert.ok(button, 'the button is there');
+  assert.match(button[0], /class="iconbtn"/);
+  assert.match(button[0], /data-testid="zone-button-channel"/);
+  assert.match(button[0], /aria-pressed="false"/);
+  assert.match(button[0], /aria-label="Channel zone"/);
+  assert.equal(
+    button[1],
+    '<svg class="i" viewBox="0 0 16 16" aria-hidden="true" focusable="false"><rect x="2.5" y="3" width="11" height="10" rx="1.5"></rect><path d="M5.5 3v10"></path><path d="M4 9.5v0" stroke-width="2"></path></svg>',
+  );
+  const shown = render({ channel: true });
+  assert.match(/<button[^>]*data-part="zone-button-channel"[^>]*>/.exec(shown)![0], /class="iconbtn on"[^>]*aria-pressed="true"|aria-pressed="true"[^>]*class="iconbtn on"/);
+});
+
 test('every hold element is empty, hidden, has no role, no tabindex and no data-part', () => {
   const markup = render();
   const holds = [...markup.matchAll(/<span class="hold-[^"]*"[^>]*>[^<]*<\/span>/g)].map((m) => m[0]);
-  assert.deepEqual(holds.map((h) => /class="([^"]+)"/.exec(h)![1]), [
-    'hold-zone-button-channel',
-  ]);
+  // The Channel zone button landed (m5b-ui-editor-channel): no hold is left in the top bar.
+  assert.deepEqual(holds.map((h) => /class="([^"]+)"/.exec(h)![1]), []);
+  assert.ok(!markup.includes('hold-zone-button-channel'));
   for (const hold of holds) {
     assert.match(hold, /aria-hidden="true"/, hold);
     assert.match(hold, HOLD, hold);

@@ -186,7 +186,7 @@ test('the chrome and the ported lower, left, right and project zones take the mo
     const bodyLs = parseFloat(body.letterSpacing) / parseFloat(body.fontSize);
     // Inherited values: the pinned element's own, through every element that does not set them.
     const offenders: string[] = [];
-    for (const zone of document.querySelectorAll('[data-zone]:not([data-zone="right"]):not([data-zone="lower"]):not([data-zone="left"]):not([data-zone="project"])')) {
+    for (const zone of document.querySelectorAll('[data-zone]:not([data-zone="right"]):not([data-zone="lower"]):not([data-zone="left"]):not([data-zone="project"]):not([data-zone="channel"])')) {
       for (const el of zone.querySelectorAll('*')) {
         const s = pick(el);
         if (s.ls !== 'normal' && s.ls !== '0px') offenders.push(`${el.tagName.toLowerCase()}.${el.getAttribute('class') ?? ''} letter-spacing ${s.ls}`);
@@ -194,7 +194,7 @@ test('the chrome and the ported lower, left, right and project zones take the mo
       }
     }
     const ported = [
-      ...['lower', 'left', 'project'].map((zone) => ({ zone, ...pick(document.querySelector(`[data-zone="${zone}"]`)!) })),
+      ...['lower', 'left', 'project', 'channel'].map((zone) => ({ zone, ...pick(document.querySelector(`[data-zone="${zone}"]`)!) })),
       { zone: 'track list', ...pick(document.querySelector('[data-zone="project"] .headers')!) },
     ];
     return { zones, right, bodyLh, bodyLs, lineHeight, offenders, body: pick(document.body), ported };
@@ -224,8 +224,9 @@ test('the chrome and the ported lower, left, right and project zones take the mo
     expect(zone.fvn, zone.zone).toBe(styles.body.fvn);
     expect(parseFloat(zone.lh) / zone.fs, zone.zone).toBeCloseTo(parseFloat(styles.body.lh) / styles.body.fs, 2);
   }
-  // The zone buttons: icon buttons with names.
-  for (const zone of ['left', 'lower', 'right']) {
+  // The zone buttons: icon buttons with names, the Channel zone's first (m5b-ui-editor-channel).
+  await expect(page.locator('[data-part="zone-buttons"] > button')).toHaveCount(4);
+  for (const zone of ['channel', 'left', 'lower', 'right']) {
     const button = page.getByTestId(`zone-button-${zone}`);
     await expect(button).toHaveClass(/\biconbtn\b/);
     await expect(button).toHaveAttribute('aria-label', /\S/);
@@ -380,7 +381,7 @@ test('the whole window has no id of a pending part and every landed id of the mo
     const named = [...new Set([...mockup.matchAll(/\$\{d[pr]\('([a-z0-9-]+)'\)\}/g)].map((m) => m[1]!))];
     const landed = named.filter((id) => mode(id) === 'report' && !matches(manifest.pixels.dynamic, id));
     expect(landed.length).toBeGreaterThan(60);
-    // Ten since m5b-ui-markers landed marker-head; the check is that some are still pending.
+    // Ten since m5b-ui-markers landed marker-head, and m5b-ui-editor-channel four more; the check is that some are still pending.
     expect(named.filter((id) => mode(id) === 'pending').length).toBeGreaterThan(5);
     expect(landed.filter((id) => !shown.includes(id)), 'landed ids of the mockup missing from the window').toEqual([]);
     // The ids the mockup's markup computes: a plan step that names a clip

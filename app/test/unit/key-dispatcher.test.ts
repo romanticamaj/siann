@@ -380,3 +380,29 @@ test('the record keys resolve where they are bound and never in a text field (m5
   // The number row's 8 with Shift is not Num *: it goes to position marker 8 (m5b-ui-markers).
   assert.equal(resolveKey(input({ code: 'Digit8', key: '*', modifiers: { ...NONE, shift: true } }), CUBASE_PRESET)?.commandId, 'marker.goTo8');
 });
+
+// m5b-ui-editor-channel: the Channel zone is a focus scope whose keys are the
+// window's; H and G go to the focused zone's zoom (the event display's in the
+// project zone, the sample editor's in the lower zone); the tab keys run in
+// every zone, and the Channel zone key also while the engine is away.
+test('the Channel zone resolves the window\'s keys; H and G follow the focused zone; Ctrl+Alt+arrows step tabs (m5b-ui-editor-channel)', () => {
+  const space = input({ code: 'Space', key: ' ', focusedZone: 'channel' });
+  assert.equal(resolveKey(space, CUBASE_PRESET)?.commandId, 'transport.toggle');
+  const toggle = input({ code: 'KeyC', key: 'c', modifiers: { ...NONE, ctrl: true, alt: true } });
+  for (const focusedZone of ['channel', 'project', 'left', 'lower', 'right'] as const) {
+    assert.equal(resolveKey({ ...toggle, focusedZone }, CUBASE_PRESET)?.commandId, 'zone.channel.toggle', focusedZone);
+  }
+  assert.equal(resolveKey({ ...toggle, platform: 'mac', modifiers: { ...NONE, meta: true, alt: true } }, CUBASE_PRESET)?.commandId, 'zone.channel.toggle');
+  assert.equal(resolveKey({ ...toggle, offline: true }, CUBASE_PRESET)?.commandId, 'zone.channel.toggle', 'a layout key, offline too');
+  const h = input({ code: 'KeyH', key: 'h' });
+  assert.deepEqual([resolveKey({ ...h, focusedZone: 'lower' }, CUBASE_PRESET)?.scope, resolveKey({ ...h, focusedZone: 'lower' }, CUBASE_PRESET)?.commandId], ['lower', 'view.zoomIn']);
+  assert.deepEqual([resolveKey(h, CUBASE_PRESET)?.scope, resolveKey(h, CUBASE_PRESET)?.commandId], ['project', 'view.zoomIn']);
+  assert.equal(resolveKey({ ...input({ code: 'KeyG', key: 'g' }), focusedZone: 'lower' }, CUBASE_PRESET)?.scope, 'lower');
+  assert.equal(resolveKey({ ...h, focusedZone: 'right' }, CUBASE_PRESET), null);
+  const next = input({ code: 'ArrowRight', key: 'ArrowRight', modifiers: { ...NONE, ctrl: true, alt: true }, focusedZone: 'lower' });
+  assert.equal(resolveKey(next, CUBASE_PRESET)?.commandId, 'zone.tab.next');
+  assert.equal(resolveKey({ ...next, code: 'ArrowLeft', key: 'ArrowLeft' }, CUBASE_PRESET)?.commandId, 'zone.tab.prev');
+  // Ctrl+Right alone stays the project zone's nudge.
+  assert.equal(resolveKey({ ...next, modifiers: { ...NONE, ctrl: true }, focusedZone: 'project' }, CUBASE_PRESET)?.commandId, 'edit.nudgeRight');
+  assert.equal(resolveKey({ ...next, targetIsTextField: true }, CUBASE_PRESET), null);
+});

@@ -85,7 +85,7 @@ function fakeClient(tracks: TrackEntity[], clips: readonly ClipEntity[] = [], sl
 const gestures = {} as unknown as GestureController;
 
 // The Inspector's rows, as the zone body holds them (a #root of its children).
-function render(tracks: TrackEntity[], options: { trackId?: string | null; caps?: Capabilities | null; locale?: Locale; slots?: readonly PluginSlotEntity[]; ghosts?: readonly Ghost[]; buses?: readonly BusEntity[]; sends?: readonly SendEntity[] } = {}): Element {
+function render(tracks: TrackEntity[], options: { trackId?: string | null; caps?: Capabilities | null; locale?: Locale; slots?: readonly PluginSlotEntity[]; ghosts?: readonly Ghost[]; buses?: readonly BusEntity[]; sends?: readonly SendEntity[]; channel?: boolean } = {}): Element {
   const trackId = options.trackId === undefined ? (tracks[0]?.id ?? null) : options.trackId;
   const caps = options.caps === undefined ? FULL : options.caps;
   const client = fakeClient(tracks, [], options.slots ?? [], options.buses ?? [], options.sends ?? []);
@@ -93,7 +93,7 @@ function render(tracks: TrackEntity[], options: { trackId?: string | null; caps?
     <CapabilitiesContext.Provider value={caps}>
       <RecordContext.Provider value={recordHost(client.model.getSnapshot(), caps)}>
         <GhostContext.Provider value={{ ghosts: options.ghosts ?? [], outline: null, pin: () => undefined }}>
-          <Inspector client={client} gestures={gestures} trackId={trackId} />
+          <Inspector client={client} gestures={gestures} trackId={trackId} channelVisible={options.channel ?? false} onEditChannel={() => undefined} />
         </GhostContext.Provider>
       </RecordContext.Provider>
     </CapabilitiesContext.Provider>
@@ -166,7 +166,7 @@ test('the track block: the swatch in the track colour, the name, mono or stereo,
   assert.equal(text(find(find(render([{ ...vox(), channels: 2 }]), byClass('i-name')), (el) => el.tag === 'small')), 'Stereo');
 });
 
-test('the buttons: M and S as .msr.m and .msr.s with .on from the track, record and monitor (m5b-ui-recording), then the boxes of read, write and e', () => {
+test('the buttons: M and S as .msr.m and .msr.s with .on from the track, record and monitor (m5b-ui-recording), the boxes of read and write, then e', () => {
   for (const [mute, solo] of [[false, false], [true, false], [false, true]] as const) {
     const btns = find(render([{ ...vox(), mute, solo }]), byClass('i-btns'));
     const mBtns = find(mockupZone(), byClass('i-btns'));
@@ -184,11 +184,31 @@ test('the buttons: M and S as .msr.m and .msr.s with .on from the track, record 
     assert.equal(record!.attrs['data-part'], 'inspector-record');
     assert.equal(monitor!.attrs['data-part'], 'inspector-monitor');
     assert.equal(rest.length, 3);
-    for (const box of rest) {
+    for (const box of rest.slice(0, 2)) {
       assertEmptyBox(box, 'a pending button');
       assert.ok(!classes(box).includes('msr'), 'a box is not drawn as a button');
     }
+    // m5b-ui-editor-channel: the mockup's span.msr.e, last in the row.
+    const e = rest[2]!;
+    const mE = elements(mBtns).at(-1)!;
+    assert.equal(e.tag, 'button');
+    assert.deepEqual(classes(e).sort(), classes(mE).sort());
+    assert.deepEqual(classes(e).sort(), ['e', 'msr']);
+    assert.equal(e.attrs['data-part'], 'inspector-edit');
+    assert.equal(e.attrs['data-part'], mE.attrs['data-part']);
+    assert.equal(styleOf(e, 'margin-left'), styleOf(mE, 'margin-left'));
+    assert.equal(e.attrs['aria-pressed'], 'false');
+    assert.equal(text(e), 'e');
   }
+});
+
+// m5b-ui-editor-channel: the Inspector's e is lit while the Channel zone shows the selected track.
+test('the Inspector\'s e is lit while the Channel zone shows the selected track', () => {
+  const lit = find(render([vox()], { channel: true }), byAttr('data-part', 'inspector-edit'));
+  assert.deepEqual(classes(lit).sort(), ['e', 'msr', 'on']);
+  assert.equal(lit.attrs['aria-pressed'], 'true');
+  const off = find(render([vox()], { channel: false }), byAttr('data-part', 'inspector-edit'));
+  assert.equal(off.attrs['aria-pressed'], 'false');
 });
 
 test('the volume row: the label, .hs with fill and thumb at the taper\'s position, the value in dB with one decimal', () => {
@@ -284,7 +304,7 @@ test('the ids are the mockup\'s minus the pending parts\', and no pending id is 
   const app = render([vox()]);
   const ids = (root: Element) => findAll(root, byAttr('data-part')).map((el) => el.attrs['data-part']!).sort();
   assert.deepEqual(ids(app), ids(mockupZone()).filter((id) => !pending(id)));
-  assert.deepEqual(ids(app), ['inspector-agent-changes', 'inspector-buttons', 'inspector-head', 'inspector-inserts', 'inspector-monitor', 'inspector-mute', 'inspector-name', 'inspector-notepad', 'inspector-pan', 'inspector-record', 'inspector-routing', 'inspector-sends', 'inspector-solo', 'inspector-tabs', 'inspector-track', 'inspector-volume'].sort());
+  assert.deepEqual(ids(app), ['inspector-agent-changes', 'inspector-buttons', 'inspector-edit', 'inspector-head', 'inspector-inserts', 'inspector-monitor', 'inspector-mute', 'inspector-name', 'inspector-notepad', 'inspector-pan', 'inspector-record', 'inspector-routing', 'inspector-sends', 'inspector-solo', 'inspector-tabs', 'inspector-track', 'inspector-volume'].sort());
 });
 
 test('with no track selected, or a track gone, the zone shows its head and foot and nothing between them', () => {
@@ -313,9 +333,10 @@ test('reduced capabilities remove the controls, and their boxes stay', () => {
     features: { ...FULL.features, recording: false, monitoring: false },
   };
   const btns = find(render([vox()], { caps: noMuteSolo }), byClass('i-btns'));
-  assert.equal(findAll(btns, (el) => el.tag === 'button').length, 0);
+  // e needs no engine method (m5b-ui-editor-channel) and stays.
+  assert.deepEqual(findAll(btns, (el) => el.tag === 'button').map((el) => el.attrs['data-part']), ['inspector-edit']);
   assert.equal(elements(btns).length, 7);
-  for (const box of elements(btns)) assertEmptyBox(box, 'an unlisted button');
+  for (const box of elements(btns).slice(0, 6)) assertEmptyBox(box, 'an unlisted button');
   const bare = render([vox()], { caps: null });
   assert.equal(findAll(bare, (el) => el.attrs.role === 'slider').length, 0);
   // The rows keep their label and value; the slider's place is an empty box.

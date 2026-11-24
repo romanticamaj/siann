@@ -94,8 +94,10 @@ function Options({ options }: { options: SelectorState['options'] }) {
   );
 }
 
-// A strip's Routing rack: one .slot, the output selector, and the refusal line in the second position.
-export function RoutingRack({ client, owner, name }: { client: SessionClient; owner: OutputOwner; name: string }) {
+// A strip's Routing rack: one .slot, the output selector, and the refusal line
+// in the second position. prefix goes before its test ids (the Channel zone's
+// strip: 'channel-'; m5b-ui-editor-channel).
+export function RoutingRack({ client, owner, name, prefix = '' }: { client: SessionClient; owner: OutputOwner; name: string; prefix?: string }) {
   const t = useT();
   const output = useOutput(client, owner);
   return (
@@ -104,7 +106,7 @@ export function RoutingRack({ client, owner, name }: { client: SessionClient; ow
         <span className="slot-name">{output.current}</span>
         <select
           className="slot-select"
-          data-testid={`output-${owner.id}`}
+          data-testid={`${prefix}output-${owner.id}`}
           aria-label={t('routing.select', { owner: name })}
           value={output.value}
           disabled={output.guard !== null}
@@ -114,7 +116,7 @@ export function RoutingRack({ client, owner, name }: { client: SessionClient; ow
         </select>
       </div>
       {output.refusal !== null ? (
-        <div className="rack-refusal" role="alert" data-testid={`output-refusal-${owner.id}`} title={output.refusal}>
+        <div className="rack-refusal" role="alert" data-testid={`${prefix}output-refusal-${owner.id}`} title={output.refusal}>
           {output.refusal}
         </div>
       ) : null}

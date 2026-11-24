@@ -17,7 +17,7 @@ test('the preset is one table of chord, command id and scope', () => {
     assert.ok(COMMAND_IDS.includes(binding.commandId), `${binding.chord}: command ${binding.commandId}`);
     assert.match(binding.chord, /^(Mod\+)?(Ctrl\+)?(Alt\+)?(Shift\+)?[A-Za-z0-9]+$/, binding.chord);
   }
-  assert.deepEqual([...SCOPES].sort(), ['left', 'lower', 'project', 'right', 'window']);
+  assert.deepEqual([...SCOPES].sort(), ['channel', 'left', 'lower', 'project', 'right', 'window']);
 });
 
 test('no chord is bound twice within a scope', () => {
@@ -90,9 +90,38 @@ test('the project zone\'s zoom keys of Cubase and T to add a track (m5-ui-arrang
     ['T', 'track.add'],
   ];
   for (const [chord, commandId] of expected) {
-    const found = CUBASE_PRESET.filter((b) => b.chord === chord);
+    const found = CUBASE_PRESET.filter((b) => b.chord === chord && b.scope !== 'lower');
     assert.deepEqual(found.map((b) => [b.scope, b.commandId]), [['project', commandId]], chord);
   }
+});
+
+// m5b-ui-editor-channel (UI redesign 2.1, 3.6, 5.2): Ctrl+Alt+C shows and hides
+// the Channel zone, Ctrl+Alt+Left and Right step the focused zone's tabs, and
+// H and G zoom the sample editor while the lower zone has the focus.
+// editor.open has no chord of its own: Return reaches it through the focus key.
+test('the Channel zone key, the tab keys and the editor\'s zoom keys (m5b-ui-editor-channel)', () => {
+  const rows: Array<[string, string, string]> = [
+    ['Mod+Alt+C', 'window', 'zone.channel.toggle'],
+    ['Mod+Alt+ArrowRight', 'window', 'zone.tab.next'],
+    ['Mod+Alt+ArrowLeft', 'window', 'zone.tab.prev'],
+  ];
+  for (const [chord, scope, commandId] of rows) {
+    assert.deepEqual(CUBASE_PRESET.filter((b) => b.chord === chord), [{ chord, commandId, scope }], chord);
+    assert.ok((COMMAND_IDS as readonly string[]).includes(commandId), commandId);
+  }
+  for (const [chord, commandId] of [['H', 'view.zoomIn'], ['G', 'view.zoomOut']] as const) {
+    assert.deepEqual(CUBASE_PRESET.filter((b) => b.chord === chord).map((b) => [b.scope, b.commandId]).sort(), [['lower', commandId], ['project', commandId]], chord);
+  }
+  assert.ok((COMMAND_IDS as readonly string[]).includes('editor.open'));
+  assert.deepEqual(CUBASE_PRESET.filter((b) => b.commandId === 'editor.open'), [], 'editor.open has no chord');
+  // Enter stays the focus key and Num Enter the transport's start.
+  assert.deepEqual(CUBASE_PRESET.filter((b) => b.chord === 'Enter').map((b) => b.commandId), ['focus.enterZone']);
+  assert.deepEqual(CUBASE_PRESET.filter((b) => b.chord === 'NumpadEnter').map((b) => b.commandId), ['transport.start']);
+  // The nudges keep theirs.
+  for (const [chord, commandId] of [['Mod+ArrowLeft', 'edit.nudgeLeft'], ['Mod+ArrowRight', 'edit.nudgeRight'], ['Alt+ArrowLeft', 'edit.nudgeStartLeft'], ['Alt+ArrowRight', 'edit.nudgeEndRight'], ['Alt+Shift+ArrowLeft', 'edit.nudgeEndLeft'], ['Alt+Shift+ArrowRight', 'edit.nudgeStartRight']]) {
+    assert.deepEqual(CUBASE_PRESET.filter((b) => b.chord === chord).map((b) => b.commandId), [commandId], chord);
+  }
+  assert.deepEqual(CUBASE_PRESET.filter((b) => b.chord === 'Mod+C').map((b) => b.commandId), ['edit.copy']);
 });
 
 test('the transport keys of Cubase with the laptop fallback, the position display\'s keys, undo and redo, and F for auto-scroll (m5-ui-transport)', () => {

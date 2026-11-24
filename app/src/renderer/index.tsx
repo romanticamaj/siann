@@ -19,6 +19,8 @@
 // renderer stays disconnected. Under SIANN_SHELL_TEST=1
 // (the preload's window.siannTest) the timeline's test hooks are
 // window.__siannTimeline, the mixer's meter canvas is window.__siannMeters,
+// the sample editor's hooks are window.__siannEditor and the Channel zone's
+// meter canvas window.__siannChannelMeters (m5b-ui-editor-channel),
 // the plan review's ghosts are window.__siannGhosts (m5b-ui-ghosts),
 // the locale store is window.__siannLocale (which accepts the pseudo-locale),
 // window.siannTest.languages, when the test pinned them, stands in for
@@ -82,6 +84,7 @@ import { announceReconnects, ToastStore } from './shell/toast-store';
 import { setCommitSink } from './shell/Counted';
 import { displayWrites, transportEnabled } from './shell/Transport';
 import type { MeterTestHooks } from './mixer/MixerMeters';
+import type { EditorTestHooks } from './editor/SampleEditorCanvas';
 import { PickerController } from './mixer/picker';
 import { BusSelection } from './mixer/bus-selection';
 import { PluginActions } from './model/plugin-actions';
@@ -141,6 +144,9 @@ declare global {
       answered(): ReadonlyArray<AnsweredRequest>;
     };
     __siannMeters?: MeterTestHooks;
+    // The Channel zone's meter canvas and the sample editor (m5b-ui-editor-channel).
+    __siannChannelMeters?: MeterTestHooks;
+    __siannEditor?: EditorTestHooks;
     // The import's placeholders as shown and its jobs' results (m5b-ui-media).
     __siannMedia?: { seen(): ReadonlyArray<{ name: string; progress: number | null }>; results(): readonly ImportResult[] };
     __siannLoad?: () => EngineLoad | null;
@@ -390,6 +396,20 @@ const onMeterHooks = testHooks
     }
   : undefined;
 
+const onChannelMeterHooks = testHooks
+  ? (hooks: MeterTestHooks | null) => {
+      if (hooks) window.__siannChannelMeters = hooks;
+      else delete window.__siannChannelMeters;
+    }
+  : undefined;
+
+const onEditorHooks = testHooks
+  ? (hooks: EditorTestHooks | null) => {
+      if (hooks) window.__siannEditor = hooks;
+      else delete window.__siannEditor;
+    }
+  : undefined;
+
 // The perf scenario's frame marks (m5b-nightly-quality; UI redesign 5.6): only
 // under the test hook; otherwise the draw paths' marks stay a no-op.
 // The cold start runs from the engine's ready line, which the main process
@@ -456,6 +476,8 @@ const app = (
     history={history}
     onTimelineHooks={onTimelineHooks}
     onMeterHooks={onMeterHooks}
+    onChannelMeterHooks={onChannelMeterHooks}
+    onEditorHooks={onEditorHooks}
     project={project}
     saved={saved}
     studioSetup={studioSetup}

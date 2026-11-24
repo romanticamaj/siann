@@ -94,6 +94,23 @@ code, dd { font-family: var(--font-mono); }
 .app > .topbar { grid-row: 1; white-space: nowrap; }
 .app > .statusbar { grid-row: -2 / -1; white-space: nowrap; min-width: 0; }
 .app > .leftzone { grid-column: 1; grid-row: -3 / -2; }
+/* The Channel zone (m5b-ui-editor-channel; UI redesign 2.1, 2.3) shares the
+   first column with the left zone, at the window's edge: Shell sets
+   --left-zone-w to the two widths together and --channel-zone-w to its own
+   (0 while hidden), so ui/layout.css's three columns stay. The frame is drawn
+   as the left zone's .leftzone is, on the same tokens. */
+.app > .zone-channel {
+  grid-column: 1;
+  grid-row: -3 / -2;
+  justify-self: start;
+  width: var(--channel-zone-w);
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  background: var(--bg-1);
+  border-right: var(--hairline) solid var(--divider);
+}
+.app > .zone-channel ~ .leftzone { margin-left: var(--channel-zone-w); }
 .app > .center { grid-column: 2; grid-row: -3 / -2; position: relative; }
 .app > .plans { grid-column: 3; grid-row: -3 / -2; }
 .center > .zone-project { grid-row: 1; }
@@ -165,9 +182,6 @@ code, dd { font-family: var(--font-mono); }
 .topbar > .tb-left:has(> [data-part="branch-chip"]) { min-width: 0; }
 .tb-left:has(> [data-part="branch-chip"]) > .session { flex-shrink: 0; }
 [data-part="branch-chip"] > span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-/* The boxes of the parts still pending (spec 3.0; --hold-* tokens): the
-   Channel zone button. */
-.hold-zone-button-channel { display: block; flex: none; width: var(--hold-zone-button-channel-w); height: var(--hold-zone-button-channel-h); }
 /* The boxes of parts that have landed but are absent here: cycle, Record
    (m5b-ui-recording) and the click group on an engine without them (a
    .tbtn's and a .tgroup's size),
@@ -271,8 +285,8 @@ code, dd { font-family: var(--font-mono); }
   outline: 0 solid transparent;
   outline-offset: calc(var(--hairline) * -1);
 }
-.zone-left, .zone-lower, .zone-right { position: relative; }
-.zone-left[data-focused="true"], .zone-lower[data-focused="true"], .zone-right[data-focused="true"] { outline: var(--hairline) solid var(--focus); }
+.zone-channel, .zone-left, .zone-lower, .zone-right { position: relative; }
+.zone-channel[data-focused="true"], .zone-left[data-focused="true"], .zone-lower[data-focused="true"], .zone-right[data-focused="true"] { outline: var(--hairline) solid var(--focus); }
 .zone-project:not([data-focused="true"])::after { display: none; }
 .zone[hidden] { display: none; }
 .zone:focus { outline-color: var(--focus); }
@@ -315,6 +329,9 @@ code, dd { font-family: var(--font-mono); }
   touch-action: none;
 }
 .divider-left, .divider-right, .divider-lower { position: absolute; }
+/* The Channel zone's boundary with the Inspector (m5b-ui-editor-channel), over its right edge; none while it is hidden. */
+.divider-channel { position: absolute; grid-column: 1; grid-row: -3 / -2; top: 0; bottom: 0; left: calc(var(--channel-zone-w) - var(--divider-w)); width: var(--divider-w); cursor: ew-resize; }
+.zone-channel[hidden] + .divider-channel { display: none; }
 .divider-left { grid-column: 1; grid-row: -3 / -2; top: 0; bottom: 0; right: 0; width: var(--divider-w); cursor: ew-resize; }
 .divider-right { grid-column: 3; grid-row: -3 / -2; top: 0; bottom: 0; left: 0; width: var(--divider-w); cursor: ew-resize; }
 .divider-lower { grid-row: 2; grid-column: 1; top: 0; left: 0; right: 0; height: var(--divider-w); cursor: ns-resize; }
@@ -595,8 +612,11 @@ input.marker-rename {
    data-part so the button keeps the mockup's class list (shell.css names no
    .msr selector). */
 .i-btns > [data-part="inspector-monitor"].on { background: var(--bg-5); color: var(--tx-1); border-color: var(--tx-3); }
-/* The e box sits at the end of the row, as the mockup puts e. */
-.i-btns > .msr-box:last-child { margin-left: auto; }
+/* A lit e (m5b-ui-editor-channel; UI redesign 3.4, 10.11): the Channel zone
+   shows its track. The shared rules have no .msr.e.on and the mockup never
+   draws e lit, so its look is this app-only rule on existing tokens, decided
+   by Fable, delegated by the maintainer, 2026-11-18. */
+.msr.e.on { background: var(--bg-5); color: var(--tx-1); border-color: var(--tx-3); }
 /* An unlisted slider keeps its column. */
 .i-row > .hs-box { display: block; height: var(--slider-h); }
 /* The slider takes a drag, the value a double-click; the states the mockup does not show. */
@@ -614,6 +634,22 @@ input.marker-rename {
 /* The mockup's .lower is a grid of --zone-tabs and the mixer: the tab row and
    the zone body are its rows. */
 .zone-lower > .zone-body { padding: 0; }
+/* The Editor tab (m5b-ui-editor-channel; UI redesign 5.2): the MixConsole
+   stays mounted and hidden while it shows; the sample editor fills the zone
+   body with its two stacked canvases, the overlay on top; with no clip a line
+   of text, as the Media tab's empty list. */
+.zone-lower[data-tab="editor"] .mixer { display: none; }
+.editor { position: relative; height: 100%; overflow: hidden; background: var(--bg-0); }
+.editor > canvas { position: absolute; left: 0; top: 0; }
+.editor > .editor-content { pointer-events: none; }
+.editor > .editor-overlay { touch-action: none; }
+.editor-empty { margin: 0; padding: var(--space-2); color: var(--tx-3); }
+/* The Channel zone's strip (m5b-ui-editor-channel): the MixConsole's strip,
+   as wide as the zone, its meter canvas over it as the MixConsole's is. */
+.zone-channel > .zone-body { padding: 0; overflow: hidden; }
+.channel-zone { position: relative; display: flex; height: 100%; min-height: 0; background: var(--bg-0); }
+.channel-zone > .strip { flex: 1 1 auto; width: auto; min-width: 0; border-right: 0; }
+.channel-meters { position: absolute; left: 0; top: 0; z-index: 1; pointer-events: none; }
 .zone-lower .mixer { position: relative; height: 100%; }
 .mixer-meters { position: absolute; left: 0; top: 0; z-index: 1; pointer-events: none; }
 .knob-defs { position: absolute; }

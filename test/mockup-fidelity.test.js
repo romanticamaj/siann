@@ -130,7 +130,7 @@ test('each component of M5 has the port feature that owns its parts', () => {
   for (const [id, gate] of Object.entries(owner)) assert.equal(ruleOf(id).gate, gate, id);
   for (const gate of PORTS) assert.ok(Object.values(owner).includes(gate), gate);
   // Parts of a later feature inside a ported component stay that feature's, pending.
-  for (const [id, gate] of Object.entries({ 'tool-2': 'm6a-ui-tools', 'strip-3-edit': 'm5b-ui-editor-channel' })) {
+  for (const [id, gate] of Object.entries({ 'tool-2': 'm6a-ui-tools', 'strip-3-read': 'm6a-ui-automation' })) {
     assert.equal(ruleOf(id).gate, gate, id);
     assert.equal(MANIFEST.gates[gate], 'pending', gate);
   }
@@ -339,7 +339,18 @@ test('every shared stylesheet that draws a MixConsole class is linked: M and S t
   let shell = read('app', 'renderer', 'shell.css').replace(/\/\*[\s\S]*?\*\//g, '');
   while (/\([^()]*\)/.test(shell)) shell = shell.replace(/\([^()]*\)/g, '');
   const selectors = [...shell.matchAll(/([^{}]+)\{/g)].map((m) => m[1]);
-  assert.deepEqual(selectors.filter((s) => /\.msr(?![\w-])/.test(s)), [], 'no .msr rule in shell.css');
+  // The one exception, decided by Fable, delegated by the maintainer, 2026-11-18
+  // (UI redesign 3.4, 10.11; m5b-ui-editor-channel): a lit e, which the mockup
+  // never draws, is the app-only rule .msr.e.on on existing tokens.
+  assert.deepEqual(selectors.filter((s) => /\.msr(?![\w-])/.test(s)).map((s) => s.trim()), ['.msr.e.on'], 'no .msr rule in shell.css but the lit e');
+  const lit = /\.msr\.e\.on\s*\{([^}]*)\}/.exec(read('app', 'renderer', 'shell.css'));
+  assert.ok(lit, 'shell.css has .msr.e.on');
+  assert.deepEqual([...lit[1].matchAll(/var\((--[\w-]+)\)/g)].map((m) => m[1]).sort(), ['--bg-5', '--tx-1', '--tx-3']);
+  assert.match(lit[1], /background:\s*var\(--bg-5\)/);
+  assert.match(lit[1], /color:\s*var\(--tx-1\)/);
+  assert.match(lit[1], /border-color:\s*var\(--tx-3\)/);
+  // No shared rule draws it.
+  for (const file of fs.readdirSync(dir).filter((f) => f.endsWith('.css'))) assert.doesNotMatch(fs.readFileSync(path.join(dir, file), 'utf8'), /\.msr\.e\.on/, file);
 });
 
 // UI redesign 10.9 (1) and 10.10: a ported component is styled by the shared
@@ -461,9 +472,11 @@ test('the chrome\'s gate is report, and the boxes of its absent parts are held b
   assert.equal(MANIFEST.gates['m5-ui-alignment-chrome'], 'report');
   assert.ok(!Object.values(MANIFEST.gates).includes('enforce'), 'no gate is enforce');
   const tokens = read('app', 'renderer', 'tokens.css');
-  const holds = {
-    'zone-button-channel': ['w', 'h'],
-  };
+  // The Channel zone button landed (m5b-ui-editor-channel): no top-bar part is held any more.
+  const holds = {};
+  assert.equal(MANIFEST.gates[ruleOf('zone-button-channel').gate], 'report');
+  assert.doesNotMatch(tokens, /--hold-zone-button-channel-/);
+  assert.doesNotMatch(read('app', 'renderer', 'shell.css'), /var\(--hold-zone-button-channel/);
   // Record landed (m5b-ui-recording): its hold tokens are gone, and on an
   // engine without features.recording its box is the .tbtn box of the landed
   // transport (UI redesign 3.0; 10.11, 19).
@@ -656,7 +669,7 @@ test('the tools M5b leaves out, the master\'s mute, rack and e, and the strips\'
     'strip-3-edit': 'm5b-ui-editor-channel', 'inspector-edit': 'm5b-ui-editor-channel', 'tab-editor': 'm5b-ui-editor-channel',
   };
   // m5b-ui-inserts-master and m5b-ui-edit-more landed their parts (report); the others are pending.
-  const landed = new Set(['m5b-ui-inserts-master', 'm5b-ui-edit-more']);
+  const landed = new Set(['m5b-ui-inserts-master', 'm5b-ui-edit-more', 'm5b-ui-editor-channel']);
   for (const [id, gate] of Object.entries(owners)) {
     assert.equal(ruleOf(id).gate, gate, id);
     assert.equal(ruleOf(id).feature, gate, id);
@@ -1120,8 +1133,9 @@ test('shell.css names tokens only and holds nothing pinned for unported zones', 
   // and no var() names a custom property tokens.css does not declare, except the ones the app sets on an element.
   const declared = new Set([...read('app', 'renderer', 'tokens.css').matchAll(/(--[\w-]+)\s*:/g)].map((m) => m[1]));
   const set = new Set([...shell.matchAll(/(--[\w-]+)\s*:/g)].map((m) => m[1]));
+  // --channel-zone-w: the Channel zone's width, which Shell sets on .app (m5b-ui-editor-channel).
   // --send-fill: a send slot's level (m5b-ui-sends-buses), set inline from the fader's taper.
-  const local = ['--c', '--zoom-at', '--drawer-width', '--send-fill'];
+  const local = ['--c', '--zoom-at', '--drawer-width', '--channel-zone-w', '--send-fill'];
   for (const m of shell.matchAll(/var\((--[\w-]+)/g)) assert.ok(declared.has(m[1]) || set.has(m[1]) || local.includes(m[1]), `shell.css names ${m[1]}, which tokens.css does not declare`);
   // The header says what is left, and nothing is "not ported yet".
   assert.doesNotMatch(read('app', 'renderer', 'shell.css'), /not ported yet|until their alignment/);

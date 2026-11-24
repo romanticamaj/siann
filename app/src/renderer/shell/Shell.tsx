@@ -22,6 +22,19 @@
 // bubbling listener on the window, to the focused zone's commands first, then
 // to the window's. Under 1280 px the right zone is an overlay drawer.
 //
+// The Channel zone and the Editor tab (m5b-ui-editor-channel; UI redesign
+// 2.1, 2.3): the Channel zone is a fifth frame, an aside at the window's left
+// edge in the left zone's grid column (--left-zone-w is the two zones' widths
+// together, --channel-zone-w its own, so ui/layout.css's three columns stay),
+// with its divider, its focus frame, first in the Tab and F6 order, and no
+// data-region (the mockup's six regions stay six). Ctrl+Alt+C and the first
+// zone button show and hide it. The lower zone's tab row has the Editor tab
+// after MixConsole; on it the zone shows the sample editor (`lowerEditor`)
+// and the MixConsole stays mounted, hidden. editor.open (a double-click on a
+// clip's body, or Return on the project zone with a clip selected) shows the
+// lower zone on the Editor tab; Ctrl+Alt+Right and Left step the focused
+// zone's tabs (nothing in a zone with one tab).
+//
 // While the engine is disconnected (m5-ui-connection; UI redesign spec 7
 // P1-6): a full-width banner under the top bar says so, the four zones are
 // inert and dimmed (no pointer, focus or key reaches their controls), and
@@ -87,6 +100,7 @@ import type { UndoHistory } from '../model/undo-history';
 import {
   effectiveLayout,
   limits,
+  nextTab,
   rightTab,
   RACKS,
   type EffectiveLayout,
@@ -111,18 +125,21 @@ import { TopBar } from './TopBar';
 import { transportEnabled, type TransportPlayhead } from './Transport';
 
 // The order Tab walks the zones in.
-const FOCUS_ORDER: readonly ZoneScope[] = ['left', 'project', 'lower', 'right'];
+const FOCUS_ORDER: readonly ZoneScope[] = ['channel', 'left', 'project', 'lower', 'right'];
 // The frame's classes per zone: the mockup's element class (aside.leftzone,
 // section.arrange, section.lower, aside.plans), .zone and .zone-<zone>. The
 // dividers' likewise. Literal tables, so every class the renderer emits is
 // spelled out (m5-ui-port-cleanup).
 const ZONE_CLASSES: Readonly<Record<ZoneScope, string>> = {
+  // The Channel zone has no element of the mockup's: .zone and .zone-channel only.
+  channel: 'zone zone-channel',
   left: 'leftzone zone zone-left',
   project: 'arrange zone zone-project',
   lower: 'lower zone zone-lower',
   right: 'plans zone zone-right',
 };
 const DIVIDER_CLASSES: Readonly<Record<Zone, string>> = {
+  channel: 'divider divider-channel',
   left: 'divider divider-left',
   lower: 'divider divider-lower',
   right: 'divider divider-right',
@@ -138,7 +155,7 @@ const TRANSPORT_METHODS = ['transport.play', 'transport.stop', 'transport.locate
 const TABBABLE ='a[href], button, input, select, textarea, [tabindex], [contenteditable="true"]';
 
 function isZoneScope(value: string | undefined): value is ZoneScope {
-  return value === 'left' || value === 'project' || value === 'lower' || value === 'right';
+  return value === 'channel' || value === 'left' || value === 'project' || value === 'lower' || value === 'right';
 }
 
 // Where the focus is: a zone itself, a control inside one (its boundary
@@ -217,6 +234,12 @@ export interface ShellProps {
   readonly project: ReactNode;
   readonly lower: ReactNode;
   readonly right: ReactNode;
+  // The Channel zone's content (m5b-ui-editor-channel).
+  readonly channel?: ReactNode;
+  // The lower zone's Editor tab, shown in the zone while that tab is chosen (m5b-ui-editor-channel).
+  readonly lowerEditor?: ReactNode;
+  // The app's selected (primary) clip, for editor.open (Return on the project zone).
+  readonly selectedClip?: () => string | null;
   // The right zone's Media tab (m5b-ui-media), shown in place of `right` while its tab is chosen.
   readonly rightMedia?: ReactNode;
   // The Meter tab's panel (m5b-ui-meter), shown in the right zone on that tab.
@@ -245,12 +268,14 @@ interface ZoneFrameProps {
   // The content is the frame's direct children, as in the mockup's
   // section.arrange, with no zone body (the app's scroll wrapper) between them.
   readonly bare?: boolean;
+  // The tab the zone shows (data-tab), where it has several.
+  readonly tab?: string;
   readonly onFocus: (zone: ZoneScope) => void;
   readonly frameRef: (el: HTMLElement | null) => void;
   readonly children: ReactNode;
 }
 
-function ZoneFrame({ zone, as = 'section', visible, focused, offline, drawer, tabs, bare = false, onFocus, frameRef, children }: ZoneFrameProps) {
+function ZoneFrame({ zone, as = 'section', visible, focused, offline, drawer, tabs, bare = false, tab, onFocus, frameRef, children }: ZoneFrameProps) {
   const t = useT();
   const Tag = as;
   return (
@@ -258,8 +283,9 @@ function ZoneFrame({ zone, as = 'section', visible, focused, offline, drawer, ta
       ref={frameRef}
       className={ZONE_CLASSES[zone]}
       data-testid={`zone-${zone}`}
-      data-region={`${zone}-zone`}
+      data-region={zone === 'channel' ? undefined : `${zone}-zone`}
       data-zone={zone}
+      data-tab={tab}
       data-visible={String(visible)}
       data-focused={String(focused && visible)}
       data-drawer={drawer ? 'true' : undefined}
@@ -312,12 +338,13 @@ function ZoneSeparator({
   const drag = useRef<{ readonly pointer: number; readonly at: number; readonly size: number } | null>(null);
   const [active, setActive] = useState(false);
   const axis = (event: { clientX: number; clientY: number }) => (zone === 'lower' ? event.clientY : event.clientX);
-  // The left zone grows to the right, the right zone to the left, the lower zone upwards.
-  const sign = zone === 'left' ? 1 : -1;
+  // The Channel and the left zone grow to the right, the right zone to the left, the lower zone upwards.
+  const rightward = zone === 'left' || zone === 'channel';
+  const sign = rightward ? 1 : -1;
   const onKey = (event: ReactKeyboardEvent<HTMLDivElement>) => {
     if (event.ctrlKey || event.altKey || event.metaKey) return;
-    const grow = zone === 'left' ? 'ArrowRight' : zone === 'right' ? 'ArrowLeft' : 'ArrowUp';
-    const shrink = zone === 'left' ? 'ArrowLeft' : zone === 'right' ? 'ArrowRight' : 'ArrowDown';
+    const grow = rightward ? 'ArrowRight' : zone === 'right' ? 'ArrowLeft' : 'ArrowUp';
+    const shrink = rightward ? 'ArrowLeft' : zone === 'right' ? 'ArrowRight' : 'ArrowDown';
     let make: ((viewport: Viewport) => ShellAction) | null = null;
     if (event.key === grow || event.key === shrink) {
       const direction = event.key === grow ? 1 : -1;
@@ -402,6 +429,9 @@ export function Shell({
   project,
   lower,
   right,
+  channel = null,
+  lowerEditor = null,
+  selectedClip,
   rightMedia = null,
   rightMeter,
   rightHead,
@@ -429,8 +459,9 @@ export function Shell({
   const inert = offline || covered;
   // The Media tab exists while the engine lists media.import (m5b-ui-media; 3.0).
   const media = can.has('media.import');
-  const latest = useRef({ effective, focused, offline, covered, media });
-  latest.current = { effective, focused, offline, covered, media };
+  const meter = can.feature('loudness');
+  const latest = useRef({ effective, focused, offline, covered, media, meter, selectedClip, tabs: state.layout.tabs });
+  latest.current = { effective, focused, offline, covered, media, meter, selectedClip, tabs: state.layout.tabs };
 
   // Zones that open or close by a button or key animate (spec 1.6); drags,
   // arrow steps and the first layout do not.
@@ -476,9 +507,12 @@ export function Shell({
     // A focus command; false (the key keeps its default) where it does not apply.
     const move = (commandId: CommandId) => (): boolean => {
       const active = document.activeElement;
-      const step = focusMove(commandId, placeOf(active));
+      const step = focusMove(commandId, placeOf(active), { clipSelected: (latest.current.selectedClip?.() ?? null) !== null });
       if (!step) return false;
       switch (step.type) {
+        case 'editor':
+          // Return on the project zone with a clip selected (m5b-ui-editor-channel): the focus stays.
+          return commands.run('window', 'editor.open');
         case 'zone':
           cycle(step.step);
           return true;
@@ -508,6 +542,34 @@ export function Shell({
       commands.register('window', 'zone.left.toggle', () => dispatch((viewport) => ({ type: 'toggle', zone: 'left', viewport }))),
       commands.register('window', 'zone.lower.toggle', () => dispatch((viewport) => ({ type: 'toggle', zone: 'lower', viewport }))),
       commands.register('window', 'zone.right.toggle', () => dispatch((viewport) => ({ type: 'toggle', zone: 'right', viewport }))),
+      commands.register('window', 'zone.channel.toggle', () => dispatch((viewport) => ({ type: 'toggle', zone: 'channel', viewport }))),
+      // Ctrl+Alt+Right / Left: the focused zone's next or previous tab; nothing where it has one.
+      ...([['zone.tab.next', 1], ['zone.tab.prev', -1]] as const).map(([id, step]) =>
+        commands.register('window', id, () => {
+          const { focused: zone, tabs, media: hasMedia, meter: hasMeter } = latest.current;
+          if (zone === 'lower') {
+            const next = nextTab('lower', tabs.lower, step);
+            if (next === tabs.lower) return false;
+            store.dispatch({ type: 'tab', zone: 'lower', tab: next });
+            return true;
+          }
+          if (zone === 'right') {
+            const available = { media: hasMedia, meter: hasMeter };
+            const current = rightTab({ tabs }, available);
+            const next = nextTab('right', current, step, available);
+            if (next === current) return false;
+            store.dispatch({ type: 'tab', zone: 'right', tab: next });
+            return true;
+          }
+          return false;
+        }),
+      ),
+      // editor.open (m5b-ui-editor-channel): the lower zone on the Editor tab; nothing without a selected clip.
+      commands.register('window', 'editor.open', () => {
+        if ((latest.current.selectedClip?.() ?? null) === null) return false;
+        dispatch((viewport) => ({ type: 'openTab', zone: 'lower', tab: 'editor', viewport }));
+        return true;
+      }),
       commands.register('window', 'zone.lower.mixconsole', () =>
         dispatch((viewport) => ({ type: 'showTab', zone: 'lower', tab: 'mixconsole', viewport })),
       ),
@@ -524,7 +586,7 @@ export function Shell({
       ...[...FOCUS_COMMANDS].map((id) => commands.register('window', id, move(id))),
     ];
     return () => offs.forEach((off) => off());
-  }, [commands, dispatch, focusZone, isVisible]);
+  }, [commands, dispatch, focusZone, isVisible, store]);
 
   // Shift+A (m5b-ui-audition): the other side, from the PlanStore only.
   useEffect(
@@ -646,11 +708,14 @@ export function Shell({
   };
   // The zone sizes the grid of ui/layout.css takes (0 for a hidden zone or the drawer).
   const cell = (zone: Zone) => (zones[zone].visible && !zones[zone].drawer ? zones[zone].size : 0);
+  // The first column holds the Channel zone and the left zone side by side.
   const grid = {
-    '--left-zone-w': `${cell('left')}px`,
+    '--left-zone-w': `${cell('channel') + cell('left')}px`,
     '--right-zone-w': `${cell('right')}px`,
     '--lower-zone-h': `${cell('lower')}px`,
   } as CSSProperties;
+  // The Channel zone's own width, as shell.css places it in the first column (0 while hidden).
+  const channelWidth = { '--channel-zone-w': `${cell('channel')}px` } as CSSProperties;
   // The lower zone's tab row is the mockup's .tabs (m5-ui-port-mixer-strip):
   // the MixConsole tab with its icon and key, the spacer, and the rack
   // switches (mixer-racks; m5b-ui-inserts-master, UI redesign 3.4) at the
@@ -661,11 +726,13 @@ export function Shell({
   // (mixer/routing.ts). Narrow and the menu the mockup draws there have no
   // behaviour and are not rendered. On an engine that can show none of the
   // racks the switches are not in the DOM and nothing replaces them: the row
-  // ends at its spacer (3.0). The Editor tab is m5b-ui-editor-channel's and
-  // absent; it sits after the MixConsole tab, so nothing moves.
+  // ends at its spacer (3.0). The Editor tab (m5b-ui-editor-channel; the
+  // mockup's span.tab[tab-editor] with ic('wave','s')) follows the MixConsole
+  // tab; the rack switches belong to the MixConsole and are not shown on it.
+  const lowerTab = state.layout.tabs.lower;
   const available = availableRacks(can);
   const switches = RACKS.filter((rack) => available[rack]);
-  const racksShown = switches.length > 0;
+  const racksShown = switches.length > 0 && lowerTab === 'mixconsole';
   const lowerTabs = (
     <div className="tabs" role="tablist" data-part="lower-tabs">
       <button
@@ -679,6 +746,18 @@ export function Shell({
       >
         <Icon name="sliders" small />
         {t('tab.mixconsole')} <kbd>{MIXCONSOLE_KEY}</kbd>
+      </button>
+      <button
+        type="button"
+        role="tab"
+        className={`tab${lowerTab === 'editor' ? ' on' : ''}`}
+        data-testid="tab-lower-editor"
+        data-part="tab-editor"
+        aria-selected={lowerTab === 'editor'}
+        onClick={() => store.dispatch({ type: 'tab', zone: 'lower', tab: 'editor' })}
+      >
+        <Icon name="wave" small />
+        {t('tab.editor')}
       </button>
       <span className="spacer" />
       {racksShown ? (
@@ -766,7 +845,7 @@ export function Shell({
       data-offline={offline ? 'true' : undefined}
       data-hearing={hearing !== null && hearing !== 'main' ? 'proposal' : undefined}
       data-animate={String(animate)}
-      style={grid}
+      style={{ ...grid, ...channelWidth }}
     >
       <TopBar
         client={client}
@@ -796,6 +875,18 @@ export function Shell({
       <ZoneFrame
         as="aside"
         offline={inert}
+        zone="channel"
+        visible={zones.channel.visible}
+        focused={focused === 'channel'}
+        onFocus={(z) => focusZone(z, false)}
+        frameRef={frameRef('channel')}
+      >
+        {channel}
+      </ZoneFrame>
+      <ZoneSeparator zone="channel" values={separatorValues('channel')} dispatch={dispatch} />
+      <ZoneFrame
+        as="aside"
+        offline={inert}
         zone="left"
         visible={zones.left.visible}
         focused={focused === 'left'}
@@ -816,10 +907,12 @@ export function Shell({
           visible={zones.lower.visible}
           focused={focused === 'lower'}
           tabs={lowerTabs}
+          tab={lowerTab}
           onFocus={(z) => focusZone(z, false)}
           frameRef={frameRef('lower')}
         >
           {lower}
+          {lowerTab === 'editor' ? lowerEditor : null}
         </ZoneFrame>
       </main>
       <ZoneSeparator zone="right" disabled={zones.right.drawer} values={separatorValues('right')} dispatch={dispatch} />

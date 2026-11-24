@@ -74,6 +74,15 @@ const PATHS = {
       <path d="M2.5 8h11M8 2.5c2 2 2 9 0 11M8 2.5c-2 2-2 9 0 11" />
     </>
   ),
+  // The Channel zone button and the Editor tab (m5b-ui-editor-channel; mockup.html, P.zCh and P.wave).
+  zCh: (
+    <>
+      <rect x="2.5" y="3" width="11" height="10" rx="1.5" />
+      <path d="M5.5 3v10" />
+      <path d="M4 9.5v0" strokeWidth="2" />
+    </>
+  ),
+  wave: <path d="M2.5 8v0M4.7 6v4M6.9 3.5v9M9.1 5.5v5M11.3 4v8M13.5 7v2" />,
   zLeft: (
     <>
       <rect x="2.5" y="3" width="11" height="10" rx="1.5" />
