@@ -35,7 +35,7 @@ const CHORD = /(^|[^\p{L}])(Ctrl|Cmd|Alt|Opt|Option|Shift|Mod|Meta|Control)\+(\S
 const SINGLE = /^(?:[A-Z0-9]|[,./\-=;`]|Space|Enter|Return|Esc|Escape|Tab|Delete|Backspace|Insert|Home|End|PageUp|PageDown)$/;
 const KEY_POSITIONS = new Set(['title', 'aria-keyshortcuts']);
 // A single key written in brackets inside a catalog sentence: 'Auto-Scroll (F)', '自動捲動（F）', 'Play [Space]'.
-const BRACKETED = /[(（[]\s*(?:[A-Z0-9]|[,./\-=;`]|Space|Enter|Return|Esc|Escape|Tab|Delete|Backspace|Insert|Home|End|Page ?Up|Page ?Down|Arrow\w*|[←→↑↓])\s*[)）\]]/u;
+const BRACKETED = /[(（[]\s*(?:[A-Z0-9]|[,./\-=;`]|Space|Enter|Return|Esc|Escape|Tab|Delete|Backspace|Insert|Home|End|Page ?Up|Page ?Down|Arrow ?(?:Left|Right|Up|Down)?|[←→↑↓])\s*[)）\]]/u;
 
 export interface Finding {
   readonly file: string;

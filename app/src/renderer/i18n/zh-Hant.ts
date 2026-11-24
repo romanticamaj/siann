@@ -141,7 +141,7 @@ export const zhHant: Catalog = {
   'media.importFailed': '無法匯入 {name}：{code}',
   'media.placeFailed': '無法放置 {name}：{code}',
   'media.refused': '{name} 不是此引擎可匯入的音訊檔',
-  'toolbar.autoScrollTitle': '自動捲動 (F)',
+  'toolbar.autoScrollTitle': '自動捲動',
 
   'mixer.label': '混音台',
   'strip.pan': '聲相',

@@ -141,7 +141,7 @@ export const zhHans: Catalog = {
   'media.importFailed': '无法导入 {name}：{code}',
   'media.placeFailed': '无法放置 {name}：{code}',
   'media.refused': '{name} 不是此引擎可导入的音频文件',
-  'toolbar.autoScrollTitle': '自动滚动 (F)',
+  'toolbar.autoScrollTitle': '自动滚动',
 
   'mixer.label': '调音台',
   'strip.pan': '声像',

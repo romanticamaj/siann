@@ -212,7 +212,10 @@ export const CUBASE_REFERENCE: readonly ReferenceRow[] = [
   { section: '7.6', command: 'Zoom to Selection', key: 'Alt+S', mac: 'Opt+S', chord: 'Alt+S', commandId: 'view.zoomSelection' },
   { section: '7.6', command: 'Zoom to Event', key: 'Shift+E', chord: 'Shift+E', commandId: 'view.zoomEvent' },
 
-  // 7.7 Navigation.
+  // 7.7 Navigation. The research writes the first row's key without
+  // backticks ("Arrow keys"): one row per arrow; arrow-key stepping is phase 3
+  // (UI redesign 3.3, select).
+  ...(['ArrowLeft', 'ArrowRight', 'ArrowUp', 'ArrowDown'] as const).map((arrow): ReferenceRow => ({ section: '7.7', command: 'Select next / previous event; step tracks', key: 'Arrow keys', chord: arrow, reason: nb('phase 3') })),
   ...(['ArrowLeft', 'ArrowRight', 'ArrowUp', 'ArrowDown'] as const).map((arrow): ReferenceRow => ({ section: '7.7', command: 'Extend selection', key: 'Shift+Arrow', chord: `Shift+${arrow}`, reason: nb('phase 3') })),
   { section: '7.7', command: 'Top track in the track list', key: 'Home', chord: 'Home', reason: nb('phase 3') },
   { section: '7.7', command: 'Bottom track in the track list', key: 'End', chord: 'End', reason: nb('phase 3') },

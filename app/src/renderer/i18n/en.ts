@@ -164,7 +164,7 @@ export const en = {
   'media.importFailed': 'Could not import {name}: {code}',
   'media.placeFailed': 'Could not place {name}: {code}',
   'media.refused': '{name} is not an audio file this engine imports',
-  'toolbar.autoScrollTitle': 'Auto-Scroll (F)',
+  'toolbar.autoScrollTitle': 'Auto-Scroll',
 
   // Mixer.
   'mixer.label': 'Mixer',
