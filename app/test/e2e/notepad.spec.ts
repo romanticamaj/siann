@@ -107,8 +107,10 @@ async function commands(op: string): Promise<Array<Record<string, unknown>>> {
     .filter((c) => c.op === op);
 }
 
+// Types at the end of the text: the click puts the caret where it lands, so it is moved to the end first.
 async function typeIn(text: string): Promise<void> {
   await area().click();
+  await area().evaluate((el: HTMLTextAreaElement) => el.setSelectionRange(el.value.length, el.value.length));
   await page.keyboard.type(text);
   await expect(area()).toHaveValue(new RegExp(`${text.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}$`));
 }

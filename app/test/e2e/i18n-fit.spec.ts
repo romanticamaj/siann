@@ -764,6 +764,8 @@ test('the Notepad section, its refusal line and its changed-elsewhere line fit i
       // Under 1100 px the left zone starts hidden: its button shows it for this window.
       if ((await page.getByTestId('zone-left').getAttribute('data-visible')) !== 'true') await page.getByTestId('zone-button-left').click();
       await expect(page.getByTestId('zone-left')).toHaveAttribute('data-visible', 'true');
+      // The zones' grid animates to its new columns: measure once it has.
+      await expect.poll(() => page.evaluate(() => document.getAnimations().filter((a) => a instanceof CSSTransition).length)).toBe(0);
       await expect(area).toBeVisible();
       for (const entry of await overflowing(NOTEPAD)) failures.push(`${locale} ${size.width}x${size.height} (notepad): ${entry}`);
       for (const entry of await wrapped('[data-part=inspector-notepad] .sec-h, [data-testid=notepad-refusal] button')) failures.push(`${locale} ${size.width}x${size.height} (notepad): ${entry}`);
