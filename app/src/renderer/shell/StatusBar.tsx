@@ -32,7 +32,7 @@ import { localeStore, translator, useLocale, type T } from '../i18n/t';
 import { statusFields, type EngineStatusSource } from '../model/engine-status';
 import type { PlanStore } from '../model/plan-store';
 import type { ReadModel } from '../model/read-model';
-import type { AboutInfo, ConnectionStatus, SessionClient } from '../model/session-client';
+import type { AboutInfo, ClientState, ConnectionStatus, SessionClient } from '../model/session-client';
 import { useCapabilities } from './Capable';
 import { Icon } from './icons';
 
@@ -184,8 +184,11 @@ function LocaleSwitch() {
   );
 }
 
-function useClientState(client: SessionClient) {
-  const get = () => client.getState();
+// One field of the client's state: the bar re-renders when a field it shows
+// changes, not on every event (each advances lastSeq; record.changed comes
+// about once a second while recording, UI redesign spec 5.6).
+function useClientField<K extends keyof ClientState>(client: SessionClient, key: K): ClientState[K] {
+  const get = () => client.getState()[key];
   return useSyncExternalStore((listener) => client.subscribe(listener), get, get);
 }
 
@@ -223,7 +226,14 @@ export interface StatusBarProps {
 }
 
 export function StatusBar({ client, plans, engineStatus, saved = NO_SAVED }: StatusBarProps) {
-  const state = useClientState(client);
+  const state = {
+    status: useClientField(client, 'status'),
+    revision: useClientField(client, 'revision'),
+    about: useClientField(client, 'about'),
+    sessionId: useClientField(client, 'sessionId'),
+    syncCount: useClientField(client, 'syncCount'),
+    connections: useClientField(client, 'connections'),
+  };
   const snapshot = useSnapshot(client.model);
   const status = useStore(engineStatus);
   const heard = useStore(plans).heard;
