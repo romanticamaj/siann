@@ -72,7 +72,6 @@ import { CapabilitiesContext } from './shell/Capable';
 import { Counted } from './shell/Counted';
 import { Inspector } from './shell/Inspector';
 import { createNotepadStore } from './shell/notepad';
-import { structuralBlocked } from './model/edit-guard';
 import { refusalOf } from './plans/RefusalLine';
 import { MeterPanel } from './shell/MeterPanel';
 import type { LayoutStore } from './shell/layout-store';
