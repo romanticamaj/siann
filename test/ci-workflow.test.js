@@ -42,7 +42,13 @@ test('the desktop job runs the editor-ownership test against its JUCE engine, no
   assert.match(job.text, /SIANN_TEST_PLUGIN=/);
   // m5-clap-editor-window: the CLAP case of editor.spec.ts runs too.
   assert.match(job.text, /SIANN_TEST_PLUGIN_CLAP=/);
-  assert.match(job.text, /playwright test editor\.spec\.ts/);
+  // Playwright's file filter is a regex: it selects editor.spec.ts alone, not
+  // clip-editor.spec.ts (m5b-ui-editor-channel), which needs siann-cli.
+  const filter = /playwright test '([^']*editor[^']*)'/.exec(job.text);
+  assert.ok(filter, 'the job runs editor.spec.ts with a quoted file filter');
+  const files = new RegExp(filter[1]);
+  assert.ok(files.test(String.raw`D:\a\app\test\e2e\editor.spec.ts`) && files.test('/a/app/test/e2e/editor.spec.ts'), 'it selects editor.spec.ts');
+  assert.ok(!files.test(String.raw`D:\a\app\test\e2e\clip-editor.spec.ts`) && !files.test('/a/app/test/e2e/clip-editor.spec.ts'), 'it does not select clip-editor.spec.ts');
 });
 
 test('a Linux CI job installs Clang 20 or later from apt.llvm.org', () => {
