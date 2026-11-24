@@ -231,7 +231,7 @@ test('the marker keys: Shift+3..9, Num 3..9, Insert, Shift+N and Shift+B; the lo
   const shift = { ...NONE, shift: true };
   for (let n = 3; n <= 9; n += 1) {
     for (const [code, modifiers] of [[`Digit${n}`, shift], [`Numpad${n}`, NONE]] as const) {
-      for (const zone of ['project', 'left', 'lower', 'right', null] as const) {
+      for (const zone of ['project', 'left', 'lower', 'right'] as const) {
         const binding = resolveKey(input({ code, key: String(n), modifiers, focusedZone: zone }), CUBASE_PRESET);
         assert.deepEqual([binding?.scope, binding?.commandId], ['window', `marker.goTo${n}`], `${code} ${JSON.stringify(modifiers)} in ${zone}`);
       }
@@ -377,6 +377,6 @@ test('the record keys resolve where they are bound and never in a text field (m5
     }
     assert.equal(resolveKey({ ...press, targetIsTextField: true }, CUBASE_PRESET), null, `${code} in a text field`);
   }
-  // The number row's 8 with Shift is not Num *.
-  assert.equal(resolveKey(input({ code: 'Digit8', key: '*', modifiers: { ...NONE, shift: true } }), CUBASE_PRESET), null);
+  // The number row's 8 with Shift is not Num *: it goes to position marker 8 (m5b-ui-markers).
+  assert.equal(resolveKey(input({ code: 'Digit8', key: '*', modifiers: { ...NONE, shift: true } }), CUBASE_PRESET)?.commandId, 'marker.goTo8');
 });

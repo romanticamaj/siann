@@ -37,7 +37,7 @@ import { chooseSnapType } from './support/toolbar';
 const RATE = 48000;
 // The ruler (40 px) and the marker row (20 px) above the lanes: a point in the row.
 const ROW_Y = 50;
-const FIXTURES = path.resolve(__dirname, '..', '..', '..', 'test', 'unit', 'fixtures');
+const FIXTURES = path.resolve(__dirname, '..', 'unit', 'fixtures');
 
 interface View {
   readonly framesPerPixel: number;
@@ -82,6 +82,12 @@ async function launch(env: Record<string, string> = {}): Promise<void> {
   await expect(page.getByTestId('status')).toHaveAttribute('data-status', 'connected');
   await expect(page.getByTestId('clip-count')).toHaveText('1');
   engine = await engineClient(page);
+  // G twice: 400 frames per pixel, so a second is 120 px and the first five are in view.
+  await expect.poll(async () => (await hook<View>('view')).framesPerPixel).toBe(100);
+  await focusProject();
+  await page.keyboard.press('KeyG');
+  await page.keyboard.press('KeyG');
+  await expect.poll(async () => (await hook<View>('view')).framesPerPixel).toBe(400);
 }
 
 async function relaunch(env: Record<string, string> = {}): Promise<void> {
@@ -192,6 +198,9 @@ async function oneEdit(name: string, act: () => Promise<void>, undo = true): Pro
   if (undo) {
     await page.keyboard.press('ControlOrMeta+KeyZ');
     await expect.poll(async () => (await head()).documentHash, { message: `${name}: one undo` }).toBe(before.documentHash);
+    // The renderer has the undo's revision before the next gesture begins on it.
+    await expect(page.getByTestId('revision')).toHaveText((await head()).revision);
+    await painted();
   }
   return commands;
 }
@@ -249,7 +258,7 @@ const grid = async () => snapperFor({ on: true, grid: 'adapt' }, (await view()).
 test('the marker head and the marker track are in the window; the 20 px row lines the headers up with the lanes', async () => {
   await expect(page.locator('[data-part="marker-head"]')).toHaveCount(1);
   await expect(page.locator('[data-part="marker-head"]')).toHaveText('Markers');
-  expect((await hook<Part[]>('parts')).some((p) => p.id === 'marker-track')).toBe(true);
+  await expect.poll(async () => (await hook<Part[]>('parts')).filter((p) => p.id === 'marker-track').map((p) => [p.x, p.y, p.h])).toEqual([[0, 40, 20]]);
   const head = (await page.locator('[data-part="marker-head"]').boundingBox())!;
   expect(Math.round(head.height)).toBe(20);
   const box = await canvas();
@@ -384,7 +393,7 @@ test('snap type Events: a clip drag lands on a position marker and on the start 
   await clearMarkers();
   await addMarkers([
     { op: 'marker.add', markerId: 'mk_p', position: '61000', name: 'P' },
-    { op: 'marker.add', markerId: 'mk_c', position: '133000', length: '50000', name: 'C' },
+    { op: 'marker.add', markerId: 'mk_c', position: '133000', length: '100000', name: 'C' },
   ]);
   await chooseSnapType(page, 'events');
   const clips = await hook<Array<{ clipId: string; x: number; y: number; width: number; height: number; position: string }>>('clips');
@@ -397,13 +406,21 @@ test('snap type Events: a clip drag lands on a position marker and on the start 
   };
   // Its start (24000) dragged to 4 px short of the position marker: it lands on 61000.
   const to = async (target: number, from: number) => Math.round((target - from) / v.framesPerPixel) - 4;
+  // Each drag begins once the renderer has the last one's revision.
+  const synced = async () => {
+    await expect(page.getByTestId('revision')).toHaveText((await head()).revision);
+    await painted();
+  };
   await drag(await at(grab.x, grab.y), await to(61000, Number(await fetchPosition())));
   await expect.poll(fetchPosition).toBe('61000');
+  await synced();
   await drag(await at(grab.x + (61000 - 24000) / v.framesPerPixel, grab.y), await to(133000, 61000));
   await expect.poll(fetchPosition).toBe('133000');
-  // Its end (start + 48000) onto the cycle marker's end (183000): the start at 135000.
-  await drag(await at(grab.x + (133000 - 24000) / v.framesPerPixel, grab.y), Math.round((183000 - 48000 - 133000) / v.framesPerPixel) + 3);
-  await expect.poll(fetchPosition).toBe('135000');
+  await synced();
+  // Its end (start + 48000) onto the cycle marker's end (233000): the start at 185000.
+  await drag(await at(grab.x + (133000 - 24000) / v.framesPerPixel, grab.y), Math.round((233000 - 48000 - 133000) / v.framesPerPixel) + 3);
+  await expect.poll(fetchPosition).toBe('185000');
+  await synced();
   await chooseSnapType(page, 'grid');
   await engine!.call('command.execute', { commands: [{ op: 'clip.move', clipId: 'clp_1', position: { domain: 'audio', value: '24000' } }] });
 });

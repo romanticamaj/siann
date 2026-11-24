@@ -410,6 +410,8 @@ test("the marker track's words and the marker step words are in every catalog, t
       for (const p of placeholders) assert.ok(String(catalog[key]).includes(`{${p}}`), `${name} ${key} has {${p}}`);
       if (name !== 'en') assert.notEqual(catalog[key], en[key], `${name} ${key} is translated`);
     }
+    // Each wording names the marker in the glossary's word, unless its {marker} does.
+    if (placeholders.includes('marker')) continue;
     assert.ok(String(zhHant[key]).includes('標記'), `zh-Hant ${key}`);
     assert.ok(String(zhHans[key]).includes('标记'), `zh-Hans ${key}`);
   }

@@ -48,7 +48,7 @@
     "m5b-ui-fades": "report",
     "m5b-ui-inserts-master": "report",
     "m5b-ui-recording": "report",
-    "m5b-ui-markers": "pending",
+    "m5b-ui-markers": "report",
     "m5b-ui-sends-buses": "report",
     "m5b-ui-signature": "report",
     "m5b-ui-meter": "report",

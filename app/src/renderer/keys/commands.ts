@@ -135,6 +135,19 @@ export const COMMAND_IDS = [
   // Cubase, and reached from the application menu's Studio menu.
   'mixer.bus.add',
   'mixer.bus.remove',
+  // The marker track (m5b-ui-markers; spec 3.1, 3.6, UR-9): add a position
+  // marker at the cursor, go to position markers 3 to 9, the next and the
+  // previous marker.
+  'marker.insert',
+  'marker.goTo3',
+  'marker.goTo4',
+  'marker.goTo5',
+  'marker.goTo6',
+  'marker.goTo7',
+  'marker.goTo8',
+  'marker.goTo9',
+  'marker.next',
+  'marker.previous',
 ] as const;
 export type CommandId = (typeof COMMAND_IDS)[number];
 

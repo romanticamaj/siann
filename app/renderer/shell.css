@@ -449,6 +449,21 @@ button.media-remove { min-height: 0; padding: 0 var(--space-1h); font-size: var(
   pointer-events: none;
 }
 .drag-tooltip[hidden] { display: none; }
+/* The marker rename field (m5b-ui-markers; UI redesign 3.2): an input over a
+   marker's label in the marker track row, which the mockup does not draw.
+   TimelineCanvas sets its left and width; it fills the row. */
+.marker-rename {
+  position: absolute;
+  top: var(--ruler-h);
+  z-index: 3;
+  height: var(--marker-h);
+  padding: 0 var(--space);
+  border: var(--hairline) solid var(--focus-ring);
+  border-radius: var(--radius-s);
+  background: var(--bg-well);
+  color: var(--tx-1);
+  font: var(--fw-strong) var(--fs-micro) var(--font-ui);
+}
 /* The zoom: a range input over the mockup's u (its handle is u::after), with
    a transparent track and thumb, so its keys, pointer and focus ring stay.
    The input reaches half a handle past each end of u and is as tall as
