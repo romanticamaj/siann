@@ -21,7 +21,10 @@ import * as path from 'node:path';
 
 import { engineClient, type EngineClient } from './support/engine-client';
 import { exeFromEnv, launchApp } from './support/seed';
+import { translator } from '../../src/renderer/i18n/t';
 import { chooseGrid } from './support/toolbar';
+
+const t = translator('en');
 
 const RATE = 48000;
 // The media: four seconds of square wave.
@@ -743,4 +746,33 @@ test('M and S toggle the selected tracks; Ctrl-click and Shift-click select trac
       await expect(page.getByTestId('track-mute-trk_b')).toHaveAttribute('aria-pressed', 'false');
     },
   );
+});
+
+test('Shift+Delete\'s confirmation rechecks the tracks: one removed while it is open is asked again, with no revision', async () => {
+  test.setTimeout(150_000);
+  await launchWith([
+    { clipId: 'clp_b', trackId: 'trk_b', position: 0, length: 24000 },
+    { clipId: 'clp_c', trackId: 'trk_c', position: 0, length: 24000 },
+  ]);
+  const header = (id: string) => page.getByTestId(`track-header-${id}`);
+  await header('trk_b').click({ position: { x: 4, y: 4 } });
+  await header('trk_c').click({ position: { x: 4, y: 4 }, modifiers: ['ControlOrMeta'] });
+  await expect(header('trk_c')).toHaveAttribute('aria-selected', 'true');
+  const dialog = page.locator('dialog[open][data-testid="confirm-dialog"]');
+  await page.keyboard.press('Shift+Delete');
+  await expect(dialog).toBeVisible();
+  await expect(dialog).toContainText('2');
+  // Another client removes trk_c while the dialog is open.
+  await engine!.call('command.execute', { commands: [{ op: 'track.remove', trackId: 'trk_c' }] });
+  await expect(page.getByTestId('about-track-count')).toHaveText('2');
+  const changed = (await head()).revision;
+  await dialog.getByTestId('confirm-ok').click();
+  await expect(dialog).toContainText(t('confirm.removeTracks', { count: 1 }));
+  await expect(dialog.getByTestId('confirm-cancel')).toBeFocused();
+  expect((await head()).revision).toBe(changed, 'a changed set sends nothing');
+  // Confirmed again, as now shown: trk_b goes, trk_a stays.
+  await dialog.getByTestId('confirm-ok').click();
+  await expect(dialog).toHaveCount(0);
+  await expect(page.getByTestId('about-track-count')).toHaveText('1');
+  expect((await head()).revision).not.toBe(changed);
 });

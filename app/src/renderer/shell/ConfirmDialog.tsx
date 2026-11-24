@@ -3,7 +3,8 @@
 // A modal <dialog> with role alertdialog: the message, then Cancel (focused
 // first, so Enter alone never removes anything) and the action. Its own
 // keydown handler keeps every key from the shell's dispatcher, as the About
-// panel's does, and Escape cancels. All text comes from the catalogs.
+// panel's does, and Escape cancels. All text comes from the catalogs. A
+// message changed while open focuses Cancel again.
 
 import { useEffect, useRef, type KeyboardEvent } from 'react';
 
@@ -28,6 +29,14 @@ export function ConfirmDialog({ open, message, confirmLabel, cancelLabel, onConf
     }
     if (!open && dialog.open) dialog.close();
   }, [open]);
+  // A message changed while open (the summary was rebuilt and is asked
+  // again): Cancel takes the focus back, so Enter alone never confirms it.
+  const shown = useRef(message);
+  useEffect(() => {
+    if (shown.current === message) return;
+    shown.current = message;
+    if (open) cancel.current?.focus();
+  }, [open, message]);
   const onKeyDown = (event: KeyboardEvent<HTMLDialogElement>) => {
     event.stopPropagation();
     if (event.key === 'Escape') {

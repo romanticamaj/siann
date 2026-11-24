@@ -26,6 +26,7 @@
 
 import type { ClipEntity, MediaEntity, TrackEntity } from '../model/document';
 import type { Snapshot } from '../model/read-model';
+import { recheck, sameList, type Recheck } from '../model/recheck';
 import { newClipId, type TimelineCommand } from './commands';
 import { snapTrim } from './geometry';
 import type { TrackSelection } from './selection';
@@ -299,6 +300,26 @@ export function removeTracksCommand(snapshot: Snapshot, trackIds: readonly strin
     snapshot,
     tracksOf(snapshot, trackIds).map((track) => ({ op: 'track.remove', trackId: track.id })),
   );
+}
+
+// What Shift+Delete's confirmation shows: the tracks it removes (those the
+// snapshot holds, once each) and the revision they were read at; null when
+// none is left.
+export interface TrackRemoval {
+  readonly trackIds: readonly string[];
+  readonly revision: string;
+}
+
+export function trackRemoval(snapshot: Snapshot, trackIds: readonly string[]): TrackRemoval | null {
+  const found = tracksOf(snapshot, trackIds).map((track) => track.id);
+  return found.length === 0 ? null : { trackIds: found, revision: snapshot.revision };
+}
+
+// The confirmation confirmed (model/recheck.ts): `allowed` is the capability
+// and the edit guard read now.
+export function recheckTrackRemoval(shown: TrackRemoval, snapshot: Snapshot | null, allowed: boolean): Recheck<TrackRemoval> {
+  const current = snapshot ? trackRemoval(snapshot, shown.trackIds) : null;
+  return recheck(shown, current, allowed, (a, b) => sameList(a.trackIds, b.trackIds), () => (snapshot ? removeTracksCommand(snapshot, shown.trackIds) : null));
 }
 
 // ---- m5b-ui-edit-more (UI redesign spec 3.2 "Tools", "Clip handles" and

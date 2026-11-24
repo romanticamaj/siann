@@ -11,6 +11,8 @@
 // Escape closes it. State: mixer/picker.ts. While a proposal is heard (the
 // side can flip from another connection while the picker is open) a choice is
 // held by the edit guard with its reason (m5b-ui-audition; 4.5 C5).
+// The approval's confirmation approves only while the engine still lists
+// plugin.approve; a reconnect or a session epoch closes it (App.tsx).
 
 import { useEffect, useRef, useSyncExternalStore, type KeyboardEvent } from 'react';
 
@@ -134,7 +136,7 @@ export function PluginPicker({ picker, trackName, busName }: PluginPickerProps) 
           message={t('picker.approveConfirm', { name: confirm.name, file: confirm.path })}
           confirmLabel={t('picker.approve')}
           cancelLabel={t('confirm.cancel')}
-          onConfirm={() => void picker.confirmApprove()}
+          onConfirm={() => (buttons.approve ? void picker.confirmApprove() : picker.cancelApprove())}
           onCancel={() => picker.cancelApprove()}
         />
       ) : null}

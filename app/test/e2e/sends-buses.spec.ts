@@ -33,6 +33,10 @@
 //     buttons and empty slot, the output selectors and the Out row are
 //     disabled with the reason (the pan knob stays, aria-disabled); the bus
 //     fader and the send level go onto the branch.
+// (j) The removal's confirmation acts on what it showed (security review):
+//     a track routed to the bus while it is open makes Remove ask again,
+//     naming the track, with no revision; a proposal heard before Remove
+//     closes it with no revision.
 //
 // Waits are Playwright condition waits; none sleeps.
 
@@ -255,6 +259,63 @@ test('(c) removing a bus with a send asks, naming the track; one revision; one u
   await expect(busStrip(bus)).toHaveClass(/\bsel\b/);
   await page.getByTestId(`track-header-${KEYS}`).click();
   await expect(busStrip(bus)).not.toHaveClass(/\bsel\b/);
+});
+
+test('(j) Remove rechecks the summary, the edit guard and the session before it sends', async () => {
+  await launch();
+  const bus = await addBusFromMenu();
+  await addSend(KEYS, 'Bus 1');
+  const dialog = page.locator('dialog[open][data-testid="confirm-dialog"]');
+  const ask = async () => {
+    await busStrip(bus).locator('.scale').click();
+    await expect(busStrip(bus)).toHaveClass(/\bsel\b/);
+    await clickMenu('mixer.bus.remove');
+    await expect(dialog).toBeVisible();
+  };
+
+  // A track routed to the bus while the dialog is open: asked again, naming it.
+  await ask();
+  await expect(dialog).toContainText('Keys');
+  await expect(dialog).not.toContainText('Pad');
+  await client!.call('command.execute', { commands: [{ op: 'track.set_output', trackId: PAD, output: { busId: bus } }] });
+  const before = await revisions();
+  await dialog.getByTestId('confirm-ok').click();
+  await expect(dialog).toContainText('Pad');
+  await expect(dialog.getByTestId('confirm-cancel')).toBeFocused();
+  expect(await revisions()).toBe(before, 'a changed summary sends nothing');
+  expect(await busIds()).toEqual([bus]);
+  // Confirmed again, as now shown: one revision.
+  await dialog.getByTestId('confirm-ok').click();
+  await expect.poll(() => revisions()).toBe(before + 1);
+  await expect(dialog).toHaveCount(0);
+  expect(await busIds()).toEqual([]);
+  await undo();
+  await expect(busStrip(bus)).toBeVisible();
+
+  // A proposal heard while the dialog is open: Remove closes it and sends nothing.
+  const watcher = await engineClient(page, { events: true });
+  try {
+    const agent = await agentFor(app!);
+    const hash = (await agent.tool('submit_plan', { steps: [{ op: 'track.set_gain', trackId: KEYS, gainMilliDb: -6000 }] })).hash as string;
+    await selectPlan(page, hash);
+    await page.getByTestId('plan-audition').click();
+    await expect(page.getByTestId('shell')).toHaveAttribute('data-hearing', 'proposal');
+    const branch = (await watcher.call('session.inspect')).heard as string;
+    await watcher.call('audition.hear', { side: 'main' });
+    await expect(page.getByTestId('shell')).not.toHaveAttribute('data-hearing', 'proposal');
+    await ask();
+    await watcher.call('audition.hear', { side: branch });
+    await expect(page.getByTestId('shell')).toHaveAttribute('data-hearing', 'proposal');
+    const held = await revisions();
+    await dialog.getByTestId('confirm-ok').click();
+    await expect(dialog).toHaveCount(0);
+    expect(await revisions()).toBe(held, 'a structural edit is held while a proposal is heard');
+    expect(await busIds()).toEqual([bus]);
+    await watcher.call('audition.hear', { side: 'main' });
+    await expect(page.getByTestId('shell')).not.toHaveAttribute('data-hearing', 'proposal');
+  } finally {
+    watcher.close();
+  }
 });
 
 // The centre of a control a raw mouse gesture starts on, read once the control

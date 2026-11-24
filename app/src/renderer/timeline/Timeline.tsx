@@ -69,7 +69,7 @@ import { ConfirmDialog } from '../shell/ConfirmDialog';
 import { createLayoutStore, type LayoutStore } from '../shell/layout-store';
 import type { ToastStore } from '../shell/toast-store';
 import type { TimelineCommand } from './commands';
-import { removeTracksCommand, trackMuteCommand, trackSoloCommand, type GlueRefusal } from './edit-commands';
+import { recheckTrackRemoval, trackMuteCommand, trackRemoval, trackSoloCommand, type GlueRefusal, type TrackRemoval } from './edit-commands';
 import { infoLineEditCommand, type InfoField } from './info-line';
 import { InfoLine } from './InfoLine';
 import { RepeatDialog } from './RepeatDialog';
@@ -324,7 +324,7 @@ export function Timeline({
   const layout = given ?? own!;
   const sessionId = useSessionId(client);
   const [timeline, setTimeline] = useState<TimelineCanvas | null>(null);
-  const [removing, setRemoving] = useState<readonly string[] | null>(null);
+  const [removing, setRemoving] = useState<TrackRemoval | null>(null);
   // Ctrl+K's count dialog (m5b-ui-edit-more).
   const [repeating, setRepeating] = useState(false);
   const toastsRef = useRef(toasts);
@@ -556,20 +556,24 @@ export function Timeline({
     });
     edit('track.removeSelected', () => {
       const current = client.model.getSnapshot();
-      const ids = tracks().filter((id) => current?.entities[`track:${id}`]);
-      if (ids.length === 0) return false;
-      setRemoving(ids);
+      const removal = current ? trackRemoval(current, tracks()) : null;
+      if (!removal) return false;
+      setRemoving(removal);
       return true;
     });
     if (canAdd) offs.push(commands.register('project', 'track.add', () => (structuralBlocked(heardRef.current) ? false : addTrack(client, translator(localeStore().getSnapshot())))));
     return () => offs.forEach((off) => off());
   }, [timeline, commands, gateKey, canAdd, client, layout]);
 
+  // Confirm rechecks the capability, the edit guard and the tracks
+  // (model/recheck.ts): a changed set is shown and asked again; a reconnect
+  // closes the dialog (below; an epoch remounts the timeline).
   const confirmRemove = () => {
-    const ids = removing;
+    if (!removing) return;
+    const result = recheckTrackRemoval(removing, client.model.getSnapshot(), allowed('track.remove'));
+    if (result.kind === 'ask') return setRemoving(result.pending);
     setRemoving(null);
-    const current = client.model.getSnapshot();
-    if (ids && current) send(client, removeTracksCommand(current, ids));
+    if (result.kind === 'send') send(client, result.command);
   };
 
   useEffect(() => {
@@ -779,7 +783,7 @@ export function Timeline({
       />
       <ConfirmDialog
         open={removing !== null}
-        message={t('confirm.removeTracks', { count: removing?.length ?? 0 })}
+        message={t('confirm.removeTracks', { count: removing?.trackIds.length ?? 0 })}
         confirmLabel={t('confirm.remove')}
         cancelLabel={t('confirm.cancel')}
         onConfirm={confirmRemove}
