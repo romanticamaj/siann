@@ -3,14 +3,15 @@
 // (mockup.html, div.infoline): one span.f per field, the name first (the
 // track's colour in <i>, the clip's title in <b>), then start, end, length,
 // offset and volume, each its label and b.num, styled by
-// ui/project-zone.css. The values are info-line.ts's. The fade fields belong
-// to m5b-ui-fades: their boxes stay at the end of the line, empty (spec 3.0,
-// --hold-info-fade-*-w), so the volume field keeps the hairline the shared
-// rule draws after it. With no clip selected the line holds nothing between
-// its edges. data-clip names the selected clip for the e2e.
+// ui/project-zone.css, then Fade In and Fade Out (m5b-ui-fades), the same
+// span.f, while the engine lists features.clipFades and clip.set_fade; on an
+// engine without them neither is rendered and no box replaces them, since
+// they end the line (spec 3.0). The values are info-line.ts's. With no clip
+// selected the line holds nothing between its edges. data-clip names the
+// selected clip for the e2e.
 //
 // Editing (m5b-ui-edit-more; spec 3.2, "Info line"): with an edit handler,
-// start, length, offset and volume take the focus; a click (or Enter) puts a
+// start, length, offset and volume (and the fade fields) take the focus; a click (or Enter) puts a
 // text field inside their b.num holding the value, the template's structure
 // otherwise unchanged; Enter applies it relatively to the selection, Mod+Enter
 // absolutely, Escape or leaving the field cancels (infoLineEditCommand turns
@@ -20,6 +21,7 @@ import { useEffect, useRef, useState, useSyncExternalStore, type KeyboardEvent }
 
 import { useT, type MessageKey } from '../i18n/t';
 import type { SessionClient } from '../model/session-client';
+import { useCapabilities } from '../shell/Capable';
 import { infoLine, type InfoField, type InfoLineValues } from './info-line';
 
 type ValueField = Exclude<keyof InfoLineValues, 'name' | 'colour'>;
@@ -32,8 +34,13 @@ const FIELDS: ReadonlyArray<readonly [string, ValueField, MessageKey]> = [
   ['info-offset', 'offset', 'info.offset'],
   ['info-volume', 'volume', 'info.volume'],
 ];
+// The fade fields (m5b-ui-fades), last in the template.
+const FADE_FIELDS: ReadonlyArray<readonly [string, ValueField, MessageKey]> = [
+  ['info-fade-in', 'fadeIn', 'info.fadeIn'],
+  ['info-fade-out', 'fadeOut', 'info.fadeOut'],
+];
 
-const EDITABLE: ReadonlySet<ValueField> = new Set<ValueField>(['start', 'length', 'offset', 'volume']);
+const EDITABLE: ReadonlySet<ValueField> = new Set<ValueField>(['start', 'length', 'offset', 'volume', 'fadeIn', 'fadeOut']);
 
 export interface InfoLineProps {
   readonly client: SessionClient;
@@ -53,6 +60,8 @@ export function InfoLine({ client, clipId, onEdit }: InfoLineProps) {
     () => client.model.getSnapshot(),
   );
   const [editing, setEditing] = useState<ValueField | null>(null);
+  const can = useCapabilities();
+  const fades = can.feature('clipFades') && can.command('clip.set_fade');
   const values = infoLine(snapshot, clipId);
   // A new primary clip (or none) ends an edit.
   useEffect(() => setEditing(null), [clipId]);
@@ -66,7 +75,7 @@ export function InfoLine({ client, clipId, onEdit }: InfoLineProps) {
               {values.name}
             </b>
           </span>
-          {FIELDS.map(([part, field, label]) => (
+          {(fades ? [...FIELDS, ...FADE_FIELDS] : FIELDS).map(([part, field, label]) => (
             <InfoValueField
               key={part}
               part={part}
@@ -82,9 +91,6 @@ export function InfoLine({ client, clipId, onEdit }: InfoLineProps) {
               onCancel={() => setEditing(null)}
             />
           ))}
-          {/* Fade In and Fade Out (m5b-ui-fades): their boxes, empty. */}
-          <span className="hold-info-fade-in" aria-hidden="true" />
-          <span className="hold-info-fade-out" aria-hidden="true" />
         </>
       ) : null}
     </div>

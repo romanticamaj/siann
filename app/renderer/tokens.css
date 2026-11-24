@@ -147,13 +147,6 @@
   --line-height: 1.4;
 }
 
-/* The holds whose labels differ in Chinese (m5-ui-port-toolbar): the width
-   the fidelity run measures in the mockup's zh-TW, for both Chinese locales. */
-:root:lang(zh-TW), :root:lang(zh-CN) {
-  --hold-info-fade-in-w: calc(77.031px * var(--scale));
-  --hold-info-fade-out-w: calc(83.156px * var(--scale));
-}
-
 /* Tokens taken from the redesign's mockup (docs/superpowers/specs/
    2026-11-13-siann-ui-redesign/mockup.html), so that every colour, font size,
    weight, radius and fixed size the mockup uses has a name here and nowhere
@@ -321,8 +314,9 @@
      box with its hairline; Agent changes in en (its text wraps to one line
      less in zh-TW, 78.891 px). The project zone toolbar's and info line's
      (m5-ui-port-toolbar): tools 2 and 6 to 9 (M6a), each the
-     width of tool()'s .b, the proposal pill (m5b-ui-ghosts) and the Fade In
-     and Fade Out fields (m5b-ui-fades); in en, and in Chinese below. */
+     width of tool()'s .b. The proposal pill landed with m5b-ui-ghosts and the
+     Fade In and Fade Out fields with m5b-ui-fades: neither needs a box when
+     absent (spec 3.0). */
   --hold-zone-button-channel-w: calc(26px * var(--scale));
   --hold-zone-button-channel-h: calc(24px * var(--scale));
   /* The Plans tab's (m5-ui-port-plans; UI redesign 10.10, P1-13 notes): the
@@ -337,8 +331,6 @@
   --hold-tool-7-w: calc(27.172px * var(--scale));
   --hold-tool-8-w: calc(27.172px * var(--scale));
   --hold-tool-9-w: calc(27.172px * var(--scale));
-  --hold-info-fade-in-w: calc(94.047px * var(--scale));
-  --hold-info-fade-out-w: calc(109.422px * var(--scale));
 
   /* The locator band in the ruler's upper half (m5-ui-loop-click; UI
      redesign 3.2), the mockup's draw() values: the band starts 2 px below

@@ -15,7 +15,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 
 import { formatDb2 } from '../../src/renderer/format';
-import { INFO_EDIT_FIELDS, infoLine, infoLineEditCommand, parseDb, parseLength, parsePosition } from '../../src/renderer/timeline/info-line';
+import { INFO_EDIT_FIELDS, infoLine, infoLineEditCommand, parseDb, parseLength, parseMs, parsePosition } from '../../src/renderer/timeline/info-line';
 import { formatLength, formatPosition } from '../../src/renderer/timeline/musical-time';
 import { applyClipCommands } from './support/apply';
 import { clip, media, snapshotOf, track } from './support/timeline';
@@ -194,4 +194,99 @@ test('a value left as the line shows it sends nothing, though the clip is off a 
   const louder = infoLineEditCommand(s, ['clp_p'], 'clp_p', 'volume', '-2.00 dB', false);
   assert.ok(louder);
   assert.equal(applyClipCommands(s, louder.commands).get('clp_p')!.gainMilliDb, -2000);
+});
+
+// ---- m5b-ui-fades (UI redesign 3.2, "Info line"; 10.8, 2; 10.11, 23): the
+// fade fields read whole milliseconds, "<n> ms" (frames * 1000 / sampleRate,
+// rounded half up; "0 ms" without a fade), the same text in every locale; a
+// typed value is milliseconds, with or without "ms", and becomes frames as
+// round(ms * sampleRate / 1000). Enter adds the primary's change to the same
+// side of every selected clip, Ctrl+Enter sets each to the value; each side is
+// clamped to 0 up to the clip's length less its other fade; one clip.set_fade
+// per clip that changes; nothing when the value equals the one shown.
+
+function faded() {
+  return snapshotOf(
+    ['trk_a', 'trk_b'],
+    [track('trk_a'), track('trk_b')],
+    [media('med_long', String(20 * 96000))],
+    [
+      { ...clip('clp_p', 'trk_a', 'med_long', '96000', '0', '48000'), fadeIn: { length: '480', curve: 'linear' as const }, fadeOut: { length: '8640', curve: 'equal_power' as const } },
+      { ...clip('clp_o', 'trk_b', 'med_long', '384000', '0', '4800'), fadeIn: { length: '960', curve: 'equal_power' as const } },
+    ],
+  );
+}
+
+test('the fade fields read "<n> ms", rounded half up, "0 ms" without a fade', () => {
+  const s = faded();
+  const shown = infoLine(s, 'clp_p')!;
+  assert.equal(shown.fadeIn, '10 ms', '480 frames at 48 kHz');
+  assert.equal(shown.fadeOut, '180 ms', '8640 frames');
+  assert.equal(infoLine(s, 'clp_o')!.fadeOut, '0 ms', 'no fade out');
+  // Rounding: 24 frames are 0.5 ms, up to 1; 23 frames 0.479 ms, down to 0; 72 frames 1.5 ms, up to 2.
+  const at = (length: string) =>
+    infoLine(snapshotOf(['trk_a'], [track('trk_a')], [media('med_long', '960000')], [{ ...clip('clp_x', 'trk_a', 'med_long', '0', '0', '96000'), fadeIn: { length, curve: 'linear' as const } }]), 'clp_x')!.fadeIn;
+  assert.equal(at('24'), '1 ms');
+  assert.equal(at('23'), '0 ms');
+  assert.equal(at('72'), '2 ms');
+  assert.equal(at('576'), '12 ms', 'the mockup\'s Fade In');
+});
+
+test('parseMs reads whole milliseconds with or without "ms"', () => {
+  assert.equal(parseMs('12'), 12);
+  assert.equal(parseMs('12 ms'), 12);
+  assert.equal(parseMs(' 180ms '), 180);
+  assert.equal(parseMs('0'), 0);
+  assert.equal(parseMs('25 MS'), 25);
+  for (const bad of ['1.5', '-3', 'x', '', ' ', 'ms', '12 s', '+4', '1e3']) assert.equal(parseMs(bad), null, bad);
+});
+
+test('fade in: relative adds the primary\'s change to every selected clip, absolute sets each; one clip.set_fade per clip', () => {
+  const s = faded();
+  // 25 ms is 1200 frames: the primary's fade in goes 480 -> 1200 (+720).
+  const relative = infoLineEditCommand(s, IDS, 'clp_p', 'fadeIn', '25', false)!;
+  assert.deepEqual(relative.commands, [
+    { op: 'clip.set_fade', clipId: 'clp_p', fadeIn: { length: '1200', curve: 'linear' } },
+    { op: 'clip.set_fade', clipId: 'clp_o', fadeIn: { length: '1680', curve: 'equal_power' } },
+  ]);
+  const absolute = infoLineEditCommand(s, IDS, 'clp_p', 'fadeIn', '25 ms', true)!;
+  assert.deepEqual(absolute.commands, [
+    { op: 'clip.set_fade', clipId: 'clp_p', fadeIn: { length: '1200', curve: 'linear' } },
+    { op: 'clip.set_fade', clipId: 'clp_o', fadeIn: { length: '1200', curve: 'equal_power' } },
+  ]);
+  assert.equal(relative.expectedRevision, 'r7');
+});
+
+test('fade out: a new side takes linear; each clip is clamped to its length less its other fade', () => {
+  const s = faded();
+  // 400 ms is 19200 frames. clp_o (4800 frames, fade in 960) can take 3840 at most.
+  const absolute = infoLineEditCommand(s, IDS, 'clp_p', 'fadeOut', '400', true)!;
+  assert.deepEqual(absolute.commands, [
+    { op: 'clip.set_fade', clipId: 'clp_p', fadeOut: { length: '19200', curve: 'equal_power' } },
+    { op: 'clip.set_fade', clipId: 'clp_o', fadeOut: { length: '3840', curve: 'linear' } },
+  ]);
+  const clips = applyClipCommands(s, absolute.commands);
+  assert.deepEqual(clips.get('clp_o')!.fadeIn, { length: '960', curve: 'equal_power' }, 'the other side does not change');
+  // An over-long value on the primary: its length less its fade in.
+  assert.deepEqual(infoLineEditCommand(s, ['clp_p'], 'clp_p', 'fadeOut', '5000', false)!.commands, [
+    { op: 'clip.set_fade', clipId: 'clp_p', fadeOut: { length: String(48000 - 480), curve: 'equal_power' } },
+  ]);
+  // Relative below 0 (the primary clp_o 20 ms -> 0, -960): removed ("0"), the curve still given.
+  const down = infoLineEditCommand(s, IDS, 'clp_o', 'fadeIn', '0', false)!;
+  assert.deepEqual(down.commands, [
+    { op: 'clip.set_fade', clipId: 'clp_p', fadeIn: { length: '0', curve: 'linear' } },
+    { op: 'clip.set_fade', clipId: 'clp_o', fadeIn: { length: '0', curve: 'equal_power' } },
+  ]);
+});
+
+test('a fade value as shown, one that does not parse, or no change on any clip: nothing is sent', () => {
+  const s = faded();
+  assert.equal(infoLineEditCommand(s, IDS, 'clp_p', 'fadeIn', '10 ms', false), null, 'as shown');
+  assert.equal(infoLineEditCommand(s, ['clp_p'], 'clp_p', 'fadeOut', '180', true), null, 'as shown, absolute, alone');
+  assert.equal(infoLineEditCommand(s, IDS, 'clp_p', 'fadeIn', '1.5', false), null);
+  assert.equal(infoLineEditCommand(s, IDS, 'clp_p', 'fadeIn', 'soon', false), null);
+  // Absolute as shown over the selection: the primary stays exact, the other clip is set.
+  assert.deepEqual(infoLineEditCommand(s, IDS, 'clp_p', 'fadeIn', '10', true)!.commands, [{ op: 'clip.set_fade', clipId: 'clp_o', fadeIn: { length: '480', curve: 'equal_power' } }]);
+  // A side without a fade set to 0: nothing to remove.
+  assert.equal(infoLineEditCommand(s, ['clp_o'], 'clp_o', 'fadeOut', '0', true), null);
 });

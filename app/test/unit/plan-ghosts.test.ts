@@ -316,3 +316,101 @@ test('the slot ghosts of a track and the master\'s ghosts, by kind', () => {
   assert.deepEqual(masterGhosts(ghosts).map((g) => g.step), [1, 5]);
   for (const step of [1, 2, 3, 4]) assert.equal(hasStripGhost(ghosts, step), true, `step ${step} is on a strip`);
 });
+
+// ---- m5b-ui-fades (UI redesign 4.2; 10.11, 23): the kind 'fade'. Its box is
+// the clip's as the ticked steps before it leave it (the ghost clip of a
+// placed, moved or trimmed clip, else the clip itself); its old fades are the
+// preview's before with the ticked steps applied, a ticked clip.trim
+// shortening them by the engine's rule (protocol-engine v0, "Clip fades": the
+// fade in keeps its length first, the fade out takes the rest, a side
+// shortened to 0 is removed); an omitted side is unchanged, "0" removes one.
+
+function fadedSession(): Snapshot {
+  const base = session();
+  const faded = { ...(base.entities['clip:clp_2'] as ReturnType<typeof clip>), fadeIn: { length: '30000', curve: 'linear' as const }, fadeOut: { length: '40000', curve: 'equal_power' as const } };
+  return { ...base, clips: base.clips.map((c) => (c.id === 'clp_2' ? faded : c)), entities: { ...base.entities, 'clip:clp_2': faded } };
+}
+
+function fadePreview(snapshot: Snapshot, refs: readonly string[]): PlanPreview {
+  const e = (ref: string) => (snapshot.entities[ref] as unknown as Record<string, unknown> | undefined) ?? null;
+  return { revision: 'r7', documentHash: `sha256:${'c'.repeat(64)}`, stale: [], entities: refs.map((ref) => ({ ref, before: e(ref), after: e(ref) })) };
+}
+
+const FADE_STEPS: ReadonlyArray<Record<string, unknown>> = [
+  /* 1 */ { op: 'clip.set_fade', clipId: 'clp_1', fadeIn: { length: '4800', curve: 'equal_power' } },
+  /* 2 */ { op: 'clip.trim', clipId: 'clp_2', sourceStart: '1000', length: '50000' },
+  /* 3 */ { op: 'clip.set_fade', clipId: 'clp_2', fadeOut: { length: '0', curve: 'equal_power' } },
+  /* 4 */ { op: 'clip.place', clipId: 'clp_new', trackId: A, mediaId: 'med_1', position: audio('384000'), sourceStart: '0', length: '96000' },
+  /* 5 */ { op: 'clip.set_fade', clipId: 'clp_new', fadeIn: { length: '960', curve: 'linear' }, fadeOut: { length: '1920', curve: 'equal_power' } },
+  /* 6 */ { op: 'clip.move', clipId: 'clp_1', position: audio('192000') },
+  /* 7 */ { op: 'clip.set_fade', clipId: 'clp_1', fadeOut: { length: '2400', curve: 'linear' } },
+  /* 8 */ { op: 'clip.set_fade', clipId: 'clp_unknown', fadeIn: { length: '10', curve: 'linear' } },
+];
+
+const fades = (ticked: ReadonlySet<number> | null = null) => {
+  const s = fadedSession();
+  return ofKind(ghostsOf(FADE_STEPS, fadePreview(s, ['clip:clp_1', 'clip:clp_2']), s, ticked), 'fade');
+};
+const unticked = (...steps: number[]) => new Set(FADE_STEPS.map((_, i) => i).filter((i) => !steps.includes(i + 1)));
+
+test('clip.set_fade: a fade ghost on the clip, its before and after per side; an omitted side is unchanged', () => {
+  assert.deepEqual(fades()[0], {
+    kind: 'fade',
+    step: 1,
+    clipId: 'clp_1',
+    trackId: A,
+    position: '0',
+    length: '96000',
+    before: { fadeIn: null, fadeOut: null },
+    after: { fadeIn: { length: '4800', curve: 'equal_power' }, fadeOut: null },
+  });
+});
+
+test('after a ticked clip.trim the old fades are shortened by the engine\'s rule; a side set to 0 is removed', () => {
+  // clp_2 trimmed to 50000: the fade in keeps 30000, the fade out takes the 20000 left.
+  assert.deepEqual(fades()[1], {
+    kind: 'fade',
+    step: 3,
+    clipId: 'clp_2',
+    trackId: B,
+    position: '96000',
+    length: '50000',
+    before: { fadeIn: { length: '30000', curve: 'linear' }, fadeOut: { length: '20000', curve: 'equal_power' } },
+    after: { fadeIn: { length: '30000', curve: 'linear' }, fadeOut: null },
+  });
+  // The trim unticked: the clip's own length and fades.
+  const own = fades(unticked(2)).find((g) => g.step === 3)!;
+  assert.equal(own.length, '96000');
+  assert.deepEqual(own.before, { fadeIn: { length: '30000', curve: 'linear' }, fadeOut: { length: '40000', curve: 'equal_power' } });
+});
+
+test('on a ticked clip.place\'s clip, and on a moved clip at its new place', () => {
+  const placed = fades().find((g) => g.step === 5)!;
+  assert.deepEqual(placed, {
+    kind: 'fade',
+    step: 5,
+    clipId: 'clp_new',
+    trackId: A,
+    position: '384000',
+    length: '96000',
+    before: { fadeIn: null, fadeOut: null },
+    after: { fadeIn: { length: '960', curve: 'linear' }, fadeOut: { length: '1920', curve: 'equal_power' } },
+  });
+  // clp_1 moved by step 6: step 7's ghost is at 192000, with step 1's fade in as its old one.
+  const moved = fades().find((g) => g.step === 7)!;
+  assert.equal(moved.position, '192000');
+  assert.deepEqual(moved.before, { fadeIn: { length: '4800', curve: 'equal_power' }, fadeOut: null });
+  assert.deepEqual(moved.after, { fadeIn: { length: '4800', curve: 'equal_power' }, fadeOut: { length: '2400', curve: 'linear' } });
+  // Step 1 unticked: no old fade in; step 6 unticked: the clip where it is.
+  assert.deepEqual(fades(unticked(1)).find((g) => g.step === 7)!.before, { fadeIn: null, fadeOut: null });
+  assert.equal(fades(unticked(6)).find((g) => g.step === 7)!.position, '0');
+});
+
+test('an unticked fade step gives none; a clip neither the snapshot nor a ticked clip.place holds gives none', () => {
+  assert.deepEqual(fades().map((g) => g.step), [1, 3, 5, 7]);
+  assert.deepEqual(fades(unticked(1, 3)).map((g) => g.step), [5, 7]);
+  // The placement unticked: its clip does not exist, so its fade has no ghost.
+  assert.deepEqual(fades(unticked(4)).map((g) => g.step), [1, 3, 7]);
+  // A fade ghost sits on the clip, not on a strip.
+  assert.equal(hasStripGhost(ghostsOf(FADE_STEPS, fadePreview(fadedSession(), []), fadedSession(), null), 1), false);
+});

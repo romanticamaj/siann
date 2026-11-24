@@ -17,6 +17,7 @@ import { formatMilliDb, formatPan, formatSeconds } from '../format';
 import { translator, type T } from '../i18n/t';
 import type { TempoPoint } from '../model/document';
 import type { Snapshot } from '../model/read-model';
+import { formatMs } from '../timeline/fades';
 import { formatPosition, type TimeFormat } from '../timeline/transport-time';
 import { isolateName } from './isolate';
 
@@ -209,6 +210,14 @@ export function describeRef(ref: string, t: T = english, names: StepNames = NO_N
   return t('step.anEntity');
 }
 
+// One side of a clip.set_fade step: its length in frames, undefined when the
+// step omits the side, null when the side is malformed.
+function fadeSide(value: unknown): bigint | undefined | null {
+  if (value === undefined) return undefined;
+  const length = (value as { length?: unknown } | null)?.length;
+  return typeof length === 'string' && /^\d+$/.test(length) ? BigInt(length) : null;
+}
+
 function bpm(milliBpm: unknown): string {
   return typeof milliBpm === 'number' ? String(Number((milliBpm / 1000).toFixed(3))) : '?';
 }
@@ -287,6 +296,22 @@ export function describeStep(
         return t('step.setClipGain', { clip: clipOf(step.clipId, names, t, false), gain: formatMilliDb(step.gainMilliDb) });
       }
       break;
+    case 'clip.set_fade': {
+      // m5b-ui-fades (10.11, 23): named by its clip, the lengths in ms, a side at 0 removed.
+      const fadeIn = fadeSide(step.fadeIn);
+      const fadeOut = fadeSide(step.fadeOut);
+      if (fadeIn === null || fadeOut === null || (fadeIn === undefined && fadeOut === undefined)) break;
+      const clip = clipOf(step.clipId, names, t, false);
+      const ms = (frames: bigint) => (names.sampleRate ? formatMs(frames, names.sampleRate) : t('step.newLength'));
+      if (fadeIn !== undefined && fadeOut !== undefined) {
+        if (fadeIn === 0n && fadeOut === 0n) return t('step.removeFades', { clip });
+        if (fadeOut === 0n) return t('step.setFadeInRemoveOut', { clip, length: ms(fadeIn) });
+        if (fadeIn === 0n) return t('step.removeFadeInSetOut', { clip, length: ms(fadeOut) });
+        return t('step.setFades', { clip, fadeIn: ms(fadeIn), fadeOut: ms(fadeOut) });
+      }
+      if (fadeIn !== undefined) return fadeIn === 0n ? t('step.removeFadeIn', { clip }) : t('step.setFadeIn', { clip, length: ms(fadeIn) });
+      return fadeOut === 0n ? t('step.removeFadeOut', { clip }) : t('step.setFadeOut', { clip, length: ms(fadeOut!) });
+    }
     case 'media.add':
       return t('step.addMedia');
     case 'media.remove':

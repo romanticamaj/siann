@@ -64,6 +64,15 @@ const STEPS = {
   clipRemove: { op: 'clip.remove', clipId: 'clp_1' },
   clipRemoveUnknown: { op: 'clip.remove', clipId: 'clp_9' },
   clipGain: { op: 'clip.set_gain', clipId: 'clp_1', gainMilliDb: -3000 },
+  // m5b-ui-fades: lengths in ms at the root's rate (48 kHz: 480 frames are 10 ms).
+  fadeIn: { op: 'clip.set_fade', clipId: 'clp_1', fadeIn: { length: '480', curve: 'linear' } },
+  fadeOut: { op: 'clip.set_fade', clipId: 'clp_1', fadeOut: { length: '8640', curve: 'equal_power' } },
+  fades: { op: 'clip.set_fade', clipId: 'clp_1', fadeIn: { length: '576', curve: 'linear' }, fadeOut: { length: '8640', curve: 'linear' } },
+  fadeInRemove: { op: 'clip.set_fade', clipId: 'clp_1', fadeIn: { length: '0', curve: 'linear' } },
+  fadeOutRemove: { op: 'clip.set_fade', clipId: 'clp_1', fadeOut: { length: '0', curve: 'equal_power' } },
+  fadesRemove: { op: 'clip.set_fade', clipId: 'clp_1', fadeIn: { length: '0', curve: 'linear' }, fadeOut: { length: '0', curve: 'linear' } },
+  fadeInRemoveOut: { op: 'clip.set_fade', clipId: 'clp_1', fadeIn: { length: '480', curve: 'linear' }, fadeOut: { length: '0', curve: 'linear' } },
+  fadeOutRemoveIn: { op: 'clip.set_fade', clipId: 'clp_1', fadeIn: { length: '0', curve: 'linear' }, fadeOut: { length: '960', curve: 'linear' } },
   mediaAdd: { op: 'media.add', mediaId: 'med_2', contentHash: 'sha256:' + 'a'.repeat(64), format: 'wav', channels: 2, sampleRate: 48000, frames: '480000' },
   mediaRemove: { op: 'media.remove', mediaId: 'med_1' },
   mediaRename: { op: 'media.rename', mediaId: 'med_1', name: 'Kick Loop.wav' },
@@ -120,6 +129,14 @@ test('English wording for every op the engine accepts, and a generic line for an
     clipRemove: `Remove a clip on ${n('Keys')} at 1.4.000`,
     clipRemoveUnknown: 'Remove a clip',
     clipGain: `Set the volume of a clip on ${n('Keys')} to ${formatMilliDb(-3000)}`,
+    fadeIn: `Set the fade in of a clip on ${n('Keys')} to 10 ms`,
+    fadeOut: `Set the fade out of a clip on ${n('Keys')} to 180 ms`,
+    fades: `Set the fades of a clip on ${n('Keys')} to 12 ms in and 180 ms out`,
+    fadeInRemove: `Remove the fade in of a clip on ${n('Keys')}`,
+    fadeOutRemove: `Remove the fade out of a clip on ${n('Keys')}`,
+    fadesRemove: `Remove the fades of a clip on ${n('Keys')}`,
+    fadeInRemoveOut: `Set the fade in of a clip on ${n('Keys')} to 10 ms and remove its fade out`,
+    fadeOutRemoveIn: `Remove the fade in of a clip on ${n('Keys')} and set its fade out to 20 ms`,
     mediaAdd: 'Add an audio file to the pool',
     mediaRemove: 'Remove an audio file from the pool',
     mediaRename: `Rename an audio file in the pool to ${n('Kick Loop.wav')}`,
@@ -190,8 +207,8 @@ test('no step description shows an entity id, a raw pan value or a milli-dB inte
 
 test('Chinese step descriptions use the glossary terms', () => {
   const terms: Record<'zh-Hant' | 'zh-Hans', Partial<Record<StepName, string>>> = {
-    'zh-Hant': { add: '音軌', removeUnknown: '音軌', gain: '音量', pan: '聲相', mute: '靜音', unmute: '靜音', solo: '獨奏', unsolo: '獨奏', move: '片段', clipRemove: '片段', insert: '外掛', tempo: '速度', inputMono: '輸入', inputClear: '輸入', monitorOff: '監聽', monitorAuto: '監聽', monitorInput: '監聽', notes: '記事本', notesClear: '記事本' },
-    'zh-Hans': { add: '音轨', removeUnknown: '音轨', gain: '音量', pan: '声像', mute: '静音', unmute: '静音', solo: '独奏', unsolo: '独奏', move: '片段', clipRemove: '片段', insert: '插件', tempo: '速度', inputMono: '输入', inputClear: '输入', monitorOff: '监听', monitorAuto: '监听', monitorInput: '监听', notes: '记事本', notesClear: '记事本' },
+    'zh-Hant': { add: '音軌', removeUnknown: '音軌', gain: '音量', pan: '聲相', mute: '靜音', unmute: '靜音', solo: '獨奏', unsolo: '獨奏', move: '片段', clipRemove: '片段', insert: '外掛', tempo: '速度', inputMono: '輸入', inputClear: '輸入', monitorOff: '監聽', monitorAuto: '監聽', monitorInput: '監聽', notes: '記事本', notesClear: '記事本', fadeIn: '淡入', fadeOut: '淡出', fades: '淡出', fadeInRemove: '淡入', fadesRemove: '淡入', fadeOutRemoveIn: '淡出' },
+    'zh-Hans': { add: '音轨', removeUnknown: '音轨', gain: '音量', pan: '声像', mute: '静音', unmute: '静音', solo: '独奏', unsolo: '独奏', move: '片段', clipRemove: '片段', insert: '插件', tempo: '速度', inputMono: '输入', inputClear: '输入', monitorOff: '监听', monitorAuto: '监听', monitorInput: '监听', notes: '记事本', notesClear: '记事本', fadeIn: '淡入', fadeOut: '淡出', fades: '淡出', fadeInRemove: '淡入', fadesRemove: '淡入', fadeOutRemoveIn: '淡出' },
   };
   for (const [locale, table] of Object.entries(terms) as Array<['zh-Hant' | 'zh-Hans', Record<string, string>]>) {
     for (const [step, term] of Object.entries(table)) {
@@ -218,6 +235,27 @@ test('dB, pan values, positions and agent-written names are byte-identical acros
     assert.ok(describe(locale, 'insert').includes('Fine EQ'), locale);
     assert.ok(describe(locale, 'mediaRename').includes('Kick Loop.wav'), locale);
     assert.ok(describe(locale, 'notes').includes('Vox BG 主唱'), locale);
+    // m5b-ui-fades: the fade lengths read "<n> ms" in every locale.
+    assert.ok(describe(locale, 'fadeIn').includes('10 ms'), locale);
+    assert.ok(describe(locale, 'fades').includes('12 ms') && describe(locale, 'fades').includes('180 ms'), locale);
+  }
+});
+
+// m5b-ui-fades (10.11, 23): a clip.set_fade step names its clip and its
+// lengths; a malformed one (no side, a bad length) is the generic line, and
+// without the root's rate the lengths are not guessed.
+test('a fade step names the clip and its lengths in ms; a malformed one is the generic line', () => {
+  for (const locale of LOCALES) {
+    const t = translator(locale);
+    const generic = describe(locale, 'unknown');
+    assert.equal(describeStep({ op: 'clip.set_fade', clipId: 'clp_1' }, t, NAMES), generic, `${locale}: no side`);
+    assert.equal(describeStep({ op: 'clip.set_fade', clipId: 'clp_1', fadeIn: { length: '-1', curve: 'linear' } }, t, NAMES), generic, `${locale}: a bad length`);
+    const fadeIn = describe(locale, 'fadeIn');
+    assert.ok(fadeIn.includes(n('Keys')), `${locale}: ${fadeIn}`);
+    assert.ok(!fadeIn.includes('clp_1') && !fadeIn.includes('480'), `${locale}: ${fadeIn}`);
+    const noRate = describeStep(STEPS.fadeIn, t, { ...NAMES, sampleRate: undefined });
+    assert.ok(!noRate.includes(' ms'), `${locale}: ${noRate}`);
+    assert.notEqual(noRate, generic, locale);
   }
 });
 

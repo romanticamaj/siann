@@ -25,8 +25,14 @@
 //   its track in the session: an insert on a proposed track gives none (the
 //   ghost strip's rack stays empty); an insert's index clamps to the end of
 //   the chain as the engine's does, after the ticked steps before it.
+// - a fade ghost (m5b-ui-fades; 10.11, 23) is on the clip as the ticked steps
+//   before it leave it (placed, moved or trimmed), its old fades the state
+//   walk's, a ticked clip.trim shortening them by the engine's rule (the fade
+//   in keeps its length first); a clip neither the snapshot nor a ticked
+//   clip.place holds gives none.
 // One descriptor per (step, kind, target): two steps on one field give two.
 
+import type { ClipFade } from '../model/document';
 import type { Snapshot } from '../model/read-model';
 import { diffRows, type PlanPreview } from './diff';
 import { entityHomes } from './entity-homes';
@@ -84,8 +90,25 @@ export type Ghost = (
   | { readonly kind: 'insert-add'; readonly step: number; readonly trackId: string; readonly slotId: string | null; readonly name: string; readonly index: number }
   | { readonly kind: 'insert-remove'; readonly step: number; readonly trackId: string; readonly slotId: string }
   | { readonly kind: 'insert-bypass'; readonly step: number; readonly trackId: string; readonly slotId: string; readonly before: boolean | null; readonly after: boolean }
+  // m5b-ui-fades: a clip's fades, on the clip's box as the ticked steps before it leave it.
+  | {
+      readonly kind: 'fade';
+      readonly step: number;
+      readonly clipId: string;
+      readonly trackId: string;
+      readonly position: string;
+      readonly length: string;
+      readonly before: FadePair;
+      readonly after: FadePair;
+    }
 ) &
   GhostMode;
+
+// A clip's two fades; null for a side without one.
+export interface FadePair {
+  readonly fadeIn: ClipFade | null;
+  readonly fadeOut: ClipFade | null;
+}
 
 // While the proposal is heard (m5b-ui-audition; plans/heard-ghosts.ts): mode
 // 'solid' (what is playing; absent for the dashed ghosts of plan.preview) and
@@ -277,7 +300,27 @@ export function ghostsOf(
           from: { sourceStart: str(clip.sourceStart) ?? '0', length: str(clip.length) ?? '0' },
           to: { sourceStart, length },
         });
-        state.set(ref, { ...clip, sourceStart, length });
+        state.set(ref, trimmedFades({ ...clip, sourceStart, length }, length));
+        return;
+      }
+      case 'clip.set_fade': {
+        // m5b-ui-fades (4.2; 10.11, 23): on the clip as the steps before leave it.
+        const ref = `clip:${clipId}`;
+        const clip = clipId !== undefined ? read(ref) : null;
+        const position = frames(clip?.position);
+        const length = str(clip?.length);
+        const owner = str(clip?.trackId);
+        if (!clip || clipId === undefined || position === undefined || length === undefined || !trackKnown(owner)) return;
+        const before = fadesOf(clip);
+        const next = (side: 'fadeIn' | 'fadeOut'): ClipFade | null => {
+          const given = fadeOf(step[side]);
+          if (given === undefined) return before[side];
+          return given;
+        };
+        const after: FadePair = { fadeIn: next('fadeIn'), fadeOut: next('fadeOut') };
+        out.push({ kind: 'fade', step: n, clipId, trackId: owner, position, length, before, after });
+        const { fadeIn: _in, fadeOut: _out, ...rest } = clip;
+        state.set(ref, { ...rest, ...(after.fadeIn ? { fadeIn: after.fadeIn } : {}), ...(after.fadeOut ? { fadeOut: after.fadeOut } : {}) });
         return;
       }
       case 'clip.remove': {
@@ -347,6 +390,39 @@ export function ghostsOf(
     }
   });
   return out;
+}
+
+// A side of a clip or of a clip.set_fade step: the fade, null for none (a
+// length of "0"), undefined when absent or malformed.
+function fadeOf(value: unknown): ClipFade | null | undefined {
+  const fade = value as { length?: unknown; curve?: unknown } | null | undefined;
+  if (!fade || typeof fade.length !== 'string' || !/^\d+$/.test(fade.length)) return undefined;
+  if (fade.curve !== 'linear' && fade.curve !== 'equal_power') return undefined;
+  return BigInt(fade.length) === 0n ? null : { length: fade.length, curve: fade.curve };
+}
+
+function fadesOf(clip: Entity): FadePair {
+  return { fadeIn: fadeOf(clip.fadeIn) ?? null, fadeOut: fadeOf(clip.fadeOut) ?? null };
+}
+
+// The engine's rule for clip.trim (protocol-engine v0, "Clip fades"): the
+// fades are kept while they fit the new length L; else the fade in becomes
+// min(fadeIn, L) and the fade out min(fadeOut, L - fadeIn'), a side at 0 removed.
+function trimmedFades(clip: Entity, length: string): Entity {
+  const { fadeIn, fadeOut } = fadesOf(clip);
+  const l = BigInt(length);
+  const fin = fadeIn ? BigInt(fadeIn.length) : 0n;
+  const fout = fadeOut ? BigInt(fadeOut.length) : 0n;
+  if (fin + fout <= l) return clip;
+  const nextIn = fin < l ? fin : l;
+  const left = l - nextIn;
+  const nextOut = fout < left ? fout : left;
+  const { fadeIn: _in, fadeOut: _out, ...rest } = clip;
+  return {
+    ...rest,
+    ...(fadeIn && nextIn > 0n ? { fadeIn: { ...fadeIn, length: nextIn.toString() } } : {}),
+    ...(fadeOut && nextOut > 0n ? { fadeOut: { ...fadeOut, length: nextOut.toString() } } : {}),
+  };
 }
 
 function removal(clip: Entity, step: number, clipId: string, cascade: boolean): Extract<Ghost, { kind: 'clip-remove' }> | null {

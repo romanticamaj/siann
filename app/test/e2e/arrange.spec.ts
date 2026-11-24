@@ -1128,10 +1128,11 @@ test("every id of the event display is found, no pending part's id is, and the h
 
 // ---- m5-ui-port-toolbar: the toolbar, the info line and the Pool (UI redesign 10.8, 10.9, 10.10 P1-16)
 
-const TOOLBAR_IDS = ['toolbar', 'tools', 'tool-1', 'tool-3', 'tool-4', 'tool-5', 'snap', 'grid-type', 'auto-scroll', 'info-line', 'info-name', 'info-start', 'info-end', 'info-length', 'info-offset', 'info-volume'];
+// The fade fields landed with m5b-ui-fades (the real engine lists features.clipFades and clip.set_fade).
+const TOOLBAR_IDS = ['toolbar', 'tools', 'tool-1', 'tool-3', 'tool-4', 'tool-5', 'snap', 'grid-type', 'auto-scroll', 'info-line', 'info-name', 'info-start', 'info-end', 'info-length', 'info-offset', 'info-volume', 'info-fade-in', 'info-fade-out'];
 // The proposal pill (m5b-ui-ghosts) is absent too: no plan is under review here.
 // Tools 4 and 5 landed with m5b-ui-edit-more.
-const PENDING_IDS = ['tool-2', 'tool-6', 'tool-7', 'tool-8', 'tool-9', 'proposal-pill', 'info-fade-in', 'info-fade-out'];
+const PENDING_IDS = ['tool-2', 'tool-6', 'tool-7', 'tool-8', 'tool-9', 'proposal-pill'];
 
 test('the toolbar\'s tools, snap, grid type and auto-scroll show and change the timeline\'s state; every id is found and no pending one', async () => {
   prepare([{ id: 'trk_a', name: 'Alpha' }], [{ clipId: 'clp_sq', trackId: 'trk_a', position: 0 }]);

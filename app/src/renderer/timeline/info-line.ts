@@ -5,7 +5,8 @@
 // positions through root.tempo, its length and its offset into the media
 // (sourceStart) as bars.beats.sixteenths.ticks lengths measured from the
 // clip's start, and its volume in dB with two decimals, as the mockup's row
-// reads them (9.1.1.0, 12.4.1.0, 3.3.0.0, 1.0.2.0, 0.00 dB). The same text in
+// reads them (9.1.1.0, 12.4.1.0, 3.3.0.0, 1.0.2.0, 0.00 dB), and its fade in
+// and fade out in whole milliseconds (m5b-ui-fades: 12 ms, 180 ms). The same text in
 // every locale; the labels around it come from the catalogs. Null when
 // nothing (or nothing the snapshot holds) is selected, or for a music-domain
 // clip. Framework-free.
@@ -16,6 +17,7 @@ import type { Snapshot } from '../model/read-model';
 import { clipTitle } from './clip-title';
 import type { TimelineCommand } from './commands';
 import { GAIN_MAX_MILLI_DB, GAIN_MIN_MILLI_DB, moveSelectionCommand } from './edit-commands';
+import { fadeSetCommand, formatMs, msToFrames } from './fades';
 import { TICKS_PER_BAR, TICKS_PER_QUARTER, TICKS_PER_SIXTEENTH, formatLength, formatPosition, framesToTicks, ticksToFrames } from './musical-time';
 import { trackColourVar } from './track-colour';
 
@@ -28,6 +30,9 @@ export interface InfoLineValues {
   readonly length: string;
   readonly offset: string;
   readonly volume: string;
+  // m5b-ui-fades: the fade lengths in whole milliseconds, "<n> ms" ("0 ms" without a fade).
+  readonly fadeIn: string;
+  readonly fadeOut: string;
 }
 
 export function infoLine(snapshot: Snapshot | null, clipId: string | null): InfoLineValues | null {
@@ -49,6 +54,8 @@ export function infoLine(snapshot: Snapshot | null, clipId: string | null): Info
     length: formatLength(end - start),
     offset: formatLength(offset),
     volume: formatDb2(clip.gainMilliDb),
+    fadeIn: formatMs(clip.fadeIn?.length ?? '0', rate),
+    fadeOut: formatMs(clip.fadeOut?.length ?? '0', rate),
   };
 }
 
@@ -91,8 +98,17 @@ export function parseDb(text: string): number | null {
   return Math.round(Number(match[1]) * 1000);
 }
 
-export type InfoField = 'start' | 'length' | 'offset' | 'volume';
+// Whole milliseconds, the unit optional (12, 12 ms). A number, or null.
+export function parseMs(text: string): number | null {
+  const match = /^\s*(\d+)\s*(?:ms)?\s*$/i.exec(text);
+  return match ? Number(match[1]) : null;
+}
+
+export type FadeField = 'fadeIn' | 'fadeOut';
+export type InfoField = 'start' | 'length' | 'offset' | 'volume' | FadeField;
 export const INFO_EDIT_FIELDS: readonly InfoField[] = ['start', 'length', 'offset', 'volume'];
+// m5b-ui-fades: editable when the engine lists features.clipFades and clip.set_fade.
+export const INFO_FADE_FIELDS: readonly FadeField[] = ['fadeIn', 'fadeOut'];
 
 // The command a typed value ends in over the selection (`ids`, the primary
 // among them): relative (absolute false), the primary's change applied to
@@ -119,6 +135,7 @@ export function infoLineEditCommand(
   };
   const primary = clip(primaryId);
   if (!primary) return null;
+  if (field === 'fadeIn' || field === 'fadeOut') return fadeEditCommand(snapshot, ids.map(clip).filter((c): c is ClipEntity => c !== null), primary, field, typed, absolute);
   const parse = field === 'volume' ? parseDb : field === 'start' ? parsePosition : parseLength;
   const typedValue = parse(typed);
   if (typedValue === null) return null;
@@ -206,4 +223,35 @@ export function infoLineEditCommand(
     commands.push({ op: 'clip.trim', clipId: c.id, sourceStart: sourceStart.toString(), length: c.length });
   }
   return issue(commands);
+}
+
+// A typed fade length (m5b-ui-fades; UI redesign 3.2, "Info line"; 10.11,
+// 23): milliseconds to frames as round(ms * sampleRate / 1000); relative, the
+// primary's change added to the same side of every clip; absolute, each set
+// to it; each clamped to 0 up to its length less its other fade; one
+// clip.set_fade per clip that changes (fades.ts fadeSetCommand: a new side is
+// linear). A value equal to the one shown is no change to the primary.
+function fadeEditCommand(snapshot: Snapshot, clips: readonly ClipEntity[], primary: ClipEntity, side: 'fadeIn' | 'fadeOut', typed: string, absolute: boolean): TimelineCommand | null {
+  const ms = parseMs(typed);
+  if (ms === null) return null;
+  const rate = snapshot.root?.sampleRate ?? 48000;
+  const shown = parseMs(formatMs(primary[side]?.length ?? '0', rate));
+  const unchanged = shown === ms;
+  if (unchanged && !absolute) return null;
+  const target = msToFrames(ms, rate);
+  const current = (c: ClipEntity) => BigInt(c[side]?.length ?? '0');
+  const delta = target - current(primary);
+  const commands: Array<Record<string, unknown>> = [];
+  const seen = new Set<string>();
+  for (const c of clips) {
+    if (seen.has(c.id) || (unchanged && c.id === primary.id)) continue;
+    seen.add(c.id);
+    const other = BigInt((side === 'fadeIn' ? c.fadeOut : c.fadeIn)?.length ?? '0');
+    const most = BigInt(c.length) - other;
+    const wanted = absolute ? target : current(c) + delta;
+    const length = wanted < 0n ? 0n : wanted > most ? (most < 0n ? 0n : most) : wanted;
+    const command = fadeSetCommand(snapshot, c, side, length);
+    if (command) commands.push(...command.commands);
+  }
+  return commands.length === 0 ? null : { expectedRevision: snapshot.revision, commands };
 }
