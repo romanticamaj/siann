@@ -208,7 +208,22 @@ async function oneFadeEdit(name: string, act: () => Promise<void>): Promise<Arra
   expect((await head()).revision, `${name}: one revision`).toBe(next(before.revision));
   const after = await fadeExecutes();
   expect(after.length, `${name}: one clip.set_fade on the wire`).toBe(wired + 1);
-  return after.at(-1)!;
+  const commands = after.at(-1)!;
+  // The revision's text is in the DOM before the content frame that draws the
+  // edit: the next gesture reads the handles once that frame has drawn the
+  // clip as the engine has it (a handle read earlier is the old one).
+  const clipId = commands.find((c) => c.op === 'clip.set_fade')?.clipId as string | undefined;
+  if (clipId) {
+    const stored = await fetchClip(clipId);
+    const want = { length: stored.length, fadeIn: stored.fadeIn ?? null, fadeOut: stored.fadeOut ?? null };
+    await expect
+      .poll(async () => {
+        const drawn = await fades(clipId);
+        return { length: drawn.length, fadeIn: drawn.fadeIn, fadeOut: drawn.fadeOut };
+      }, { message: `${name}: drawn` })
+      .toEqual(want);
+  }
+  return commands;
 }
 
 async function painted(): Promise<void> {
@@ -228,6 +243,16 @@ async function nothingSent(name: string, act: () => Promise<void>): Promise<void
 
 test('hover and selection show both handles; a handle drag is one clip.set_fade on the grid, Ctrl unsnapped, clamped, a click sends nothing', async () => {
   test.setTimeout(120_000);
+  // The window's first layout can still be resizing the event display: the
+  // clip's box is read from a content layer that has stopped redrawing.
+  await expect
+    .poll(async () => {
+      const before = await hook<number>('contentDraws');
+      await painted();
+      await painted();
+      return (await hook<number>('contentDraws')) === before;
+    })
+    .toBe(true);
   const r = await rect('clp_1');
   // Hovered: both handles drawn on the overlay.
   expect((await fades('clp_1')).shown).toBe(false);
