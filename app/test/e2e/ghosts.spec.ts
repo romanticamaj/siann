@@ -407,10 +407,19 @@ test('the pill names the plan and toggles the ghosts, as Ctrl+Alt+G does', async
 test('while playing with ghosts on, only the cursor moves: the content layer is not redrawn', async () => {
   await expect.poll(async () => (await ghosts()).length).toBe(EXPECTED.length);
   await engine.call('transport.locate', { frames: '0' });
+  // Count from a settled content layer: a frame the toggle or the locate
+  // asked for may still be pending (two animation frames without a draw).
+  await expect.poll(async () => {
+    const before = await timeline<number>('contentDraws');
+    await page.evaluate(() => new Promise((done) => requestAnimationFrame(() => requestAnimationFrame(done))));
+    return (await timeline<number>('contentDraws')) === before;
+  }).toBe(true);
   const start = await timeline<number>('contentDraws');
   await engine.call('transport.play');
   await expect.poll(async () => (await timeline<number | null>('cursorX')) ?? 0).toBeGreaterThan(20);
   await engine.call('transport.stop');
+  // At most the one page turn to the cursor at 0 (the view is where the last
+  // test left it); never a second one back (auto-scroll.ts, the lead).
   expect(await timeline<number>('contentDraws')).toBeLessThanOrEqual(start + 1);
 });
 
