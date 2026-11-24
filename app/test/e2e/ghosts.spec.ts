@@ -406,7 +406,12 @@ test('the pill names the plan and toggles the ghosts, as Ctrl+Alt+G does', async
 
 test('while playing with ghosts on, only the cursor moves: the content layer is not redrawn', async () => {
   await expect.poll(async () => (await ghosts()).length).toBe(EXPECTED.length);
-  await engine.call('transport.locate', { frames: '0' });
+  // The cursor starts at the view's left edge, in view. The earlier tests'
+  // reveal() and zoom leave the view scrolled past frame 0, and a cursor out of
+  // view while playing turns the page (auto-scroll), which redraws the content
+  // by design: from frame 0 that redraw came or not with the timing.
+  const left = (await timeline<{ scrollFrames: string }>('view')).scrollFrames;
+  await engine.call('transport.locate', { frames: left });
   // Count from a settled content layer: a frame the toggle or the locate
   // asked for may still be pending (two animation frames without a draw).
   await expect.poll(async () => {
