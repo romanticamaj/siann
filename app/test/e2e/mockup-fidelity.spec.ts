@@ -525,6 +525,46 @@ for (const [locale, setting] of Object.entries(MANIFEST.locales)) {
       await expect(page.getByTestId('info-start-input')).toHaveCount(0);
     }
 
+    // m5b-ui-editor-channel's states the mockup does not draw (it draws the
+    // Editor tab's label and the Channel zone button only), the app's alone,
+    // with the mockup's clip and track still selected and nothing committed:
+    // the Editor tab on that clip (over the lower zone), then on the
+    // MixConsole tab the Channel zone open on the selected track with its e
+    // lit, on the zone's strip, the MixConsole's strip and in the Inspector
+    // (the whole window: the zone moves the columns). The empty Editor tab
+    // follows in the resting state below.
+    const lowerArea = mockupParts.parts.find((part) => part.id === 'lower-zone');
+    const shownClip = await page.getByTestId('info-line').getAttribute('data-clip');
+    if (lowerArea && shownClip) {
+      await page.getByTestId('tab-lower-editor').click();
+      await expect(page.getByTestId('editor')).toHaveAttribute('data-clip', shownClip);
+      await expect.poll(() => page.evaluate(() => (window as unknown as { __siannEditor?: { columns(): number } }).__siannEditor?.columns() ?? 0)).toBeGreaterThan(0);
+      await page.mouse.move(VIEW.width - 2, 1);
+      await painted(page);
+      fs.writeFileSync(path.join(dir, 'lower-zone.editor.app.png'), encodePng(crop(decodePng(await page.screenshot()), lowerArea)));
+      notes.push(`The Editor tab with the selected clip (${shownClip}) is ${locale}/lower-zone.editor.app.png, the app's alone: the mockup draws the tab's label only.`);
+
+      await page.getByTestId('tab-lower-mixconsole').click();
+      await expect(page.getByTestId('tab-lower-mixconsole')).toHaveAttribute('aria-selected', 'true');
+      await page.getByTestId('zone-button-channel').click();
+      const channel = page.getByTestId('zone-channel');
+      await expect(channel).toBeVisible();
+      await expect(channel.locator('.strip')).toHaveCount(1);
+      await expect.poll(async () => Math.round((await channel.boundingBox())?.width ?? 0)).toBe(96);
+      await expect(page.locator('[data-part="inspector-edit"]')).toHaveAttribute('aria-pressed', 'true');
+      await expect(page.locator('[data-testid^="edit-"][aria-pressed="true"]')).toHaveCount(1);
+      await page.mouse.move(VIEW.width - 2, 1);
+      await painted(page);
+      fs.writeFileSync(path.join(dir, 'channel.app.png'), await page.screenshot());
+      notes.push(`The Channel zone open on the selected track, with its e lit on the MixConsole's strip and in the Inspector, is ${locale}/channel.app.png (the whole window), the app's alone: the mockup draws the zone button only.`);
+      await page.getByTestId('zone-button-channel').click();
+      await expect(channel).toBeHidden();
+      // The columns have animated back: the event display is where it was measured.
+      const measured = appParts.parts.find((part) => part.id === 'event-display');
+      if (measured) await expect.poll(async () => Math.round((await page.locator('[data-part="event-display"]').boundingBox())?.x ?? -1)).toBe(Math.round(measured.x));
+      await painted(page);
+    }
+
     // The resting state (m5-ui-port-arrange-canvas): no clip selected. The
     // mockup draws its clip selected, so this is the app's project zone alone,
     // beside the selected-clip pair above. An empty spot of lane 3 (Bass,
@@ -538,6 +578,17 @@ for (const [locale, setting] of Object.entries(MANIFEST.locales)) {
       await painted(page);
       fs.writeFileSync(path.join(dir, 'project-zone.resting.app.png'), encodePng(crop(decodePng(await page.screenshot()), zone)));
       notes.push(`The resting state (no clip selected) is ${locale}/project-zone.resting.app.png, the app's alone: the mockup shows a selected clip.`);
+      // The Editor tab with no clip selected (m5b-ui-editor-channel): the
+      // catalog's line and nothing else. The mockup draws the tab's label only.
+      const lowerEmpty = mockupParts.parts.find((part) => part.id === 'lower-zone');
+      await page.getByTestId('tab-lower-editor').click();
+      await expect(page.getByTestId('editor-empty')).toBeVisible();
+      await page.mouse.move(VIEW.width - 2, 1);
+      await painted(page);
+      if (lowerEmpty) fs.writeFileSync(path.join(dir, 'lower-zone.editor-empty.app.png'), encodePng(crop(decodePng(await page.screenshot()), lowerEmpty)));
+      notes.push(`The Editor tab with no clip selected is ${locale}/lower-zone.editor-empty.app.png, the app's alone: the mockup draws the tab's label only.`);
+      await page.getByTestId('tab-lower-mixconsole').click();
+      await expect(page.getByTestId('tab-lower-mixconsole')).toHaveAttribute('aria-selected', 'true');
       // The Media tab open (m5b-ui-media): Ctrl+P on the right zone. The
       // mockup draws the tab but not its content: the app's alone.
       const right = mockupParts.parts.find((part) => part.id === 'right-zone');
