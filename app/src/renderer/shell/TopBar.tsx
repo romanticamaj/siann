@@ -193,7 +193,15 @@ export function TopBar({
             </button>
           ))}
         </span>
-        <button type="button" className="aibtn" data-testid="plans-button" data-part="plans-button" aria-pressed={zones.right.visible} onClick={onPlans}>
+        <button
+          type="button"
+          className="aibtn"
+          data-testid="plans-button"
+          data-part="plans-button"
+          aria-pressed={zones.right.visible}
+          title={tipWithKey(t, t('topbar.plans'), 'zone.right.plans')}
+          onClick={onPlans}
+        >
           <Icon name="spark" />
           {t('topbar.plans')}
           {pending > 0 ? (

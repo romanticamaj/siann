@@ -37,6 +37,7 @@ import { useEffect, useRef, useState, useSyncExternalStore, type KeyboardEvent, 
 
 import type { MessageKey } from '../i18n/en';
 import { useT, type T } from '../i18n/t';
+import { tipWithKey } from '../keys/chord-label';
 import type { TrackEntity } from '../model/document';
 import { GUARD_REASON } from '../model/edit-guard';
 import { inputLabel, inputPorts, portKey, portOfKey } from '../model/input-ports';
@@ -197,7 +198,9 @@ export function RecordButton({ host, loopClick, onStudioSetup }: RecordButtonPro
   const label = t('transport.record');
   const gates = loopClick.recordOptionGates();
   const hasOptions = gates.punch || gates.preroll || gates.countIn;
-  let title = options ? `${label}\n${t('record.optionsOn', { options })}` : label;
+  // Its key from the preset (m5b-ui-keymap: tipWithKey), then the options that are on.
+  const tip = tipWithKey(t, label, 'transport.record');
+  let title = options ? `${tip}\n${t('record.optionsOn', { options })}` : tip;
   let onClick: () => void = () => void host.controller.toggleRecord();
   let disabled: Record<string, unknown> = {};
   if (block === 'disconnected') {
