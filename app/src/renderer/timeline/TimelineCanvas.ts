@@ -138,7 +138,8 @@ import { formatDb } from '../format';
 import type { Ghost } from '../plans/ghosts';
 import { TOKENS } from '../tokens';
 import { translator, type T } from '../i18n/t';
-import { toolModifiers, type ModifierFlags } from '../keys/tool-modifiers';
+import { formatModifier } from '../keys/chord-label';
+import { TOOL_MODIFIERS, toolModifiers, type ModifierFlags } from '../keys/tool-modifiers';
 import type { ClipEntity, ClipFade, MediaEntity } from '../model/document';
 import type { MeterFrame } from '../model/meter-frames';
 import type { PeaksCache } from '../model/peaks-cache';
@@ -1810,7 +1811,7 @@ export class TimelineCanvas {
       this.#invalidateOverlay();
     }
     const gain = hit?.part === 'gain';
-    const title = gain ? (this.#options.locale?.t() ?? translator('en'))('clip.gainControl') : '';
+    const title = gain ? (this.#options.locale?.t() ?? translator('en'))('clip.gainControl', { key: formatModifier(TOOL_MODIFIERS.fine, this.#platform()) }) : '';
     if (this.#overlay.title !== title) this.#overlay.title = title;
     this.#overlay.style.cursor = this.#cursorFor(hit?.part ?? null, y, e.altKey === true, x);
   }

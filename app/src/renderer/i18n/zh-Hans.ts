@@ -98,7 +98,7 @@ export const zhHans: Catalog = {
   'repeat.title': '重复',
   'repeat.count': '副本数量',
   'repeat.confirm': '重复',
-  'clip.gainControl': '片段音量：上下拖动，按住 Shift 微调',
+  'clip.gainControl': '片段音量：上下拖动，按住 {key} 微调',
   'confirm.removeTracks': ({ count }) => (count === 1 ? '移除选中的音轨及其片段？' : `移除选中的 ${count} 个音轨及其片段？`),
   'confirm.remove': '移除',
   'confirm.cancel': '取消',
@@ -111,7 +111,7 @@ export const zhHans: Catalog = {
   'info.volume': '音量',
   'info.fadeIn': '淡入',
   'info.fadeOut': '淡出',
-  'info.editHint': '单击输入数值：Enter 按差值更改每个所选片段，{key} 将每个片段设为该值，Esc 取消',
+  'info.editHint': '单击输入数值：{commit} 按差值更改每个所选片段，{key} 将每个片段设为该值，{cancel} 取消',
 
   'media.tab': '媒体',
   'media.label': '媒体',
@@ -566,7 +566,7 @@ export const zhHans: Catalog = {
   'agentChanges.none': '这条音轨没有待审核的变更。',
   'inspector.notepad': '记事本',
   'notepad.label': '{track} 记事',
-  'notepad.changedElsewhere': '记事已在别处更改。离开会保留这段文字；按 Esc 显示新的内容。',
+  'notepad.changedElsewhere': '记事已在别处更改。离开会保留这段文字；按 {key} 显示新的内容。',
   // The insert racks, the rack switch and the plugin picker (m5b-ui-inserts-master).
   'inspector.inserts': '插入效果',
   'inserts.add': '新增插入效果',

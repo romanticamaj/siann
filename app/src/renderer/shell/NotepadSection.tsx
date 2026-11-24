@@ -21,6 +21,7 @@
 import { useEffect, useRef, useSyncExternalStore, type KeyboardEvent } from 'react';
 
 import { useLocale, useT } from '../i18n/t';
+import { CANCEL_CHORD, currentPlatform, formatChord } from '../keys/chord-label';
 import { composingKey, platformOf } from '../keys/dispatcher';
 import { escapedFrom } from '../keys/escape-intent';
 import type { TrackEntity } from '../model/document';
@@ -135,7 +136,7 @@ export function Notepad({ track, store, open, onToggle }: NotepadProps) {
         {entry?.refusal ? <RefusalLine refusal={entry.refusal} locale={locale} names={NO_NAMES} testId="notepad-refusal" className="notepad-refusal" role="status" /> : null}
         {entry?.changedElsewhere ? (
           <div className="notepad-changed" data-testid="notepad-changed" role="status">
-            {t('notepad.changedElsewhere')}
+            {t('notepad.changedElsewhere', { key: formatChord(CANCEL_CHORD, currentPlatform()) })}
           </div>
         ) : null}
       </div>

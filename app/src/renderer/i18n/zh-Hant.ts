@@ -98,7 +98,7 @@ export const zhHant: Catalog = {
   'repeat.title': '重複',
   'repeat.count': '複本數量',
   'repeat.confirm': '重複',
-  'clip.gainControl': '片段音量：上下拖曳，按住 Shift 微調',
+  'clip.gainControl': '片段音量：上下拖曳，按住 {key} 微調',
   'confirm.removeTracks': ({ count }) => (count === 1 ? '移除選取的音軌及其片段？' : `移除選取的 ${count} 個音軌及其片段？`),
   'confirm.remove': '移除',
   'confirm.cancel': '取消',
@@ -111,7 +111,7 @@ export const zhHant: Catalog = {
   'info.volume': '音量',
   'info.fadeIn': '淡入',
   'info.fadeOut': '淡出',
-  'info.editHint': '按一下輸入數值：Enter 依差值變更每個選取的片段，{key} 將每個片段設為該值，Esc 取消',
+  'info.editHint': '按一下輸入數值：{commit} 依差值變更每個選取的片段，{key} 將每個片段設為該值，{cancel} 取消',
 
   'media.tab': '媒體',
   'media.label': '媒體',
@@ -566,7 +566,7 @@ export const zhHant: Catalog = {
   'agentChanges.none': '這條音軌沒有待審核的變更。',
   'inspector.notepad': '記事本',
   'notepad.label': '{track} 記事',
-  'notepad.changedElsewhere': '記事已在別處變更。離開會保留這段文字；按 Esc 顯示新的內容。',
+  'notepad.changedElsewhere': '記事已在別處變更。離開會保留這段文字；按 {key} 顯示新的內容。',
   // The insert racks, the rack switch and the plugin picker (m5b-ui-inserts-master).
   'inspector.inserts': '插入效果',
   'inserts.add': '新增插入效果',

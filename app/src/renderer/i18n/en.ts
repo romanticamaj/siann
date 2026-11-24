@@ -116,7 +116,7 @@ export const en = {
   'repeat.title': 'Repeat',
   'repeat.count': 'Number of copies',
   'repeat.confirm': 'Repeat',
-  'clip.gainControl': 'Clip volume: drag up or down, Shift for fine steps',
+  'clip.gainControl': 'Clip volume: drag up or down, {key} for fine steps',
   'confirm.removeTracks': ({ count }: { count: number }): string =>
     plural('en', count, { one: 'Remove the selected track and its clips?', other: `Remove the ${count} selected tracks and their clips?` }),
   'confirm.remove': 'Remove',
@@ -132,7 +132,7 @@ export const en = {
   'info.volume': 'Volume',
   'info.fadeIn': 'Fade In',
   'info.fadeOut': 'Fade Out',
-  'info.editHint': 'Click to type a value: Enter changes every selected clip by the difference, {key} sets each to it, Escape cancels',
+  'info.editHint': 'Click to type a value: {commit} changes every selected clip by the difference, {key} sets each to it, {cancel} cancels',
 
   // The Media tab (m5b-ui-media; UR-5), which replaced the Pool.
   'media.tab': 'Media',
@@ -622,7 +622,7 @@ export const en = {
   // The Notepad section (m5b-ui-notepad; UI redesign 3.4).
   'inspector.notepad': 'Notepad',
   'notepad.label': '{track} notes',
-  'notepad.changedElsewhere': 'The notes changed elsewhere. Leaving keeps this text; Esc shows theirs.',
+  'notepad.changedElsewhere': 'The notes changed elsewhere. Leaving keeps this text; {key} shows theirs.',
   // The insert racks, the rack switch and the plugin picker (m5b-ui-inserts-master).
   'inspector.inserts': 'Inserts',
   'inserts.add': 'Add insert',

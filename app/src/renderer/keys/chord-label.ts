@@ -18,6 +18,7 @@ import type { T } from '../i18n/t';
 import type { Binding, CommandId } from './commands';
 import { platformOf } from './dispatcher';
 import { CUBASE_PRESET } from './preset-cubase';
+import type { ModifierKey } from './tool-modifiers';
 
 export type Platform = 'mac' | 'other';
 
@@ -105,6 +106,17 @@ export function tipWithKey(t: T, label: string, commandId: CommandId, platform: 
 // (Cmd+Return on macOS), which sets each selected clip to the typed value
 // (timeline/InfoLine.tsx reads it from the event's modifiers; m5b-ui-edit-more).
 export const SET_EACH_CHORD = 'Mod+Enter';
+// The keys a field's sentence names: Enter commits it, Escape cancels it
+// (the info line's tooltip; the Notepad's changed-elsewhere line).
+export const COMMIT_CHORD = 'Enter';
+export const CANCEL_CHORD = 'Escape';
+
+// A tool modifier held during a gesture (keys/tool-modifiers.ts), written
+// alone for the platform: Shift, Ctrl, Alt; ⇧, ⌘, ⌥ on macOS.
+export function formatModifier(modifier: ModifierKey, platform: Platform): string {
+  if (platform === 'mac') return MAC_MODIFIERS.find(([name]) => name === modifier)?.[1] ?? modifier;
+  return modifier === 'Mod' ? 'Ctrl' : modifier;
+}
 
 // The first key of a command, written for the platform, or '' without one.
 export function keyOf(commandId: CommandId, platform: Platform = currentPlatform()): string {

@@ -20,7 +20,7 @@
 import { useEffect, useRef, useState, useSyncExternalStore, type KeyboardEvent } from 'react';
 
 import { useT, type MessageKey } from '../i18n/t';
-import { SET_EACH_CHORD, currentPlatform, formatChord } from '../keys/chord-label';
+import { CANCEL_CHORD, COMMIT_CHORD, SET_EACH_CHORD, currentPlatform, formatChord } from '../keys/chord-label';
 import type { SessionClient } from '../model/session-client';
 import { useCapabilities } from '../shell/Capable';
 import { infoLine, type InfoField, type InfoLineValues } from './info-line';
@@ -133,12 +133,13 @@ export function InfoValueField({ part, label, value, editable, editing, onBegin,
       onCancel();
     }
   };
+  const platform = currentPlatform();
   const editableProps = editable
     ? {
         tabIndex: 0,
         'data-editable': 'true',
         'aria-label': label,
-        title: t('info.editHint', { key: formatChord(SET_EACH_CHORD, currentPlatform()) }),
+        title: t('info.editHint', { commit: formatChord(COMMIT_CHORD, platform), key: formatChord(SET_EACH_CHORD, platform), cancel: formatChord(CANCEL_CHORD, platform) }),
         onClick: () => {
           if (!editing) onBegin();
         },

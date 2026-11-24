@@ -22,6 +22,7 @@ import * as path from 'node:path';
 
 import { en } from '../../src/renderer/i18n/en';
 import { translator } from '../../src/renderer/i18n/t';
+import { CANCEL_CHORD, formatChord } from '../../src/renderer/keys/chord-label';
 import { engineClient, type EngineClient } from './support/engine-client';
 import { agentFor, launchApp, seedBundle, selectPlan } from './support/seed';
 
@@ -215,7 +216,7 @@ test('another connection\'s change: followed while clean; while dirty the draft 
   await expect(area()).toHaveValue('From the other window\nline two');
   await typeIn(' (mine)');
   await engine!.call('command.execute', { commands: [{ op: 'track.set_notes', trackId: 'trk_a', notes: 'Changed again' }] });
-  await expect(page.getByTestId('notepad-changed')).toHaveText(en['notepad.changedElsewhere']);
+  await expect(page.getByTestId('notepad-changed')).toHaveText(translator('en')('notepad.changedElsewhere', { key: formatChord(CANCEL_CHORD, process.platform === 'darwin' ? 'mac' : 'other') }));
   await expect(page.getByTestId('notepad-changed')).toHaveAttribute('role', 'status');
   await expect(area()).toHaveValue('From the other window\nline two (mine)');
   await page.keyboard.press('Escape');
