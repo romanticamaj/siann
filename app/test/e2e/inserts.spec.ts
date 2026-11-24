@@ -265,7 +265,9 @@ test.describe('block C: reduced capabilities', () => {
     await launch({ plugin: false, env: { SIANN_TEST_CAPABILITIES: path.join(FIXTURES, 'capabilities-no-plugins.json') } });
     await expect(page.locator('.slot')).toHaveCount(0);
     await expect(page.locator('.islot')).toHaveCount(0);
-    await expect(page.locator('[data-part="mixer-racks"]')).toHaveCount(0);
+    // No Inserts switch; Routing and Sends stay (m5b-ui-sends-buses: the fixture lists buses and sends).
+    await expect(page.getByTestId('rack-inserts')).toHaveCount(0);
+    await expect(page.locator('[data-part="mixer-racks"] button')).toHaveCount(2);
     await expect(page.getByTestId('plugin-picker')).toHaveCount(0);
     for (const id of [TRACK, 'trk_two']) {
       const ins = rack(id);
@@ -273,7 +275,7 @@ test.describe('block C: reduced capabilities', () => {
       expect(await ins.evaluate((el) => [el.children.length, el.getAttribute('data-part-of'), el.getBoundingClientRect().height])).toEqual([0, null, 34]);
     }
     const last = await page.locator('[data-part="lower-tabs"]').evaluate((el) => el.lastElementChild?.className);
-    expect(last).toBe('spacer');
+    expect(last).toBe('mixer-racks');
     await page.getByTestId(`track-header-${TRACK}`).click();
     await expect(page.locator('[data-part="inspector-inserts"]')).toHaveCount(0);
     const hold = page.locator('.inspector-hold.inserts');

@@ -242,6 +242,8 @@ export function BusPicker({ client, track, onClose }: { client: SessionClient; t
         event.preventDefault();
         onClose();
       }}
+      // The dialog sits inside the empty slot it opens from: its clicks stay its own.
+      onClick={(event) => event.stopPropagation()}
       onKeyDown={(event) => {
         event.stopPropagation();
         if (event.key === 'Escape') {

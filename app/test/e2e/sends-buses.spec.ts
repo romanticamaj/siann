@@ -216,7 +216,7 @@ test('(c) removing a bus with a send asks, naming the track; one revision; one u
   await client!.call('command.execute', { commands: [{ op: 'track.set_output', trackId: PAD, output: { busId: bus } }] });
   // Remove Bus acts on the selected bus: disabled until a bus strip is pressed.
   expect(await app!.evaluate(({ Menu }) => Menu.getApplicationMenu()?.getMenuItemById('mixer.bus.remove')?.enabled ?? null)).toBe(false);
-  await busStrip(bus).locator('.readout').click();
+  await busStrip(bus).locator('.scale').click();
   await expect(busStrip(bus)).toHaveClass(/\bsel\b/);
   await expect(busStrip(bus)).toHaveAttribute('aria-selected', 'true');
   const before = await revisions();
@@ -236,7 +236,7 @@ test('(c) removing a bus with a send asks, naming the track; one revision; one u
   expect(await entity(`send:${sendId}`)).toMatchObject({ trackId: KEYS, busId: bus });
   expect((await entity(`track:${PAD}`))?.output).toEqual({ busId: bus });
   // Selecting a track clears the bus selection.
-  await busStrip(bus).locator('.readout').click();
+  await busStrip(bus).locator('.scale').click();
   await expect(busStrip(bus)).toHaveClass(/\bsel\b/);
   await page.getByTestId(`track-header-${KEYS}`).click();
   await expect(busStrip(bus)).not.toHaveClass(/\bsel\b/);
@@ -311,7 +311,8 @@ test('(e) every data-part id of the feature is in the window; reduced capabiliti
   await launch();
   await page.getByTestId(`track-header-${KEYS}`).click();
   for (const id of ['inspector-routing', 'inspector-sends', 'mixer-racks']) await expect(page.locator(`[data-part="${id}"]`), id).toHaveCount(1);
-  await expect(page.locator('[data-part="mixer-racks"] button')).toHaveText(['Routing', 'Inserts', 'Sends']);
+  await expect(page.getByTestId('rack-routing')).toHaveText('Routing');
+  await expect(page.getByTestId('rack-sends')).toHaveText('Sends');
   await expect(page.getByTestId('inspector-out-row')).toBeVisible();
   // The Routing section keeps the mockup's box (91 px) and the Sends section is open.
   await expect(page.locator('[data-part="inspector-sends"] .islot.empty')).toHaveCount(1);
