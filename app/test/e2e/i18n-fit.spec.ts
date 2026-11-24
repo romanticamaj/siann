@@ -762,6 +762,10 @@ test('the Notepad section, its refusal line and its changed-elsewhere line fit i
     for (const size of SIZES) {
       await resize(size);
       // Under 1100 px the left zone starts hidden: its button shows it for this window.
+      // Probe only once the shell has laid out the new size (its data-viewport), or
+      // the probe reads the last size's layout (the zone still shown, about to hide)
+      // and skips the button, as the Media tab's probe above does.
+      await expect(page.getByTestId('shell')).toHaveAttribute('data-viewport', `${size.width}x${size.height}`);
       if ((await page.getByTestId('zone-left').getAttribute('data-visible')) !== 'true') await page.getByTestId('zone-button-left').click();
       await expect(page.getByTestId('zone-left')).toHaveAttribute('data-visible', 'true');
       // The zones' grid animates to its new columns: measure once it has.
