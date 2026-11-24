@@ -371,6 +371,10 @@ test('a resize below the fades shortens them in the same revision; the handles f
   expect(trimmed.fadeIn).toEqual({ length: '9600', curve: 'linear' });
   expect(trimmed.fadeOut).toEqual({ length: String(length - 9600), curve: 'linear' });
   // The handles follow: the fade out's tip at the new end less its new length.
+  // The revision's text is in the DOM before the content frame that draws the
+  // trimmed clip, so the clip's box is read once that frame has drawn it (a
+  // box read earlier is the old one, px wider, under a loaded run).
+  await expect.poll(async () => (await rect('clp_2')).length).toBe(String(length));
   const after = await rect('clp_2');
   await expect.poll(async () => Math.round((await fades('clp_2')).handles!.fadeOut.x + 4)).toBe(Math.round(after.x + after.width - 1 - (length - 9600) / v.framesPerPixel));
   await expect(page.getByTestId('info-fade-out')).toHaveText(`${Math.floor(((length - 9600) * 1000) / RATE + 0.5)} ms`);

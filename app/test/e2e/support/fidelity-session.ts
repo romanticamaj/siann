@@ -226,6 +226,33 @@ export async function painted(page: Page): Promise<void> {
   await page.evaluate(() => new Promise<void>((resolve) => requestAnimationFrame(() => requestAnimationFrame(() => resolve()))));
 }
 
+// After a change that moves the columns (a zone opening or closing animates
+// them over --panel-motion), the event display's canvas is cleared by every
+// resize and redrawn a frame later: wait until its view has the container's
+// last width and three animation frames draw nothing more, so a capture does
+// not land on a blank canvas mid-animation.
+export async function eventDisplaySettled(page: Page): Promise<void> {
+  await expect
+    .poll(() =>
+      page.evaluate(() => {
+        const hooks = (window as unknown as { __siannTimeline?: { view(): { width: number } } }).__siannTimeline;
+        const el = document.querySelector<HTMLElement>('[data-testid="event-display"]');
+        return hooks !== undefined && el !== null && hooks.view().width === Math.max(1, Math.round(el.clientWidth));
+      }),
+    )
+    .toBe(true);
+  await expect
+    .poll(() =>
+      page.evaluate(async () => {
+        const hooks = (window as unknown as { __siannTimeline?: { contentDraws(): number } }).__siannTimeline;
+        const before = hooks?.contentDraws() ?? -1;
+        await new Promise<void>((resolve) => requestAnimationFrame(() => requestAnimationFrame(() => requestAnimationFrame(() => resolve()))));
+        return before === (hooks?.contentDraws() ?? -2);
+      }),
+    )
+    .toBe(true);
+}
+
 // Brings the app's window to the mockup's state, once it is up and sized on a
 // bundle from prepareBundle(): what the run cannot reproduce goes to `notes`.
 // `locale` is the manifest's locale the window runs in (en, zh-TW): the

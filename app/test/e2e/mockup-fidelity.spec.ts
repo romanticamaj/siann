@@ -71,7 +71,7 @@ import {
   type RegionReport,
 } from './support/fidelity-core';
 import { engineClient } from './support/engine-client';
-import { hook, painted, prepareBundle, RATE, stageSession, TRACK_IDS } from './support/fidelity-session';
+import { eventDisplaySettled, hook, painted, prepareBundle, RATE, stageSession, TRACK_IDS } from './support/fidelity-session';
 import { launchElectron } from './support/launch';
 import { exeFromEnv } from './support/seed';
 
@@ -554,14 +554,25 @@ for (const [locale, setting] of Object.entries(MANIFEST.locales)) {
       await expect(page.locator('[data-part="inspector-edit"]')).toHaveAttribute('aria-pressed', 'true');
       await expect(page.locator('[data-testid^="edit-"][aria-pressed="true"]')).toHaveCount(1);
       await page.mouse.move(VIEW.width - 2, 1);
+      // The zone's opening animates the columns: the event display has followed and drawn at the last size.
+      await eventDisplaySettled(page);
       await painted(page);
-      fs.writeFileSync(path.join(dir, 'channel.app.png'), await page.screenshot());
+      const channelShot = await page.screenshot();
+      // The capture shows the event display drawn (its ruler, lanes and clips), not a blank canvas.
+      const displayBox = await page.locator('[data-part="event-display"]').boundingBox();
+      expect(displayBox).not.toBeNull();
+      const drawn = crop(decodePng(channelShot), { x: displayBox!.x, y: displayBox!.y, w: displayBox!.width, h: displayBox!.height });
+      const colours = new Set<number>();
+      for (let i = 0; i < drawn.data.length; i += 4) colours.add((drawn.data[i]! << 16) | (drawn.data[i + 1]! << 8) | drawn.data[i + 2]!);
+      fs.writeFileSync(path.join(dir, 'channel.app.png'), channelShot);
+      expect(colours.size, 'the event display in channel.app.png has more than its background').toBeGreaterThan(16);
       notes.push(`The Channel zone open on the selected track, with its e lit on the MixConsole's strip and in the Inspector, is ${locale}/channel.app.png (the whole window), the app's alone: the mockup draws the zone button only.`);
       await page.getByTestId('zone-button-channel').click();
       await expect(channel).toBeHidden();
       // The columns have animated back: the event display is where it was measured.
       const measured = appParts.parts.find((part) => part.id === 'event-display');
       if (measured) await expect.poll(async () => Math.round((await page.locator('[data-part="event-display"]').boundingBox())?.x ?? -1)).toBe(Math.round(measured.x));
+      await eventDisplaySettled(page);
       await painted(page);
     }
 
