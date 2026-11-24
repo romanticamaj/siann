@@ -56,7 +56,12 @@ test('the model has File > New, Open, Open Recent and Save and Studio > Studio S
     ], locale);
     const recent = file.items.find((item) => item.type === 'submenu');
     assert.ok(recent && recent.type === 'submenu' && recent.label === t('menu.openRecent'), locale);
-    assert.deepEqual(commands(m.menus[1]!.items), [{ command: 'studio.setup', label: t('menu.studioSetup') }], locale);
+    // Add Bus and Remove Bus follow Studio Setup (m5b-ui-sends-buses; the test below).
+    assert.deepEqual(commands(m.menus[1]!.items), [
+      { command: 'studio.setup', label: t('menu.studioSetup') },
+      { command: 'mixer.bus.add', label: t('menu.addBus') },
+      { command: 'mixer.bus.remove', label: t('menu.removeBus') },
+    ], locale);
   }
 });
 
@@ -70,7 +75,7 @@ test('the chords are the preset\'s, and every label differs from the English one
 
 test('without a shell port New, Open and the recent list are absent while Save and Studio Setup stay', () => {
   const m = model('en', false);
-  assert.deepEqual(commands(m.menus.flatMap((menu) => menu.items)).map((c) => c.command), ['project.save', 'studio.setup']);
+  assert.deepEqual(commands(m.menus.flatMap((menu) => menu.items)).map((c) => c.command), ['project.save', 'studio.setup', 'mixer.bus.add', 'mixer.bus.remove']);
   assert.ok(!m.menus[0]!.items.some((item) => item.type === 'submenu'), 'no Open Recent');
   // No recent bundle: Open Recent is there, empty of commands.
   const empty = appMenuModel({ t: translator('en'), recent: [], shell: true, can: capabilitySelector(FULL) });
@@ -152,4 +157,46 @@ test('no menu item carries the Pool\'s command (m5b-ui-media: the Media tab repl
   for (const shell of [true, false]) {
     for (const menu of model('en', shell).menus) assert.ok(!commands(menu.items).some((item) => item.command === 'pool.open'), menu.id);
   }
+});
+
+// m5b-ui-sends-buses (UI redesign 3.6; 10.11, 24): Add Bus and Remove Bus are
+// unbound commands in the Studio menu until m5b-ui-keymap completes the
+// menus, only on an engine that lists features.buses (and the command);
+// Remove Bus acts on the selected bus and is disabled while none is selected,
+// which the shell's menu shows as a disabled item.
+test('Add Bus and Remove Bus are in the Studio menu with features.buses, Remove disabled without a selected bus', () => {
+  for (const locale of ['en', 'zh-Hant', 'zh-Hans'] as const) {
+    const t = translator(locale);
+    const none = appMenuModel({ t, recent: RECENT, shell: true, can: capabilitySelector(FULL) });
+    const studio = none.menus.find((m) => m.id === 'studio')!;
+    assert.deepEqual(
+      studio.items.filter((i) => i.type === 'command').map((i) => i.type === 'command' && [i.command, i.label, i.chord ?? null, i.enabled ?? true]),
+      [
+        ['studio.setup', t('menu.studioSetup'), null, true],
+        ['mixer.bus.add', t('menu.addBus'), null, true],
+        ['mixer.bus.remove', t('menu.removeBus'), null, false],
+      ],
+      locale,
+    );
+    const selected = appMenuModel({ t, recent: RECENT, shell: true, can: capabilitySelector(FULL), busSelected: true });
+    const remove = selected.menus.find((m) => m.id === 'studio')!.items.find((i) => i.type === 'command' && i.command === 'mixer.bus.remove');
+    assert.ok(remove && remove.type === 'command' && remove.enabled === undefined, `${locale}: enabled with a bus selected`);
+  }
+  // Without features.buses, or without the command, neither is there.
+  const noBuses = appMenuModel({ t: translator('en'), recent: RECENT, shell: true, can: capabilitySelector({ ...FULL, features: { ...FULL.features, buses: false } }), busSelected: true });
+  assert.deepEqual(commands(noBuses.menus[1]!.items).map((c) => c.command), ['studio.setup']);
+  const noRemove = appMenuModel({ t: translator('en'), recent: RECENT, shell: true, can: capabilitySelector({ ...FULL, commands: (FULL.commands ?? []).filter((c) => c !== 'bus.remove') }) });
+  assert.deepEqual(commands(noRemove.menus[1]!.items).map((c) => c.command), ['studio.setup', 'mixer.bus.add']);
+});
+
+test('the shell keeps a disabled item disabled and sends nothing for it', () => {
+  const m = appMenuModel({ t: translator('en'), recent: RECENT, shell: true, can: capabilitySelector(FULL) });
+  const parsed = parseMenuModel(JSON.parse(JSON.stringify(m)));
+  assert.deepEqual(parsed, m);
+  assert.equal(parseMenuModel({ menus: [{ id: 'studio', label: 'Studio', items: [{ type: 'command', command: 'mixer.bus.remove', label: 'x', enabled: 'no' }] }] }), null);
+  const template = menuTemplate(m, { platform: 'win32', devtools: false, send: () => undefined }) as Array<Item & { enabled?: boolean }>;
+  const studio = template.find((item) => item.label === translator('en')('menu.studio'))!;
+  const byId = (id: string) => (studio.submenu as Array<Item & { enabled?: boolean }>).find((i) => i.id === id)!;
+  assert.equal(byId('mixer.bus.remove').enabled, false);
+  assert.notEqual(byId('mixer.bus.add').enabled, false);
 });

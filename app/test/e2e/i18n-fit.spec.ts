@@ -479,6 +479,73 @@ test('the rack switch, the slots, the Inspector\'s Inserts section and the picke
   expect(failures).toEqual([]);
 });
 
+
+// m5b-ui-sends-buses (UI redesign 3.4, 6.3): the three rack switches, a send
+// slot's controls (on, PRE / POST, Remove) and the empty slot's +, the output
+// selector's slot, the Inspector's Routing and Sends sections, the bus
+// picker and the Add Bus and Remove Bus menu labels fit in en, zh-TW and
+// zh-CN at 1440x900. The bus name in a slot ellipsises inside its box by
+// design, so the check is on the controls.
+const SENDS = '[data-part=mixer-racks] button, .slot:hover button, .slot.empty, .islot button, .islot.empty, [data-part=inspector-routing] .irow > span:first-child, [data-part=inspector-sends] .sec-h, [data-part=inspector-routing] .sec-h';
+const ROUTING = '.ins .slot, [data-part=inspector-routing] .pick';
+
+test('the rack switches, the send slots, the output selector, the Routing and Sends sections and the bus picker fit in every locale', async () => {
+  scratch = fs.mkdtempSync(path.join(os.tmpdir(), 'siann-fit-sends-'));
+  const sessionDir = seedBundle(scratch, TRACKS);
+  app = await launchApp({ sessionDir, userData: path.join(scratch, 'user-data'), languages: ['en-US'] });
+  page = await app.firstWindow();
+  await expect(page.getByTestId('status')).toHaveAttribute('data-status', 'connected');
+  const engine = await engineClient(page);
+  await engine.call('command.execute', {
+    commands: [
+      { op: 'bus.add', busId: 'bus_fit', name: 'Verb' },
+      { op: 'send.add', sendId: 'snd_fit', trackId: 'trk_keys', busId: 'bus_fit', levelMilliDb: 0, pre: false },
+    ],
+  });
+  engine.close();
+  await resize(SIZES[0]!);
+  await expect(page.getByTestId('mixer-strip-bus-bus_fit')).toBeVisible();
+  await page.getByTestId('track-header-trk_keys').click();
+  const failures: string[] = [];
+  for (const locale of ['en', 'zh-Hant', 'zh-Hans'] as const) {
+    await page.evaluate((next) => (window as unknown as { __siannLocale: { setLocale(l: string): void } }).__siannLocale.setLocale(next), locale);
+    await expect(page.locator('html')).toHaveAttribute('data-locale', locale);
+    const measure = (selector: string) => page.evaluate((selector) => {
+      const out: string[] = [];
+      for (const el of document.querySelectorAll<HTMLElement>(selector)) {
+        if (el.getClientRects().length === 0) continue;
+        if (el.scrollWidth > el.clientWidth) out.push(`${el.className} "${(el.textContent ?? '').trim().slice(0, 40)}" ${el.scrollWidth} > ${el.clientWidth}`);
+        for (const node of el.childNodes) {
+          if (node.nodeType !== Node.TEXT_NODE || !node.textContent?.trim()) continue;
+          const range = document.createRange();
+          range.selectNodeContents(node);
+          if (new Set([...range.getClientRects()].map((r) => Math.round(r.top))).size > 1) out.push(`${el.className} "${node.textContent.trim()}" wraps`);
+        }
+      }
+      return out;
+    }, selector);
+    // The Sends rack, its slot hovered (its buttons show then).
+    await page.locator('[data-part="mixer-racks"]').getByTestId('rack-sends').click();
+    await page.getByTestId('send-snd_fit').hover();
+    await expect(page.getByTestId('send-snd_fit').locator('button')).toHaveCount(3);
+    for (const entry of await measure(SENDS)) failures.push(`${locale}: ${entry}`);
+    // The bus picker of an empty slot.
+    await page.getByTestId('mixer-strip-trk_bass').locator('.slot.empty').first().click();
+    await expect(page.getByTestId('bus-picker')).toBeVisible();
+    for (const entry of await measure('.bus-picker button, .bus-picker .picker-title')) failures.push(`${locale}: ${entry}`);
+    await page.getByTestId('bus-picker').getByTestId('picker-close').click();
+    await expect(page.getByTestId('bus-picker')).toBeHidden();
+    // The Routing rack: the output selectors' slots and the Inspector's Out row.
+    await page.locator('[data-part="mixer-racks"]').getByTestId('rack-routing').click();
+    for (const entry of await measure(ROUTING)) failures.push(`${locale}: ${entry}`);
+    // The menu labels: the catalog's words, different from the English ones in Chinese.
+    const labels = await app.evaluate(({ Menu }) => ['mixer.bus.add', 'mixer.bus.remove'].map((id) => Menu.getApplicationMenu()?.getMenuItemById(id)?.label ?? null));
+    expect(labels.every((l) => typeof l === 'string' && l.length > 0), `${locale}: ${labels.join(', ')}`).toBe(true);
+    if (locale !== 'en') expect(labels.some((l) => /\p{Script=Han}/u.test(l ?? '')), locale).toBe(true);
+    await page.locator('[data-part="mixer-racks"]').getByTestId('rack-inserts').click();
+  }
+  expect(failures).toEqual([]);
+});
 // m5b-ui-edit-more (UI redesign 3.2, 6.3): the snap type menu, open, and the
 // repeat dialog (Ctrl+K), open, fit in every locale at both window sizes: no
 // item or label overflows its box or wraps.

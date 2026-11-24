@@ -17,6 +17,8 @@ import { namesFromSnapshot } from '../../src/renderer/plans/describe';
 import { FSI, PDI } from '../../src/renderer/plans/isolate';
 import { stepRows, type Segment } from '../../src/renderer/plans/step-rows';
 import { trackColourVar } from '../../src/renderer/timeline/track-colour';
+import { bus, busSnapshot, send } from './support/buses';
+import { track } from './support/timeline';
 import { BAR, MOCKUP, MOCKUP_STEPS, mockupPreview, mockupSnapshot, mockupZh, RISER, T } from './support/mockup-plan';
 
 const NAMES = namesFromSnapshot(mockupSnapshot());
@@ -171,4 +173,61 @@ test('a step that names a clip whose media has no name, or an unknown clip, keep
   assert.equal(html(zh[5]!.title), '移動 FX 上的 <b>Riser</b>');
   const hans = stepRows(MOCKUP_STEPS, null, NAMES, translator('zh-Hans'));
   assert.equal(html(hans[5]!.title), '移动 FX 上的 <b>Riser</b>');
+});
+
+// m5b-ui-sends-buses (4.2; 10.11, 24): the bus, send and routing steps get no
+// ghost but are read on the plan card: each of the fourteen commands has a
+// row in the three catalogs, named from the session (a bus by its name, a
+// send by its track and bus) or from an earlier bus.add of the plan, never
+// by an id and never the generic line.
+test('the fourteen bus, send and routing commands have rows in three locales, named and without ids', () => {
+  const snap = busSnapshot(
+    [bus('bus_v', 'Verb'), bus('bus_d', 'Delay')],
+    [send('snd_1', 'trk_k', 'bus_v')],
+    [{ ...track('trk_k'), name: 'Keys', sends: ['snd_1'] }],
+  );
+  const names = namesFromSnapshot(snap);
+  const steps: Record<string, unknown>[] = [
+    { op: 'bus.add', busId: 'bus_n', name: 'Hall' },
+    { op: 'bus.remove', busId: 'bus_d' },
+    { op: 'bus.rename', busId: 'bus_v', name: 'Plate' },
+    { op: 'bus.set_gain', busId: 'bus_n', gainMilliDb: -6000 },
+    { op: 'bus.set_pan', busId: 'bus_v', pan: 2500 },
+    { op: 'bus.set_mute', busId: 'bus_v', mute: true },
+    { op: 'bus.set_solo', busId: 'bus_v', solo: true },
+    { op: 'bus.set_output', busId: 'bus_v', output: { busId: 'bus_n' } },
+    { op: 'send.add', sendId: 'snd_2', trackId: 'trk_k', busId: 'bus_n' },
+    { op: 'send.remove', sendId: 'snd_1' },
+    { op: 'send.set_level', sendId: 'snd_2', levelMilliDb: -12000 },
+    { op: 'send.set_pre', sendId: 'snd_2', pre: true },
+    { op: 'send.set_enabled', sendId: 'snd_2', enabled: false },
+    { op: 'track.set_output', trackId: 'trk_k', output: null },
+  ];
+  const en = stepRows(steps, null, names, translator('en')).map((r) => html(r.title));
+  assert.deepEqual(en, [
+    'Add bus Hall',
+    'Remove bus Delay',
+    'Rename bus Verb to Plate',
+    'Set bus Hall volume to -6.00 dB',
+    'Pan bus Verb to R25',
+    'Mute bus Verb',
+    'Solo bus Verb',
+    'Route bus Verb to Hall',
+    'Send Keys to Hall',
+    'Remove the send from Keys to Verb',
+    'Set the send from Keys to Hall to -12.00 dB',
+    'Make the send from Keys to Hall pre-fader',
+    'Turn off the send from Keys to Hall',
+    'Route Keys to the master',
+  ]);
+  for (const locale of LOCALES) {
+    const t = translator(locale);
+    const rows = stepRows(steps, null, names, t).map((r) => html(r.title));
+    const generic = t('step.unknown');
+    for (const [i, row] of rows.entries()) {
+      assert.notEqual(row, generic, `${locale} step ${i + 1}`);
+      for (const id of ['bus_v', 'bus_d', 'bus_n', 'snd_1', 'snd_2', 'trk_k']) assert.ok(!row.includes(id), `${locale} step ${i + 1}: ${row} shows ${id}`);
+      if (locale !== 'en') assert.ok(/\p{Script=Han}/u.test(row), `${locale} step ${i + 1}: ${row}`);
+    }
+  }
 });

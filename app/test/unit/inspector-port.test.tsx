@@ -31,7 +31,8 @@ import { installLocaleStore, localeStore } from '../../src/renderer/i18n/t';
 import { milliDbToPosition } from '../../src/renderer/mixer/taper';
 import { toPosition } from '../../src/renderer/mixer/value-gesture';
 import { capabilitySelector, type Capabilities } from '../../src/renderer/model/capabilities';
-import type { ClipEntity, PluginSlotEntity, TrackEntity } from '../../src/renderer/model/document';
+import type { BusEntity, ClipEntity, PluginSlotEntity, SendEntity, TrackEntity } from '../../src/renderer/model/document';
+import { bus, send } from './support/buses';
 import type { GestureController } from '../../src/renderer/model/gesture-controller';
 import type { SessionClient } from '../../src/renderer/model/session-client';
 import { CapabilitiesContext } from '../../src/renderer/shell/Capable';
@@ -66,9 +67,12 @@ const pending = (id: string) => {
   return MANIFEST.gates[rule.gate] === 'pending';
 };
 
-function fakeClient(tracks: TrackEntity[], clips: readonly ClipEntity[] = [], slots: readonly PluginSlotEntity[] = []) {
+function fakeClient(tracks: TrackEntity[], clips: readonly ClipEntity[] = [], slots: readonly PluginSlotEntity[] = [], buses: readonly BusEntity[] = [], sends: readonly SendEntity[] = []) {
   const base = snapshotOf(tracks.map((t) => t.id), tracks, [], clips);
-  const snap = { ...base, entities: { ...base.entities, ...Object.fromEntries(slots.map((s) => [`plugin_slot:${s.id}`, s])) } };
+  // m5b-ui-sends-buses: the buses (root.busOrder in their order) and the sends.
+  const root = { ...base.root!, ...(buses.length > 0 ? { busOrder: buses.map((b) => b.id) } : {}) };
+  const rows = [...buses.map((b) => [`bus:${b.id}`, b] as const), ...sends.map((s) => [`send:${s.id}`, s] as const)];
+  const snap = { ...base, root, buses, sends, busOrder: root.busOrder ?? [], entities: { ...base.entities, 'root:root': root, ...Object.fromEntries(slots.map((s) => [`plugin_slot:${s.id}`, s])), ...Object.fromEntries(rows) } };
   const model = {
     getSnapshot: () => snap,
     getView: () => ({ snapshot: snap, gesture: null, overlaid: null }),
@@ -81,10 +85,10 @@ function fakeClient(tracks: TrackEntity[], clips: readonly ClipEntity[] = [], sl
 const gestures = {} as unknown as GestureController;
 
 // The Inspector's rows, as the zone body holds them (a #root of its children).
-function render(tracks: TrackEntity[], options: { trackId?: string | null; caps?: Capabilities | null; locale?: Locale; slots?: readonly PluginSlotEntity[]; ghosts?: readonly Ghost[] } = {}): Element {
+function render(tracks: TrackEntity[], options: { trackId?: string | null; caps?: Capabilities | null; locale?: Locale; slots?: readonly PluginSlotEntity[]; ghosts?: readonly Ghost[]; buses?: readonly BusEntity[]; sends?: readonly SendEntity[] } = {}): Element {
   const trackId = options.trackId === undefined ? (tracks[0]?.id ?? null) : options.trackId;
   const caps = options.caps === undefined ? FULL : options.caps;
-  const client = fakeClient(tracks, [], options.slots ?? []);
+  const client = fakeClient(tracks, [], options.slots ?? [], options.buses ?? [], options.sends ?? []);
   const node: ReactNode = (
     <CapabilitiesContext.Provider value={caps}>
       <RecordContext.Provider value={recordHost(client.model.getSnapshot(), caps)}>
@@ -243,23 +247,18 @@ test('the pan row: the label, .hs with its thumb only, the value as C, L35, R100
   }
 });
 
-test('the three pending sections keep their rows as empty boxes, the open one and the shut two; Agent changes, Inserts and Notepad are sec()', () => {
+test('the one pending section keeps its row as an empty box, shut as the mockup draws it; the others are sec()', () => {
   const app = render([vox()]);
   const holds = findAll(app, byClass('inspector-hold'));
-  // Agent changes landed with m5b-ui-ghosts, Inserts with m5b-ui-inserts-master, Notepad with m5b-ui-notepad: their sections are the mockup's sec() (the next tests, notepad-port).
-  const landed = ['inspector-agent-changes', 'inspector-inserts', 'inspector-notepad'];
+  // Agent changes landed with m5b-ui-ghosts, Inserts with m5b-ui-inserts-master, Notepad with m5b-ui-notepad,
+  // Routing and Sends with m5b-ui-sends-buses: their sections are the mockup's sec() (the next tests, notepad-port).
+  const landed = ['inspector-agent-changes', 'inspector-inserts', 'inspector-notepad', 'inspector-routing', 'inspector-sends'];
   const mockup = findAll(mockupZone(), byClass('sec')).filter((sec) => !landed.includes(sec.attrs['data-part']!));
-  assert.equal(holds.length, 3);
-  assert.equal(mockup.length, 3);
+  assert.equal(holds.length, 1);
+  assert.equal(mockup.length, 1);
   for (const [i, hold] of holds.entries()) {
     const id = mockup[i]!.attrs['data-part']!;
-    // Routing's box holds the In row (m5b-ui-recording) until m5b-ui-sends-buses ports the section around it.
-    if (id === 'inspector-routing') {
-      assert.deepEqual(elements(hold).map((el) => el.attrs['data-testid']), ['inspector-in-row'], 'the In row alone');
-      for (const name of ['role', 'tabindex', 'data-part', 'aria-hidden']) assert.ok(!(name in hold.attrs), `the Routing box: no ${name}`);
-    } else {
-      assertEmptyBox(hold, `section ${i + 1}`);
-    }
+    assertEmptyBox(hold, `section ${i + 1}`);
     assert.ok(pending(id), `${id} is pending`);
     // Its box: the section's name, shut when the mockup draws it shut.
     const name = id.replace(/^inspector-/, '');
@@ -285,7 +284,7 @@ test('the ids are the mockup\'s minus the pending parts\', and no pending id is 
   const app = render([vox()]);
   const ids = (root: Element) => findAll(root, byAttr('data-part')).map((el) => el.attrs['data-part']!).sort();
   assert.deepEqual(ids(app), ids(mockupZone()).filter((id) => !pending(id)));
-  assert.deepEqual(ids(app), ['inspector-agent-changes', 'inspector-buttons', 'inspector-head', 'inspector-inserts', 'inspector-monitor', 'inspector-mute', 'inspector-name', 'inspector-notepad', 'inspector-pan', 'inspector-record', 'inspector-solo', 'inspector-tabs', 'inspector-track', 'inspector-volume'].sort());
+  assert.deepEqual(ids(app), ['inspector-agent-changes', 'inspector-buttons', 'inspector-head', 'inspector-inserts', 'inspector-monitor', 'inspector-mute', 'inspector-name', 'inspector-notepad', 'inspector-pan', 'inspector-record', 'inspector-routing', 'inspector-sends', 'inspector-solo', 'inspector-tabs', 'inspector-track', 'inspector-volume'].sort());
 });
 
 test('with no track selected, or a track gone, the zone shows its head and foot and nothing between them', () => {
@@ -656,4 +655,131 @@ test('a stored gain above +6 dB pins the thumb at the end and warns on the value
   assert.equal(text(value!), '+9.0 dB');
   assert.ok(classes(value!).includes('warn'));
   assert.ok(classes(hs!).includes('warn'));
+});
+
+// ---- m5b-ui-sends-buses (UI redesign 3.0, 3.4; 10.11, 24). The Routing
+// section is sec('Routing', ...): .sec > .sec-h, .sec-b with two .irow, each a
+// label and a .pick (In: the input selector of m5b-ui-recording; Out: the
+// output selector, the master and the buses in busOrder), data-part
+// inspector-routing; a row that cannot be is an empty .irow box, and with
+// neither the section is the calc() box. The Sends section is sec('Sends',
+// body, count): a .islot per send in the track's sends order, then one
+// .islot.empty "+ Add send", the count at the right of the head, data-part
+// inspector-sends; open where the mockup draws it shut (the gate is report).
+// Without features.sends or send.add it is the shut empty box.
+
+const mockupSec = (id: string, lang = 'en') => find(mockupZone(lang), byAttr('data-part', id));
+
+test('the Routing section is sec(\'Routing\'): its head, In and Out rows of a label and a .pick, against the mockup\'s markup', () => {
+  for (const [locale, lang] of [['en', 'en'], ['zh-Hant', 'zh-TW']] as const) {
+    const routed: TrackEntity = { ...vox(), output: { busId: 'bus_v' } };
+    const app = find(render([routed], { locale, buses: [bus('bus_d', 'Delay'), bus('bus_v', 'Verb')] }), byAttr('data-part', 'inspector-routing'));
+    const mockup = mockupSec('inspector-routing', lang);
+    assert.equal(sig(app), sig(mockup));
+    assert.deepEqual(elements(app).map(sig), elements(mockup).map(sig));
+    const [head, body] = elements(app);
+    const [mHead, mBody] = elements(mockup);
+    assert.deepEqual(elements(head!).map(sig), elements(mHead!).map(sig));
+    assert.equal(text(head!), text(mHead!), `${locale}: the title`);
+    assert.deepEqual(elements(body!).map(sig), elements(mBody!).map(sig));
+    assert.deepEqual(elements(body!).map(sig), ['div.irow', 'div.irow']);
+    const [inRow, outRow] = elements(body!);
+    const [, mOut] = elements(mBody!);
+    for (const [row, m] of [[inRow!, elements(mBody!)[0]!], [outRow!, mOut!]] as const) {
+      assert.deepEqual(elements(row).map(sig), elements(m).map(sig), locale);
+      assert.equal(text(elements(row)[0]!), text(elements(m)[0]!), `${locale}: the label`);
+      assert.ok(findAll(find(row, byClass('pick')), (el) => el.tag === 'svg').length === 1, 'the chevron');
+    }
+    assert.equal(outRow!.attrs['data-testid'], 'inspector-out-row');
+    assert.equal(text(find(outRow!, byClass('pick-name'))), 'Verb');
+    const select = find(outRow!, (el) => el.tag === 'select');
+    assert.equal(select.attrs['data-testid'], 'inspector-output');
+    assert.deepEqual(findAll(select, (el) => el.tag === 'option').map((o) => o.attrs.value), ['', 'bus_d', 'bus_v']);
+  }
+  // A track on the master reads the master's name.
+  const master = find(render([vox()], { buses: [bus('bus_v', 'Verb')] }), byAttr('data-testid', 'inspector-out-row'));
+  assert.equal(text(find(master, byClass('pick-name'))), 'Master');
+});
+
+test('the Routing section by capability: In only, Out only, both; neither is the calc() box with no id', () => {
+  const noRecording: Capabilities = { ...FULL, features: { ...FULL.features, recording: false, monitoring: false } };
+  const noBuses: Capabilities = { ...FULL, features: { ...FULL.features, buses: false, sends: false } };
+  const neither: Capabilities = { ...noBuses, features: { ...noBuses.features, recording: false, monitoring: false } };
+  const rows = (caps: Capabilities | null) => {
+    const sec = findAll(render([vox()], { caps }), byAttr('data-part', 'inspector-routing'))[0];
+    return sec ? elements(find(sec, byClass('sec-b'))) : null;
+  };
+  // Out only: the In row an empty .irow box.
+  const outOnly = rows(noRecording)!;
+  assert.deepEqual(outOnly.map(sig), ['div.irow', 'div.irow']);
+  assertEmptyBox(outOnly[0]!, 'the In row without recording');
+  assert.equal(outOnly[1]!.attrs['data-testid'], 'inspector-out-row');
+  // In only: the Out row an empty .irow box.
+  const inOnly = rows(noBuses)!;
+  assert.equal(inOnly[0]!.attrs['data-testid'], 'inspector-in-row');
+  assertEmptyBox(inOnly[1]!, 'the Out row without buses');
+  // Neither: no section, the box of the shell.css calc() (the 91 px the mockup measures).
+  for (const caps of [neither, null]) {
+    assert.equal(rows(caps), null);
+    const box = findAll(render([vox()], { caps }), byClass('inspector-hold')).find((h) => classes(h).includes('routing'));
+    assert.ok(box, 'the routing box');
+    assertEmptyBox(box, 'the Routing box');
+  }
+  const css = fs.readFileSync(path.resolve(__dirname, '..', '..', '..', 'renderer', 'shell.css'), 'utf8');
+  assert.match(css, /\.inspector-hold\.routing \{ height: calc\(var\(--section-head-h\) \+ var\(--hairline\) \+ var\(--space-7q\) \+ var\(--space-9q\) \+ 2 \* var\(--control-h\) \+ var\(--space\)\); \}/);
+  assert.doesNotMatch(css, /--hold-inspector-routing-h/);
+});
+
+test('the Sends section is sec(\'Sends\', body, count): a .islot per send with its controls, then .islot.empty; the count at the head', () => {
+  for (const [locale, lang] of [['en', 'en'], ['zh-Hant', 'zh-TW']] as const) {
+    const sends = [send('snd_1', 'trk_a', 'bus_v', -6000, false, true), send('snd_2', 'trk_a', 'bus_d', 0, true, false)];
+    const withTwo: TrackEntity = { ...vox(), sends: ['snd_2', 'snd_1'] };
+    const app = find(render([withTwo], { locale, buses: [bus('bus_v', 'Verb'), bus('bus_d', 'Delay')], sends }), byAttr('data-part', 'inspector-sends'));
+    const mockup = mockupSec('inspector-sends', lang);
+    // The mockup draws it shut with no body; the app opens it with one (the report shows the difference).
+    assert.ok(classes(mockup).includes('shut'));
+    assert.equal(sig(app), 'div.sec');
+    const [head, body] = elements(app);
+    const [mHead] = elements(mockup);
+    assert.deepEqual(elements(head!).map(sig), elements(mHead!).map(sig));
+    assert.equal(text(head!), text(mHead!).replace(/0$/, '2'), `${locale}: the title and the count`);
+    assert.deepEqual(elements(body!).map(sig), ['div.islot.off', 'div.islot', 'div.empty.islot']);
+    const [first, second, empty] = elements(body!);
+    assert.equal(text(find(first!, byClass('islot-name'))), 'Delay', 'the track\'s sends order');
+    assert.deepEqual(findAll(second!, (el) => el.tag === 'button').map((b) => b.attrs['data-testid']), ['islot-send-on-snd_1', 'islot-send-pre-snd_1', 'islot-send-remove-snd_1']);
+    const level = find(second!, byClass('islot-name'));
+    assert.equal(level.attrs.role, 'slider');
+    assert.equal(level.attrs['aria-valuetext'], '-6.0 dB');
+    assert.equal(empty!.attrs.role, 'button');
+    assert.equal(empty!.attrs['data-testid'], 'islot-send-add-trk_a');
+    assert.ok(text(empty!).startsWith('+ '), locale);
+  }
+  // No bus to send to: the empty slot is aria-disabled with the reason.
+  const lone = find(find(render([vox()]), byAttr('data-part', 'inspector-sends')), byClass('empty'));
+  assert.equal(lone.attrs['aria-disabled'], 'true');
+  assert.equal(lone.attrs.title, 'Add a bus to send to');
+});
+
+test('without features.sends or send.add the Sends section is the shut empty box, with no id', () => {
+  for (const caps of [
+    { ...FULL, features: { ...FULL.features, sends: false } },
+    { ...FULL, commands: (FULL.commands ?? []).filter((c) => c !== 'send.add') },
+  ] as Capabilities[]) {
+    const app = render([vox()], { caps, buses: [bus('bus_v', 'Verb')] });
+    assert.equal(findAll(app, byAttr('data-part', 'inspector-sends')).length, 0);
+    const box = findAll(app, byClass('inspector-hold')).find((h) => classes(h).includes('sends'))!;
+    assert.ok(classes(box).includes('shut'));
+    assertEmptyBox(box, 'the Sends box');
+  }
+});
+
+test('a send ghost in the Inspector: a dashed slot numbered by its step; a removed send dims', () => {
+  const ghosts: Ghost[] = [
+    { kind: 'send-add', step: 4, sendId: 'snd_9', trackId: 'trk_a', busId: 'bus_v', busName: 'Verb' },
+    { kind: 'send-remove', step: 5, sendId: 'snd_1', trackId: 'trk_a', busId: 'bus_v', cascade: true },
+  ];
+  const body = find(find(render([{ ...vox(), sends: ['snd_1'] }], { buses: [bus('bus_v', 'Verb')], sends: [send('snd_1', 'trk_a', 'bus_v')], ghosts }), byAttr('data-part', 'inspector-sends')), byClass('sec-b'));
+  assert.deepEqual(elements(body).map(sig), ['div.ghost-removed.islot', 'div.ghost.islot', 'div.empty.islot']);
+  assert.equal(text(find(elements(body)[1]!, byClass('stepn'))), '4');
+  assert.equal(elements(body)[0]!.attrs['data-ghost'], '5');
 });

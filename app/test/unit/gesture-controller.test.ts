@@ -124,6 +124,37 @@ test('a master gesture sends the master target and ends with one gesture.end', a
   assert.deepEqual(client.calls, [], 'one gesture.end and nothing after it');
 });
 
+// m5b-ui-sends-buses: a bus fader's gain and a send's level are gesture
+// targets (protocol-gestures-v0.md: {ref: bus:<id>, param: gain} and
+// {ref: send:<id>, param: level}); each drag ends in one gesture.end, which
+// commits one bus.set_gain or one send.set_level.
+test('a bus gain and a send level gesture send their targets and end with one gesture.end each', async () => {
+  const client = new FakeClient();
+  await client.model.fromSync(seq.buses.sync as unknown as SyncChunk[], seq.sessionId);
+  const controller = new GestureController({ client, schedule: new FakeScheduler().schedule });
+  for (const [ref, field, param, value] of [
+    ['bus:b1', 'gainMilliDb', 'gain', -6000],
+    ['send:s1', 'levelMilliDb', 'level', -12000],
+  ] as const) {
+    const target = { ref, param };
+    controller.begin(ref, field);
+    assert.deepEqual(client.calls.map((c) => [c.method, c.params]), [['gesture.begin', { target }]], ref);
+    client.answer('gesture.begin', { target, startValue: 0, leaseMs: 1000 });
+    await settle();
+    controller.move(value);
+    assert.equal((client.model.select(ref) as unknown as Record<string, number>)[field], value, `${ref}: the overlay`);
+    client.answer('gesture.update');
+    await settle();
+    controller.end();
+    await settle();
+    assert.deepEqual(client.calls.map((c) => [c.method, c.params]), [['gesture.end', { target, value }]], ref);
+    client.answer('gesture.end', { target, startValue: 0, value, revision: { id: 'r20', diff: [ref] } });
+    await settle();
+    assert.deepEqual(client.calls, [], `${ref}: one gesture.end and nothing after it`);
+    client.model.cancelGesture();
+  }
+});
+
 test('moves set the overlay at once and coalesce into one update in flight', async () => {
   const { client, controller } = await rig();
   controller.begin(REF, 'gainMilliDb');

@@ -52,6 +52,21 @@ test('the table of structural ops', () => {
     'plugin.insert',
     'plugin.remove',
     'plugin.set_bypass',
+    // m5b-ui-sends-buses (4.5 C5; 10.11, 24): every bus and send command and the output commit onto main.
+    'bus.add',
+    'bus.remove',
+    'bus.rename',
+    'bus.set_gain',
+    'bus.set_pan',
+    'bus.set_mute',
+    'bus.set_solo',
+    'bus.set_output',
+    'send.add',
+    'send.remove',
+    'send.set_level',
+    'send.set_pre',
+    'send.set_enabled',
+    'track.set_output',
   ];
   // A plugin's editor window, the registry and an approval change no session.
   for (const op of ['plugin.open_editor', 'plugin.close_editor', 'plugin.registry', 'plugin.approve', 'master.set_gain']) assert.equal(isStructural(op), false, op);

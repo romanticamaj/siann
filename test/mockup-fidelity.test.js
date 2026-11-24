@@ -153,6 +153,11 @@ test('each component of M5 has the port feature that owns its parts', () => {
   // The Notepad section stays m5b-ui-notepad's, which landed it (report).
   assert.equal(ruleOf('inspector-notepad').gate, 'm5b-ui-notepad');
   assert.equal(MANIFEST.gates['m5b-ui-notepad'], 'report');
+  // The Routing and Sends sections stay m5b-ui-sends-buses', which landed them (report), and their hold is gone.
+  for (const id of ['inspector-routing', 'inspector-sends']) assert.equal(ruleOf(id).gate, 'm5b-ui-sends-buses', id);
+  assert.equal(MANIFEST.gates['m5b-ui-sends-buses'], 'report');
+  assert.doesNotMatch(read('app', 'renderer', 'tokens.css'), /--hold-inspector-routing-h/);
+  assert.doesNotMatch(read('app', 'renderer', 'shell.css'), /--hold-inspector-routing-h/);
 });
 
 test('a feature that owns parts names its gate in its acceptance, asks for a side-by-side screenshot and never for enforce', () => {
