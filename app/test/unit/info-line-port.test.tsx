@@ -7,8 +7,10 @@
 // - one span.f per field in the template's order: the name (its track's
 //   colour in <i>, the clip's title in <b>), then start, end, length, offset
 //   and volume, each its label and b.num;
-// - the fade fields are pending (m5b-ui-fades): their boxes stay at the end,
-//   empty, so the volume field is not the last child and keeps its hairline;
+// - the fade fields (m5b-ui-fades) end the line, each its label and b.num,
+//   "<n> ms" as the mockup's row reads; on an engine without
+//   features.clipFades or clip.set_fade neither is in the DOM and no box
+//   replaces them (UI redesign 3.0: nothing follows them);
 // - the mockup's selected clip reads 9.1.1.0, 12.4.1.0, 3.3.0.0, 1.0.2.0 and
 //   0.00 dB;
 // - no clip selected: the line and nothing between its edges; several: the
@@ -22,7 +24,9 @@ import { renderToStaticMarkup } from 'react-dom/server';
 
 import type { Locale, LocaleStore } from '../../src/renderer/i18n/locale';
 import { installLocaleStore, localeStore } from '../../src/renderer/i18n/t';
+import type { Capabilities } from '../../src/renderer/model/capabilities';
 import type { ClipEntity, MediaEntity } from '../../src/renderer/model/document';
+import { CapabilitiesContext } from '../../src/renderer/shell/Capable';
 import type { Snapshot } from '../../src/renderer/model/read-model';
 import type { SessionClient } from '../../src/renderer/model/session-client';
 import { InfoLine, InfoValueField } from '../../src/renderer/timeline/InfoLine';
@@ -51,11 +55,26 @@ function client(snapshot: Snapshot): SessionClient {
   return { model: { getSnapshot: () => snapshot, subscribe: () => () => undefined } } as unknown as SessionClient;
 }
 
-function render(snapshot: Snapshot, clipId: string | null, locale?: Locale): Element {
+// The engine's capabilities (m5b-ui-fades): the full fixture lists
+// features.clipFades and clip.set_fade, the reduced one neither.
+const FIXTURES = path.resolve(__dirname, '..', '..', '..', 'test', 'unit', 'fixtures');
+const FULL = JSON.parse(fs.readFileSync(path.join(FIXTURES, 'capabilities-full.json'), 'utf8')) as Capabilities;
+const REDUCED = JSON.parse(fs.readFileSync(path.join(FIXTURES, 'capabilities-reduced.json'), 'utf8')) as Capabilities;
+
+function render(snapshot: Snapshot, clipId: string | null, locale?: Locale, caps: Capabilities | null = FULL): Element {
   const before = localeStore();
   if (locale) installLocaleStore({ subscribe: () => () => undefined, getSnapshot: () => locale, setLocale: () => undefined } as unknown as LocaleStore);
   try {
-    return find(parse(renderToStaticMarkup(<InfoLine client={client(snapshot)} clipId={clipId} />)), byClass('infoline'));
+    return find(
+      parse(
+        renderToStaticMarkup(
+          <CapabilitiesContext.Provider value={caps}>
+            <InfoLine client={client(snapshot)} clipId={clipId} />
+          </CapabilitiesContext.Provider>,
+        ),
+      ),
+      byClass('infoline'),
+    );
   } finally {
     installLocaleStore(before);
   }
@@ -65,7 +84,7 @@ const session = (mediaRow = named('Chorus A · take 3'), clips = [chorus()]) => 
 const mockupLine = (lang = 'en') => find(parse(loadMockup(lang).projectHead), byClass('infoline'));
 const FIELDS = ['info-start', 'info-end', 'info-length', 'info-offset', 'info-volume'];
 
-test('the info line has one span.f per field in the template\'s order, the fades\' boxes empty at the end', () => {
+test('the info line has one span.f per field in the template\'s order, ending with the fade fields (m5b-ui-fades)', () => {
   const app = render(session(), 'clp_ch');
   const mockup = mockupLine();
   assert.equal(sig(app), 'div.infoline');
@@ -77,20 +96,49 @@ test('the info line has one span.f per field in the template\'s order, the fades
   assert.equal(mine.length, theirs.length);
   for (let i = 0; i < theirs.length; i += 1) {
     const id = theirs[i]!.attrs['data-part']!;
-    if (pending(id)) {
-      assert.match(id, /^info-fade-(in|out)$/);
-      const box = mine[i]!;
-      assert.deepEqual(box.children, [], `${id}: nothing in it`);
-      assert.equal(box.attrs['aria-hidden'], 'true');
-      for (const name of ['role', 'tabindex', 'data-part', 'data-testid']) assert.ok(!(name in box.attrs), `${id}: no ${name}`);
-      assert.ok(!classes(box).includes('f'), `${id}: not a field`);
-    } else {
-      assert.equal(sig(mine[i]!), 'span.f', id);
-      assert.equal(mine[i]!.attrs['data-part'], id);
+    assert.ok(!pending(id), `${id}: no part of the info line is pending`);
+    assert.equal(sig(mine[i]!), 'span.f', id);
+    assert.equal(mine[i]!.attrs['data-part'], id);
+  }
+  // The line ends with Fade In and Fade Out (mockup.html, line 279).
+  assert.deepEqual(mine.slice(-2).map((el) => el.attrs['data-part']), ['info-fade-in', 'info-fade-out']);
+  // No hold box is left.
+  assert.deepEqual(findAll(app, (el) => classes(el).some((c) => c.startsWith('hold-'))), []);
+});
+
+test('the fade fields: their label then b.num, "<n> ms" as the mockup\'s row, the same text in every locale', () => {
+  const fades = chorus({ fadeIn: { length: '576', curve: 'linear' }, fadeOut: { length: '8640', curve: 'equal_power' } });
+  for (const [locale, lang] of [['en', 'en'], ['zh-Hant', 'zh-TW']] as const) {
+    const app = render(session(named('Chorus A · take 3'), [fades]), 'clp_ch', locale);
+    const mockup = mockupLine(lang);
+    for (const id of ['info-fade-in', 'info-fade-out']) {
+      const field = find(app, byAttr('data-part', id));
+      const mField = find(mockup, byAttr('data-part', id));
+      assert.equal(sig(field), 'span.f', `${locale}: ${id}`);
+      assert.deepEqual(field.children.map((c) => (typeof c === 'string' ? '#text' : sig(c))), mField.children.map((c) => (typeof c === 'string' ? '#text' : sig(c))), `${locale}: ${id}`);
+      // 576 frames are the mockup's 12 ms, 8640 its 180 ms; the label per locale.
+      assert.equal(text(field), text(mField), `${locale}: ${id}`);
+      assert.equal(find(field, byClass('num')).attrs['data-testid'], id);
     }
   }
-  // The volume field is not the last child, so the shared rule keeps its hairline.
-  assert.notEqual(mine.at(-1)!.attrs['data-part'], 'info-volume');
+  // Without a fade: 0 ms.
+  assert.equal(text(find(render(session(), 'clp_ch'), byAttr('data-testid', 'info-fade-in'))), '0 ms');
+  assert.equal(text(find(render(session(), 'clp_ch', 'zh-Hans'), byAttr('data-testid', 'info-fade-out'))), '0 ms');
+});
+
+test('an engine without features.clipFades or clip.set_fade: neither field, no box in their place', () => {
+  const withoutFeature: Capabilities = { ...FULL, features: { ...FULL.features, clipFades: false } };
+  const withoutCommand: Capabilities = { ...FULL, commands: (FULL.commands ?? []).filter((c) => c !== 'clip.set_fade') };
+  for (const caps of [REDUCED, withoutFeature, withoutCommand, null]) {
+    const app = render(session(), 'clp_ch', undefined, caps);
+    assert.deepEqual(findAll(app, byAttr('data-part', 'info-fade-in')), []);
+    assert.deepEqual(findAll(app, byAttr('data-part', 'info-fade-out')), []);
+    // The volume field ends the line (the shared rule drops its hairline), and nothing follows it.
+    const mine = elements(app);
+    assert.equal(mine.at(-1)!.attrs['data-part'], 'info-volume');
+    assert.equal(mine.length, 6);
+    assert.deepEqual(findAll(app, (el) => classes(el).some((c) => c.startsWith('hold-'))), []);
+  }
 });
 
 test('the name: the track\'s colour in <i> and the clip\'s title in <b>', () => {
@@ -146,7 +194,7 @@ test('several selected: the primary clip\'s fields', () => {
 test('the ids are the mockup\'s minus the pending parts\'', () => {
   const ids = (root: Element) => findAll(root, byAttr('data-part')).map((el) => el.attrs['data-part']!).sort();
   assert.deepEqual(ids(render(session(), 'clp_ch')), ids(mockupLine()).filter((id) => !pending(id)));
-  assert.deepEqual(ids(render(session(), 'clp_ch')), ['info-end', 'info-length', 'info-line', 'info-name', 'info-offset', 'info-start', 'info-volume']);
+  assert.deepEqual(ids(render(session(), 'clp_ch')), ['info-end', 'info-fade-in', 'info-fade-out', 'info-length', 'info-line', 'info-name', 'info-offset', 'info-start', 'info-volume']);
 });
 
 // m5b-ui-edit-more (UI redesign 3.2, "Info line"): start, length, offset and
@@ -179,6 +227,25 @@ test('the four editable fields keep span.f > b.num and take the focus; end stays
   }
   // Without an edit handler (an engine that lists none of the commands) nothing is editable.
   for (const num of findAll(render(session(), 'clp_ch'), byClass('num'))) assert.ok(!('tabindex' in num.attrs));
+});
+
+test('the fade fields take the focus with an edit handler, as the other editable fields (m5b-ui-fades)', () => {
+  const app = find(
+    parse(
+      renderToStaticMarkup(
+        <CapabilitiesContext.Provider value={FULL}>
+          <InfoLine client={client(session())} clipId="clp_ch" selection={['clp_ch']} onEdit={() => undefined} />
+        </CapabilitiesContext.Provider>,
+      ),
+    ),
+    byClass('infoline'),
+  );
+  for (const id of ['info-fade-in', 'info-fade-out']) {
+    const num = find(find(app, byAttr('data-part', id)), byClass('num'));
+    assert.equal(num.attrs.tabindex, '0', id);
+    assert.equal(num.attrs['data-editable'], 'true', id);
+    assert.ok(num.attrs['aria-label'], id);
+  }
 });
 
 test('while edited, a field is span.f > b.num > input holding the value; the label stays', () => {

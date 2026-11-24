@@ -90,6 +90,25 @@ test('a track main does not hold (a proposed track) adds no un-numbered ghost', 
   assert.equal(out.filter((g) => g.step === 0).length, 0);
 });
 
+// m5b-ui-fades (UI redesign 4.3; 10.11, 23): the fade ghost's curve is solid
+// while heard (no dash, no hatch); main's fade stays drawn by the clip, so it
+// carries no `replaced`.
+test('the fade ghost is solid while heard, its values the step\'s', () => {
+  const fade: Ghost = {
+    kind: 'fade',
+    step: 1,
+    clipId: 'clp_1',
+    trackId: 'trk_keys',
+    position: '96000',
+    length: '96000',
+    before: { fadeIn: null, fadeOut: { length: '4800', curve: 'linear' } },
+    after: { fadeIn: { length: '960', curve: 'equal_power' }, fadeOut: null },
+  };
+  const [out] = heardGhosts([fade], branch({ 'clip:clp_1': { ...clip('clp_1', 'trk_keys', 'med_1', '96000', '0', '96000') } }), main);
+  assert.deepEqual(out, { ...fade, mode: 'solid' });
+  assert.equal(heardGhosts([fade], null, main)[0]!.mode, undefined, 'dashed without the snapshot');
+});
+
 // m5b-ui-inserts-master's ghosts while heard: the master gain takes the
 // branch's value where the snapshot holds master:master, main's as replaced;
 // the insert ghosts are solid as they are.

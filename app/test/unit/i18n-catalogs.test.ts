@@ -348,3 +348,36 @@ test('the Media tab and import words are in every catalog and the Pool\'s are go
     assert.match(String(catalog['media.refused']), /\{name\}/);
   }
 });
+
+// m5b-ui-fades: the info line's two fade labels are the mockup's in en and
+// zh-TW (mockup.html: 'Fade In', 'Fade Out', 淡入, 淡出; glossary 6.5 gives
+// the same two words in zh-Hans), and a clip.set_fade step has its words in
+// the three catalogs, translated, with the clip and the lengths as placeholders.
+test('the fade fields and the fade step words are in every catalog, the mockup\'s in en and zh-TW (m5b-ui-fades)', () => {
+  const words: Array<[Key, string, string, string]> = [
+    ['info.fadeIn', 'Fade In', '淡入', '淡入'],
+    ['info.fadeOut', 'Fade Out', '淡出', '淡出'],
+  ];
+  for (const [key, english, traditional, simplified] of words) {
+    assert.equal(en[key], english, key);
+    assert.equal(zhHant[key], traditional, key);
+    assert.equal(zhHans[key], simplified, key);
+  }
+  const steps: Array<[Key, string[]]> = [
+    ['step.setFadeIn', ['clip', 'length']],
+    ['step.setFadeOut', ['clip', 'length']],
+    ['step.setFades', ['clip', 'fadeIn', 'fadeOut']],
+    ['step.removeFadeIn', ['clip']],
+    ['step.removeFadeOut', ['clip']],
+    ['step.removeFades', ['clip']],
+    ['step.setFadeInRemoveOut', ['clip', 'length']],
+    ['step.removeFadeInSetOut', ['clip', 'length']],
+  ];
+  for (const [key, placeholders] of steps) {
+    for (const [name, catalog] of [['en', en], ['zh-Hant', zhHant], ['zh-Hans', zhHans]] as const) {
+      assert.equal(typeof catalog[key], 'string', `${name} ${key}`);
+      for (const p of placeholders) assert.ok(String(catalog[key]).includes(`{${p}}`), `${name} ${key} has {${p}}`);
+      if (name !== 'en') assert.notEqual(catalog[key], en[key], `${name} ${key} is translated`);
+    }
+  }
+});

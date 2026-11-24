@@ -348,7 +348,7 @@ async function stopLatch(p: Page): Promise<void> {
   });
 }
 
-type Rect = { clipId: string; trackId: string; position: string; x: number; y: number; width: number; height: number };
+type Rect = { clipId: string; trackId: string; position: string; length: string; x: number; y: number; width: number; height: number };
 
 async function timeline<T>(name: 'clips' | 'peakColumns' | 'view' | 'cursorX' | 'locatorBand', arg?: string): Promise<T> {
   return page.evaluate(
@@ -670,7 +670,7 @@ test('UX screenshot tour', async () => {
   const grab = { x: cbox.x + target.x + target.width / 2, y: cbox.y + target.y + target.height / 2 };
   await page.mouse.click(grab.x, grab.y);
   await expect(page.getByTestId('info-line')).toHaveAttribute('data-clip', 'clp_06_keys');
-  await shoot(page, 'Clip selected', `The Keys clip clicked: a 2 px outline on the overlay with its handles (the resize squares in the lower corners and the volume control just inside the lower-left one); the info line (the mockup's, m5-ui-port-toolbar) shows its name in its track's colour (${await page.getByTestId('info-name').textContent()}), then its start ${await page.getByTestId('info-start').textContent()} and end ${await page.getByTestId('info-end').textContent()} in bar.beat.sixteenth.tick, its length and offset counted from zero and its volume (${await page.getByTestId('info-volume').textContent()}). Delete and Backspace remove it; the toolbar has no Delete clip button.`);
+  await shoot(page, 'Clip selected', `The Keys clip clicked: a 2 px outline on the overlay with its handles (the fade triangles at the upper corners, m5b-ui-fades, the resize squares in the lower corners and the volume control just inside the lower-left one); the info line (the mockup's, m5-ui-port-toolbar) shows its name in its track's colour (${await page.getByTestId('info-name').textContent()}), then its start ${await page.getByTestId('info-start').textContent()} and end ${await page.getByTestId('info-end').textContent()} in bar.beat.sixteenth.tick, its length and offset counted from zero, its volume (${await page.getByTestId('info-volume').textContent()}) and its Fade In and Fade Out (${await page.getByTestId('info-fade-in').textContent()} and ${await page.getByTestId('info-fade-out').textContent()}: no fade yet). From here to state 20, and again from 25 while a clip is selected, the info line ends with the two fade fields and the selected clip carries its fade handles. Delete and Backspace remove it; the toolbar has no Delete clip button.`);
   await page.mouse.move(grab.x, grab.y);
   await page.mouse.down();
   await page.mouse.move(grab.x + 60, grab.y, { steps: 5 });
@@ -847,7 +847,7 @@ test('UX screenshot tour', async () => {
   await shoot(
     page,
     'Clip split and duplicated',
-    'The Keys clip split at the project cursor with Alt+X (its two pieces play the same audio as before: the right one continues in the file where the left one ends), then both pieces selected (click, Shift-click) and duplicated with Ctrl+D: the copies land directly after them on the same lane, as one unit. Each edit was one revision. Zoomed full (Shift+F) to show the whole session.',
+    'The Keys clip split at the project cursor with Alt+X (its two pieces play the same audio as before: the right one continues in the file where the left one ends), then both pieces selected (click, Shift-click) and duplicated with Ctrl+D: the copies land directly after them on the same lane, as one unit. Each edit was one revision. Zoomed full (Shift+F) to show the whole session; the selected clips carry their fade handles and the info line ends with Fade In and Fade Out (0 ms) of the primary one.',
     { number: 25 },
   );
 
@@ -923,7 +923,7 @@ test('UX screenshot tour', async () => {
   await shoot(
     page,
     'Pieces glued, snap type menu open',
-    'The Keys clip\'s two pieces (split at the cursor in state 25) selected and glued with the Glue tool (key 4, lit in the toolbar): one clip.remove and one clip.trim in one revision, so the clip is whole again with its fades and volume. The snap type menu is open under the snap field\'s chevron: Grid (checked), Grid Relative, Events (magnetic to the other clips\' starts and ends) and Magnetic Cursor. The mockup does not show this menu.',
+    'The Keys clip\'s two pieces (split at the cursor in state 25) selected and glued with the Glue tool (key 4, lit in the toolbar): one clip.remove and one clip.trim in one revision, so the clip is whole again with its fades and volume (its fade handles at the upper corners, the info line\'s Fade In and Fade Out at 0 ms). The snap type menu is open under the snap field\'s chevron: Grid (checked), Grid Relative, Events (magnetic to the other clips\' starts and ends) and Magnetic Cursor. The mockup does not show this menu.',
     { number: 32 },
   );
   await page.keyboard.press('Escape');
@@ -1109,6 +1109,33 @@ test('UX screenshot tour', async () => {
     { number: 36 },
   );
   await page.keyboard.press('Escape');
+
+  // ---- 33 (m5b-ui-fades; UI redesign 3.2, "Clip handles" and "How a fade is
+  // drawn"; numbered explicitly, written after 36): the Keys clip zoomed to and
+  // selected with a linear fade in of an eighth of its length and an equal
+  // power fade out of a quarter, set as one clip.set_fade.
+  await page.keyboard.press('Shift+KeyF');
+  await waveformsDrawn();
+  const fadeBox = await canvasBox();
+  const fadeKeys = await clipRect('clp_06_keys');
+  await page.mouse.click(fadeBox.x + Math.max(0, fadeKeys.x) + 20, fadeBox.y + fadeKeys.y + fadeKeys.height / 2);
+  await expect(page.getByTestId('info-line')).toHaveAttribute('data-clip', 'clp_06_keys');
+  await page.keyboard.press('Shift+KeyE');
+  const keysLength = BigInt(fadeKeys.length);
+  await recorder.call('command.execute', {
+    commands: [{ op: 'clip.set_fade', clipId: 'clp_06_keys', fadeIn: { length: String(keysLength / 8n), curve: 'linear' }, fadeOut: { length: String(keysLength / 4n), curve: 'equal_power' } }],
+  });
+  const fadeMs = (frames: bigint) => `${(frames * 1000n * 2n + BigInt(RATE)) / (2n * BigInt(RATE))} ms`;
+  await expect(page.getByTestId('info-fade-in')).toHaveText(fadeMs(keysLength / 8n));
+  await expect(page.getByTestId('info-fade-out')).toHaveText(fadeMs(keysLength / 4n));
+  await waveformsDrawn();
+  await painted(page);
+  await shoot(
+    page,
+    'Clip with fades',
+    `The Keys clip selected with a linear fade in (${fadeMs(keysLength / 8n)}) and an equal power fade out (${fadeMs(keysLength / 4n)}), one clip.set_fade: each fade is drawn as draw() draws it, the --bg-0-a550 shade between the real gain curve and the top edge below the title strip and a 1 px --select line, at its real length, with the waveform scaled by the gain; the 8 x 6 px --select triangles at the fades' ends are the handles (drag: the length, snapped, Ctrl unsnapped; double-click: linear or equal power). The info line ends with Fade In and Fade Out in whole milliseconds, typed values in ms.`,
+    { number: 33 },
+  );
   recorder.close();
 
   // ---- 29 and 30 (m5b-ui-project): the start view, on a launch of its own
