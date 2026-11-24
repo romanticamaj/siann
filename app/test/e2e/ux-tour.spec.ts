@@ -1159,11 +1159,32 @@ test('UX screenshot tour', async () => {
   );
   await page.getByTestId('zone-button-channel').click();
   await expect(page.getByTestId('zone-channel')).toBeVisible();
-  await expect(page.getByTestId('channel-mixer-strip-trk_keys')).toBeVisible();
+  await expect(page.getByTestId('zone-channel').locator('.strip')).toHaveCount(1);
+  // The zone's opening animates the columns: the editor has followed the last size and drawn at it.
+  await expect
+    .poll(() =>
+      page.evaluate(() => {
+        const hooks = (window as unknown as { __siannEditor?: { view(): { width: number } } }).__siannEditor;
+        const el = document.querySelector<HTMLElement>('[data-testid="editor"]');
+        return hooks !== undefined && el !== null && hooks.view().width === Math.max(1, Math.round(el.clientWidth));
+      }),
+    )
+    .toBe(true);
+  // ...and has stopped redrawing: two animation frames draw nothing more.
+  await expect
+    .poll(() =>
+      page.evaluate(async () => {
+        const hooks = (window as unknown as { __siannEditor?: { contentDraws(): number } }).__siannEditor;
+        const before = hooks?.contentDraws() ?? -1;
+        await new Promise<void>((resolve) => requestAnimationFrame(() => requestAnimationFrame(() => requestAnimationFrame(() => resolve()))));
+        return before === (hooks?.contentDraws() ?? -2);
+      }),
+    )
+    .toBe(true);
   await shoot(
     page,
     'Channel zone open',
-    'The first zone button (or Ctrl+Alt+C) shows the Channel zone at the window\'s left edge, left of the Inspector, 96 px: one full MixConsole strip of the selected track (Keys), the strip component of the MixConsole with its controls, gestures and meter; its e is lit (Ctrl+Alt+C, e again or the Inspector\'s e hide it). Its boundary with the Inspector is a divider (80 to 160 px). App-only content: the mockup draws the zone button only.',
+    'The first zone button (or Ctrl+Alt+C) shows the Channel zone at the window\'s left edge, left of the Inspector, 96 px: one full MixConsole strip of the selected track (the one the Inspector shows), the strip component of the MixConsole with its controls, gestures and meter; its e is lit (Ctrl+Alt+C, e again or the Inspector\'s e hide it). Its boundary with the Inspector is a divider (80 to 160 px). App-only content: the mockup draws the zone button only.',
     { number: 45 },
   );
   await page.getByTestId('zone-button-channel').click();
