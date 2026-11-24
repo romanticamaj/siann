@@ -281,6 +281,11 @@ revision, from `command.execute`, a plan or a master gesture's end, is announced
  "changedIds": [{"ref": "master:master", "change": "added"}]}
 ```
 
+Markers are document entities too (m5b-engine-markers): each `marker.add`,
+`marker.move`, `marker.rename` or `marker.remove` revision is announced by
+`session.changed` with `changedIds [{ref: "marker:<id>", change}]`, `added`,
+`modified` or `removed`.
+
 ### `record.changed` (m5b-engine-record)
 
 Published to every subscribed connection whenever the record state changes:
@@ -376,7 +381,7 @@ happen in between.
 }
 ```
 
-- Entities are listed root, media, tracks, clips, plugin slots, locators, master, buses, sends, each
+- Entities are listed root, media, tracks, clips, plugin slots, locators, master, buses, sends, markers, each
   table in id order, which is the order of `Document::toJson()`. A chunk holds at
   most `syncChunkEntities` entities (server option, default 500); `entities` is the
   total. `pluginSlots` is present only in a chunk that holds slots (M4, see
@@ -388,11 +393,12 @@ happen in between.
   and only while the master gain is not 0 dB; its ref is `master:master`. `buses`
   and `sends` (m5b-engine-buses-sends) are tables listed after the master, each
   present only in a chunk that holds rows; their refs are `bus:<id>` and
-  `send:<id>`.
+  `send:<id>`. `markers` (m5b-engine-markers) is a table listed after `sends`,
+  present only in a chunk that holds markers; its ref is `marker:<id>`.
 - Entity JSON is the hashed form, so a client recomputes entity and document
   hashes from the chunks. Concatenating the chunks gives
-  `{schemaVersion: "siann.session_document.v3", root, media, tracks, clips,
-  pluginSlots?, locators?, master?, buses?, sends?}`.
+  `{schemaVersion: "siann.session_document.v4", root, media, tracks, clips,
+  pluginSlots?, locators?, master?, buses?, sends?, markers?}`.
 - `next` is `null` on the last chunk. A cursor that does not belong to the
   connection's current sync (stale, forged, or after a newer sync started) is
   `sync_cursor_invalid`; a cursor that is not a string is `invalid_params`.
@@ -407,7 +413,8 @@ happen in between.
 Params `{refs: ["<type>:<id>", ...], revision?: "rN"}` (`refs` non-empty; `type`
 is `root`, `media`, `track`, `clip` or `plugin_slot`, the last as
 `plugin_slot:<id>`; the root is `root:root`, and the singletons `locators:locators`
-and `master:master`, m5b-engine-master). Result at
+and `master:master`, m5b-engine-master; `bus:<id>`, `send:<id>` and `marker:<id>`,
+m5b-engine-buses-sends and m5b-engine-markers). Result at
 `revision`, or at the head without it:
 
 ```json
