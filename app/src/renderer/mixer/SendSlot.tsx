@@ -1,4 +1,4 @@
-// The send slots (m5b-ui-sends-buses; UI redesign 3.4, 4.2; 10.11, 24): a
+// The send slots (m5b-ui-sends-buses; UI redesign 3.4, 4.2; 10.11, 25): a
 // track strip's Sends rack (strip()'s .ins with the Sends switch lit) and the
 // Inspector's sec('Sends', body, count). A send slot is the insert slot's
 // markup (.slot / .islot) with the elements this feature adds, on the

@@ -1,5 +1,5 @@
 // Output routing and the rack switches' gates (m5b-ui-sends-buses; UI
-// redesign 3.4, 3.0, 10.11, 24): the output selector of a track lists the
+// redesign 3.4, 3.0, 10.11, 25): the output selector of a track lists the
 // master, then every bus in busOrder; a bus's lists the master and the other
 // buses, every one of them (the engine refuses a loop with routing_cycle,
 // the UI does not guess it). A switch is rendered only where its rack can be:

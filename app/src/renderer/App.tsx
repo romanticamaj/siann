@@ -231,7 +231,7 @@ export function App({
       }),
     [client, buses],
   );
-  // Add Bus and Remove Bus (m5b-ui-sends-buses; UI redesign 3.6; 10.11, 24):
+  // Add Bus and Remove Bus (m5b-ui-sends-buses; UI redesign 3.6; 10.11, 25):
   // one bus.add named "Bus N"; one bus.remove of the selected bus, after a
   // confirmation naming what goes with it when anything does.
   const [removing, setRemoving] = useState<{ readonly busId: string; readonly message: string } | null>(null);

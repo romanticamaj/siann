@@ -657,7 +657,7 @@ test('a stored gain above +6 dB pins the thumb at the end and warns on the value
   assert.ok(classes(hs!).includes('warn'));
 });
 
-// ---- m5b-ui-sends-buses (UI redesign 3.0, 3.4; 10.11, 24). The Routing
+// ---- m5b-ui-sends-buses (UI redesign 3.0, 3.4; 10.11, 25). The Routing
 // section is sec('Routing', ...): .sec > .sec-h, .sec-b with two .irow, each a
 // label and a .pick (In: the input selector of m5b-ui-recording; Out: the
 // output selector, the master and the buses in busOrder), data-part

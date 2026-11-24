@@ -1,4 +1,4 @@
-// The selected bus (m5b-ui-sends-buses; UI redesign 3.4; 10.11, 24): app
+// The selected bus (m5b-ui-sends-buses; UI redesign 3.4; 10.11, 25): app
 // state beside the track selection, which it does not change. A press on a
 // bus strip outside its controls selects the bus; selecting a track, Escape
 // with the lower zone focused, or the bus's removal clears it.

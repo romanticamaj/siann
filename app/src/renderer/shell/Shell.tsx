@@ -654,7 +654,7 @@ export function Shell({
   // The lower zone's tab row is the mockup's .tabs (m5-ui-port-mixer-strip):
   // the MixConsole tab with its icon and key, the spacer, and the rack
   // switches (mixer-racks; m5b-ui-inserts-master, UI redesign 3.4) at the
-  // row's end: Routing, Inserts and Sends (m5b-ui-sends-buses; 10.11, 24),
+  // row's end: Routing, Inserts and Sends (m5b-ui-sends-buses; 10.11, 25),
   // one lit at a time (racks.shown in siann.layout.v1); pressing the lit one
   // turns it off and the strips' rack row is then the empty box, pressing
   // another lights it alone. A switch is rendered only where its rack can be

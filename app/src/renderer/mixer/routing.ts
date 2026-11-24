@@ -1,5 +1,5 @@
 // Output routing and the capability gates of the buses, the sends and the
-// rack switches (m5b-ui-sends-buses; UI redesign 3.0, 3.4; 10.11, 24).
+// rack switches (m5b-ui-sends-buses; UI redesign 3.0, 3.4; 10.11, 25).
 //
 // An output selector lists the master first, then the buses in busOrder: on
 // a track every bus, on a bus every other bus. A bus whose choice would close

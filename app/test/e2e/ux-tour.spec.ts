@@ -1164,7 +1164,7 @@ test('UX screenshot tour', async () => {
     { number: 33 },
   );
   recorder.close();
-  // ---- 38 (m5b-ui-sends-buses; UI redesign 3.4; 10.11, 24; numbered
+  // ---- 38 (m5b-ui-sends-buses; UI redesign 3.4; 10.11, 25; numbered
   // explicitly): a bus strip after the tracks' strips, and Vox Lead's send to
   // it in the Sends rack and in the Inspector's Sends section.
   const mixing = await engineClient(page);

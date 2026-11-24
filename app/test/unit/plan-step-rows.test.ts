@@ -175,7 +175,7 @@ test('a step that names a clip whose media has no name, or an unknown clip, keep
   assert.equal(html(hans[5]!.title), '移动 FX 上的 <b>Riser</b>');
 });
 
-// m5b-ui-sends-buses (4.2; 10.11, 24): the bus, send and routing steps get no
+// m5b-ui-sends-buses (4.2; 10.11, 25): the bus, send and routing steps get no
 // ghost but are read on the plan card: each of the fourteen commands has a
 // row in the three catalogs, named from the session (a bus by its name, a
 // send by its track and bus) or from an earlier bus.add of the plan, never

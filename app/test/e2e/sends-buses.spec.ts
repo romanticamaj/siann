@@ -1,5 +1,5 @@
 // Bus strips, send slots and output routing end to end (m5b-ui-sends-buses;
-// UI redesign 3.4, 3.0, 3.6, 4.5 C5; 10.11, 24; docs/schemas/
+// UI redesign 3.4, 3.0, 3.6, 4.5 C5; 10.11, 25; docs/schemas/
 // protocol-engine-v0.md, "Buses and sends"). Against the real engine with the
 // fake device and a seeded one-second clip on Keys, played in a cycle over
 // it, so the meters read while the tests act:

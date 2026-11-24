@@ -1,5 +1,5 @@
 // The bus, send and routing commands (m5b-ui-sends-buses; UI redesign 3.4,
-// 10.11, 24; docs/schemas/protocol-engine-v0.md, "Buses and sends"): each
+// 10.11, 25; docs/schemas/protocol-engine-v0.md, "Buses and sends"): each
 // control of a bus strip, a send slot and an output selector sends one
 // command.execute, built here from the snapshot with its revision as
 // expectedRevision. mixer.bus.add is one bus.add with a client-chosen bus_ id

@@ -415,7 +415,7 @@ test('an unticked fade step gives none; a clip neither the snapshot nor a ticked
   assert.equal(hasStripGhost(ghostsOf(FADE_STEPS, fadePreview(fadedSession(), []), fadedSession(), null), 1), false);
 });
 
-// ---- m5b-ui-sends-buses (UI redesign 4.2; 10.11, 24): the kinds bus-add,
+// ---- m5b-ui-sends-buses (UI redesign 4.2; 10.11, 25): the kinds bus-add,
 // bus-remove, send-add and send-remove. The first bus.add keeps the id
 // strip-bus-ghost (key "bus-ghost"), later ones take -2, -3 in step order; a
 // bus.remove dims the bus's strip and the send slots that go with it (the

@@ -11,7 +11,7 @@
 // and every item only where the engine lists its method (spec 3.0). Rebuilt
 // on every locale, capability or recent-list change. Add Bus and Remove Bus
 // (mixer.bus.add, mixer.bus.remove; m5b-ui-sends-buses, UI redesign 3.6;
-// 10.11, 24) follow Studio Setup in the Studio menu until m5b-ui-keymap
+// 10.11, 25) follow Studio Setup in the Studio menu until m5b-ui-keymap
 // completes the menus, on an engine that lists features.buses and the
 // command; Remove Bus is disabled while no bus is selected (enabled: false,
 // which the shell shows as a disabled item). While a proposal is heard (the

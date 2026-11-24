@@ -18,7 +18,7 @@
 // order; a request to reveal a step's ghosts (a hovered or located step)
 // scrolls the mixer by the least amount that shows its strips.
 //
-// Buses (m5b-ui-sends-buses; UI redesign 3.4; 10.11, 24): the bus strips
+// Buses (m5b-ui-sends-buses; UI redesign 3.4; 10.11, 25): the bus strips
 // (BusStrip) stand after the tracks' strips, in busOrder, then the ghost
 // strips of the plan (proposed tracks, then proposed buses), then the
 // master; an engine without features.buses shows none. A press on a bus

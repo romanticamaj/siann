@@ -523,7 +523,7 @@ button.media-remove { min-height: 0; padding: 0 var(--space-1h); font-size: var(
 /* Routing landed (m5b-ui-sends-buses); on an engine that can show neither its
    In row nor its Out row its box is the section the shared rules draw: its
    head and hairline, the body's padding, two rows and the gap between them
-   (91 px in the mockup; UI redesign 3.0, 10.11, 24). */
+   (91 px in the mockup; UI redesign 3.0, 10.11, 25). */
 .inspector-hold.routing { height: calc(var(--section-head-h) + var(--hairline) + var(--space-7q) + var(--space-9q) + 2 * var(--control-h) + var(--space)); }
 /* Inserts landed (m5b-ui-inserts-master); on an engine without plugins its
    box is the section the shared rules draw: its head and hairline, the

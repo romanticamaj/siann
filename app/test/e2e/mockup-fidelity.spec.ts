@@ -390,7 +390,7 @@ async function recordingStates(page: Page, dir: string, locale: string, notes: s
   }
 }
 
-// m5b-ui-sends-buses' app-only states (UI redesign 3.4; 10.11, 24): the
+// m5b-ui-sends-buses' app-only states (UI redesign 3.4; 10.11, 25): the
 // mockup draws the rack row with Inserts lit, no bus strip, no send and the
 // Sends section shut. Two buses (Verb, Delay) and a post-fader send from Vox
 // Lead to Verb are made through the protocol and taken back with
@@ -431,7 +431,7 @@ async function sendsBusesStates(page: Page, dir: string, locale: string, notes: 
     await page.getByTestId(`track-header-${vox}`).click({ position: { x: 30, y: 30 } });
     await expect(page.locator('[data-part="inspector-sends"]').getByTestId('islot-send-snd_fid_verb')).toBeVisible();
     await shootRegion('left-zone', 'left-zone.sends.app.png');
-    notes.push(`The Inspector's Sends section open with Vox Lead's two sends (Verb post-fader, Delay pre-fader) and "+ Add send", under the Routing section's In and Out rows, is ${locale}/left-zone.sends.app.png, the app's alone. The mockup draws the Sends section shut (sec('Sends','','0')); the app draws it open with its body whenever the engine lists features.sends and send.add, so left-zone.app.png has it open, with no send, where left-zone.mockup.png has it shut, and the geometry row of inspector-sends shows the difference (UI redesign 3.4; 10.11, 24). Compare it with ${locale}/left-zone.mockup.png.`);
+    notes.push(`The Inspector's Sends section open with Vox Lead's two sends (Verb post-fader, Delay pre-fader) and "+ Add send", under the Routing section's In and Out rows, is ${locale}/left-zone.sends.app.png, the app's alone. The mockup draws the Sends section shut (sec('Sends','','0')); the app draws it open with its body whenever the engine lists features.sends and send.add, so left-zone.app.png has it open, with no send, where left-zone.mockup.png has it shut, and the geometry row of inspector-sends shows the difference (UI redesign 3.4; 10.11, 25). Compare it with ${locale}/left-zone.mockup.png.`);
 
     // The Sends rack: the strips' send slots, at rest and with Vox Lead's Verb slot hovered (on and Remove beside the level).
     await racks.getByTestId('rack-sends').click();

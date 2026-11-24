@@ -489,7 +489,7 @@ test('a plan\'s master.set_gain: the ghost cap and its line on the master fader,
   await expect(strip.locator('.cap.ghost')).toHaveCount(0);
 });
 
-// m5b-ui-sends-buses (UI redesign 4.2; 10.11, 24): a plan's bus.add is a
+// m5b-ui-sends-buses (UI redesign 4.2; 10.11, 25): a plan's bus.add is a
 // dashed strip labelled new after the bus strips (strip-bus-ghost), and its
 // send.add a dashed slot numbered by its step in the track's sends rack and
 // in the Inspector's Sends section.

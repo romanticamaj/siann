@@ -52,7 +52,7 @@ test('the table of structural ops', () => {
     'plugin.insert',
     'plugin.remove',
     'plugin.set_bypass',
-    // m5b-ui-sends-buses (4.5 C5; 10.11, 24): every bus and send command and the output commit onto main.
+    // m5b-ui-sends-buses (4.5 C5; 10.11, 25): every bus and send command and the output commit onto main.
     'bus.add',
     'bus.remove',
     'bus.rename',

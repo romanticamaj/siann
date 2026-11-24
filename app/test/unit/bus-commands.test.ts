@@ -1,5 +1,5 @@
 // The bus, send and routing commands (m5b-ui-sends-buses; UI redesign 3.4,
-// 10.11, 24; docs/schemas/protocol-engine-v0.md, "Buses and sends"): pure
+// 10.11, 25; docs/schemas/protocol-engine-v0.md, "Buses and sends"): pure
 // builders from a snapshot to the one command.execute each control sends,
 // with the snapshot's revision as expectedRevision. mixer.bus.add names the
 // bus "Bus N" with the lowest free N and a fresh bus_ id; a rename that is

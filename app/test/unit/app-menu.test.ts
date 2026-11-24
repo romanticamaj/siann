@@ -159,7 +159,7 @@ test('no menu item carries the Pool\'s command (m5b-ui-media: the Media tab repl
   }
 });
 
-// m5b-ui-sends-buses (UI redesign 3.6; 10.11, 24): Add Bus and Remove Bus are
+// m5b-ui-sends-buses (UI redesign 3.6; 10.11, 25): Add Bus and Remove Bus are
 // unbound commands in the Studio menu until m5b-ui-keymap completes the
 // menus, only on an engine that lists features.buses (and the command);
 // Remove Bus acts on the selected bus and is disabled while none is selected,
@@ -189,7 +189,7 @@ test('Add Bus and Remove Bus are in the Studio menu with features.buses, Remove 
   assert.deepEqual(commands(noRemove.menus[1]!.items).map((c) => c.command), ['studio.setup', 'mixer.bus.add']);
 });
 
-// The edit guard (UI redesign 4.5 C5; 10.11, 24): while a proposal is heard
+// The edit guard (UI redesign 4.5 C5; 10.11, 25): while a proposal is heard
 // Add Bus and Remove Bus are disabled, the reason in their label (a native
 // menu item has no tooltip on Windows or Linux); the other items stay.
 test('while a proposal is heard Add Bus and Remove Bus are disabled with the reason in every locale', () => {

@@ -517,7 +517,7 @@ test('auto-scroll and the primary time format: defaults, F and the period key, k
 });
 
 // m5b-ui-inserts-master landed the rack switches (mixer-racks; UI redesign
-// 3.4) with Inserts; m5b-ui-sends-buses adds Routing and Sends (10.11, 24):
+// 3.4) with Inserts; m5b-ui-sends-buses adds Routing and Sends (10.11, 25):
 // one rack at a time, kept in siann.layout.v1 as racks.shown; pressing the
 // lit switch turns it off (none lit: the rack row is the empty box),
 // pressing another lights it alone; a layout stored by m5b-ui-inserts-master

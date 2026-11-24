@@ -35,7 +35,7 @@
 // sizes them (the shut ones and the buttons by the shared rules' sizes). The
 // capability rule (3.0): an unlisted control leaves its box.
 //
-// Routing and Sends (m5b-ui-sends-buses; UI redesign 3.0, 3.4; 10.11, 24):
+// Routing and Sends (m5b-ui-sends-buses; UI redesign 3.0, 3.4; 10.11, 25):
 // sec('Routing', ...) holds the In row (m5b-ui-recording's input selector)
 // and the Out row (mixer/OutputSelector.tsx: the master or a bus), each a
 // label and a .pick; it is rendered when either row can be (In: features.

@@ -676,7 +676,7 @@ test('a stored gain above +6 dB pins the cap at the top and warns on the fader a
   assert.ok(classes(level).includes('warn'));
 });
 
-// ---- m5b-ui-sends-buses (UI redesign 3.4, 3.0, 4.2; 10.11, 24). A bus strip
+// ---- m5b-ui-sends-buses (UI redesign 3.4, 3.0, 4.2; 10.11, 25). A bus strip
 // has the track strip's controls: strip()'s rows in its order and classes,
 // its fader to +6 dB on bus:<id>, the pan knob, M and S, the meter on
 // bus:<id>, the readout, its insert rack; the box of e and the R, W and

@@ -192,7 +192,7 @@ test('a heard proposal\'s insert ghosts and bypass ring carry the solid mode', (
 });
 
 // ---- The buses and sends of m5b-ui-sends-buses under the guard (UI redesign
-// 4.5 C5; 10.11, 24): a bus strip's M, S, pan and rename, the output
+// 4.5 C5; 10.11, 25): a bus strip's M, S, pan and rename, the output
 // selectors, a send's on, PRE / POST and Remove and the empty send slot are
 // disabled with the reason while a branch is heard; the bus pan knob stays in
 // the DOM, aria-disabled with the reason as its tooltip (it is not the empty

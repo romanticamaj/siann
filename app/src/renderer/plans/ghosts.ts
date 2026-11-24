@@ -30,7 +30,7 @@
 //   walk's, a ticked clip.trim shortening them by the engine's rule (the fade
 //   in keeps its length first); a clip neither the snapshot nor a ticked
 //   clip.place holds gives none.
-// - the bus and send ghosts (m5b-ui-sends-buses; 10.11, 24): the first
+// - the bus and send ghosts (m5b-ui-sends-buses; 10.11, 25): the first
 //   bus.add keeps the key "bus-ghost" (strip-bus-ghost), later ones take
 //   "bus-ghost-2", "bus-ghost-3" in step order of the ticked ones; a
 //   bus.remove dims the bus's strip and the send slots that go with it (the

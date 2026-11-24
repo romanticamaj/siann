@@ -1,4 +1,4 @@
-// The output selector (m5b-ui-sends-buses; UI redesign 3.4; 10.11, 24): the
+// The output selector (m5b-ui-sends-buses; UI redesign 3.4; 10.11, 25): the
 // Routing rack of a strip and the Inspector's Out row.
 //
 // - RoutingRack: the strip's rack row with the Routing switch lit, strip()'s

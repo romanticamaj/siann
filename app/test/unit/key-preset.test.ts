@@ -203,7 +203,7 @@ test('New, Open and Save are Cubase\'s keys; Studio Setup and Open Recent are un
   assert.ok(!(COMMAND_IDS as readonly string[]).includes('project.openRecent.11'), 'ten recent entries, no more');
 });
 
-// m5b-ui-sends-buses (UI redesign 3.4; 10.11, 24): Escape with the lower zone
+// m5b-ui-sends-buses (UI redesign 3.4; 10.11, 25): Escape with the lower zone
 // focused clears the bus selection. A press on a bus strip leaves the focus
 // on the zone's frame (the strip is not focusable), so the key is the lower
 // zone's edit.cancel, as the project zone's Escape is, and not a handler on

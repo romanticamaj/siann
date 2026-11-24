@@ -53,7 +53,7 @@
 // insert row an empty box and nothing to operate. A click on a ghost pins its
 // step (plans/ghost-context.ts).
 //
-// The rack row (m5b-ui-sends-buses; UI redesign 3.4; 10.11, 24) shows the
+// The rack row (m5b-ui-sends-buses; UI redesign 3.4; 10.11, 25) shows the
 // rack of the lit switch, one at a time: Inserts (the insert rack), Routing
 // (mixer/OutputSelector.tsx: one .slot, the output selector) or Sends
 // (mixer/SendSlot.tsx: a .slot per send by the two-slot rule); with none

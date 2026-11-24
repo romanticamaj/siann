@@ -1,4 +1,4 @@
-// A bus strip (m5b-ui-sends-buses; UI redesign 3.4, 3.0, 4.2; 10.11, 24):
+// A bus strip (m5b-ui-sends-buses; UI redesign 3.4, 3.0, 4.2; 10.11, 25):
 // strip() for a bus, with the track strip's controls from Strip.tsx. Top to
 // bottom: the rack row (Inserts: the bus's insert rack; Routing: its output
 // selector, the master or another bus; Sends: an empty box, since a send goes
