@@ -84,6 +84,23 @@ async function resize(size: { width: number; height: number }): Promise<void> {
   await expect.poll(() => page.evaluate(() => [window.innerWidth, window.innerHeight])).toEqual([size.width, size.height]);
 }
 
+type ShownZone = 'left' | 'lower' | 'channel' | 'right';
+
+// Resizes, waits for the shell to lay the size out (its data-viewport), then
+// shows each of `zones` a small window starts collapsed (the left and the
+// Channel zone under 1100 px, the lower zone under 760 px high, the right
+// zone a drawer under 1280 px; the right one through Plans) and waits until
+// each is laid out visible. Visibility is read only after the layout settled.
+async function layOut(size: { width: number; height: number }, zones: readonly ShownZone[] = []): Promise<void> {
+  await resize(size);
+  await expect(page.getByTestId('shell')).toHaveAttribute('data-viewport', `${size.width}x${size.height}`);
+  for (const zone of zones) {
+    const element = page.getByTestId(`zone-${zone}`);
+    if ((await element.getAttribute('data-visible')) !== 'true') await page.getByTestId(zone === 'right' ? 'plans-button' : `zone-button-${zone}`).click();
+    await expect(element).toHaveAttribute('data-visible', 'true');
+  }
+}
+
 // Labelled controls whose content is wider than their box.
 async function overflowing(within: string = LABELLED): Promise<string[]> {
   return page.evaluate((selector) => {
@@ -423,8 +440,10 @@ test('the agent row and a titled card fit in every locale at 1440 px and at the 
 
 // m5b-ui-inserts-master: the rack switch, the slot buttons (bypass, e,
 // Remove, the empty slot's +), the Inspector's Inserts section and the open
-// plugin picker fit in en, zh-TW and zh-CN at 1440x900 and 1024x700. The slot's plugin
-// name ellipsises inside its box by design, so the check is on the controls.
+// plugin picker fit in en, zh-TW, zh-CN and the pseudo-locale at 1440x900
+// and 1024x700, the lower and the left zone shown (a small window starts
+// with them collapsed). The slot's plugin name ellipsises inside its box by
+// design, so the check is on the controls.
 // A strip's slot shows its buttons while hovered: they are measured on the
 // hovered slot.
 const PLUGIN = process.env.SIANN_TEST_PLUGIN_CLAP;
@@ -433,7 +452,7 @@ const PICKER = '.plugin-picker button, .plugin-picker .picker-format, .plugin-pi
 
 test('the rack switch, the slots, the Inspector\'s Inserts section and the picker fit in every locale at either window size', async () => {
   test.skip(!PLUGIN, 'set SIANN_TEST_PLUGIN_CLAP');
-  test.setTimeout(180_000);
+  test.setTimeout(240_000);
   scratch = fs.mkdtempSync(path.join(os.tmpdir(), 'siann-fit-inserts-'));
   const sessionDir = seedBundle(scratch, TRACKS);
   app = await launchApp({ sessionDir, userData: path.join(scratch, 'user-data'), languages: ['en-US'], env: { SIANN_ENGINE_TEST_ARGS: JSON.stringify(['--device', 'fake', '--plugin-dir', path.dirname(PLUGIN!)]) } });
@@ -462,11 +481,11 @@ test('the rack switch, the slots, the Inspector\'s Inserts section and the picke
   }, selector);
   // At 1440x900 and at 1024x700 (m5b-ui-keymap, acceptance 7).
   for (const size of SIZES) {
-    await resize(size);
-    await expect(page.getByTestId('mixer-strip-trk_keys').locator('.slot:not(.empty)')).toHaveCount(1);
+    await layOut(size, ['lower', 'left']);
+    await expect(page.getByTestId('mixer-strip-trk_keys').locator('.slot:not(.empty)')).toBeVisible();
     await page.getByTestId('track-header-trk_keys').click();
-    await expect(page.locator('[data-part="inspector-inserts"] .islot:not(.empty)')).toHaveCount(1);
-    for (const locale of ['en', 'zh-Hant', 'zh-Hans'] as const) {
+    await expect(page.locator('[data-part="inspector-inserts"] .islot:not(.empty)')).toBeVisible();
+    for (const locale of LOCALES) {
       const at = `${locale} ${size.width}x${size.height}`;
       await page.evaluate((next) => (window as unknown as { __siannLocale: { setLocale(l: string): void } }).__siannLocale.setLocale(next), locale);
       await expect(page.locator('html')).toHaveAttribute('data-locale', locale);
@@ -488,15 +507,16 @@ test('the rack switch, the slots, the Inspector\'s Inserts section and the picke
 // m5b-ui-sends-buses (UI redesign 3.4, 6.3): the three rack switches, a send
 // slot's controls (on, PRE / POST, Remove) and the empty slot's +, the output
 // selector's slot, the Inspector's Routing and Sends sections, the bus
-// picker and the Add Bus and Remove Bus menu labels fit in en, zh-TW and
-// zh-CN at 1440x900 and 1024x700. The bus name in a slot ellipsises inside its box by
+// picker and the Add Bus and Remove Bus menu labels fit in en, zh-TW, zh-CN
+// and the pseudo-locale at 1440x900 and 1024x700, the lower and the left zone
+// shown (a small window starts with them collapsed). The bus name in a slot ellipsises inside its box by
 // design, so the check is on the controls, and on the room the name keeps
 // in a strip's slot (a strip's PRE / POST is measured focused, where it shows).
 const SENDS = '[data-part=mixer-racks] button, .slot:hover button:not(.pre), .slot.empty, .islot button, .islot.empty, [data-part=inspector-routing] .irow > span:first-child, [data-part=inspector-sends] .sec-h, [data-part=inspector-routing] .sec-h';
 const ROUTING = '.ins .slot, [data-part=inspector-routing] .pick';
 
 test('the rack switches, the send slots, the output selector, the Routing and Sends sections and the bus picker fit in every locale at either window size', async () => {
-  test.setTimeout(180_000);
+  test.setTimeout(240_000);
   scratch = fs.mkdtempSync(path.join(os.tmpdir(), 'siann-fit-sends-'));
   const sessionDir = seedBundle(scratch, TRACKS);
   app = await launchApp({ sessionDir, userData: path.join(scratch, 'user-data'), languages: ['en-US'] });
@@ -514,11 +534,12 @@ test('the rack switches, the send slots, the output selector, the Routing and Se
   engine.close();
   const failures: string[] = [];
   // Each locale at 1440x900, then each at 1024x700 (m5b-ui-keymap, acceptance 7).
-  for (const [size, locale] of SIZES.flatMap((s) => (['en', 'zh-Hant', 'zh-Hans'] as const).map((l) => [s, l] as const))) {
-    if (locale === 'en') {
-      await resize(size);
+  for (const [size, locale] of SIZES.flatMap((s) => LOCALES.map((l) => [s, l] as const))) {
+    if (locale === LOCALES[0]) {
+      await layOut(size, ['lower', 'left']);
       await expect(page.getByTestId('mixer-strip-bus-bus_fit')).toBeVisible();
       await page.getByTestId('track-header-trk_keys').click();
+      await expect(page.locator('[data-part="inspector-routing"]')).toBeVisible();
     }
     const at = `${locale} ${size.width}x${size.height}`;
     await page.evaluate((next) => (window as unknown as { __siannLocale: { setLocale(l: string): void } }).__siannLocale.setLocale(next), locale);
@@ -573,7 +594,7 @@ test('the rack switches, the send slots, the output selector, the Routing and Se
     // The menu labels: the catalog's words, different from the English ones in Chinese.
     const labels = await app.evaluate(({ Menu }) => ['mixer.bus.add', 'mixer.bus.remove'].map((id) => Menu.getApplicationMenu()?.getMenuItemById(id)?.label ?? null));
     expect(labels.every((l) => typeof l === 'string' && l.length > 0), `${at}: ${labels.join(', ')}`).toBe(true);
-    if (locale !== 'en') expect(labels.some((l) => /\p{Script=Han}/u.test(l ?? '')), locale).toBe(true);
+    if (locale === 'zh-Hant' || locale === 'zh-Hans') expect(labels.some((l) => /\p{Script=Han}/u.test(l ?? '')), locale).toBe(true);
     await page.locator('[data-part="mixer-racks"]').getByTestId('rack-inserts').click();
   }
   expect(failures).toEqual([]);
@@ -651,7 +672,8 @@ test('the snap type menu and the repeat dialog fit in every locale at either win
 // panel's controls (its head, the four readouts and Reset) fit on one line in
 // en, zh-TW, zh-CN and the pseudo-locale, at 1440x900 and 1024x700, each with
 // the right zone at its default and at its minimum width (the DSP load goes
-// under 1300 px, spec 2.4).
+// under 1300 px, spec 2.4), the lower zone shown for the loudness row (a
+// small window starts with it collapsed).
 test('the DSP load, the Meter tab, the loudness row and the Meter panel fit in every locale at either window size', async () => {
   test.setTimeout(240_000);
   scratch = fs.mkdtempSync(path.join(os.tmpdir(), 'siann-fit-meter-'));
@@ -666,8 +688,7 @@ test('the DSP load, the Meter tab, the loudness row and the Meter panel fit in e
   for (const [size, locale] of SIZES.flatMap((s) => LOCALES.map((l) => [s, l] as const))) {
     const wide = size.width > 1300;
     if (locale === LOCALES[0]) {
-      await resize(size);
-      if ((await page.getByTestId('zone-right').getAttribute('data-visible')) !== 'true') await page.getByTestId('plans-button').click();
+      await layOut(size, ['lower', 'right']);
       await page.getByTestId('tab-right-meter').click();
       await expect(page.getByTestId('meter-panel')).toBeVisible();
       for (const id of ['strip-master-loudness', 'meter-reset-loudness', 'loudness-momentary', 'loudness-short-term', 'loudness-integrated']) await expect(page.getByTestId(id)).toBeVisible();
@@ -723,8 +744,7 @@ test('the composer, its send control, the request states and their controls fit 
   app = await launchApp({ sessionDir, userData: path.join(scratch, 'user-data'), languages: ['en-US'] });
   page = await app.firstWindow();
   await expect(page.getByTestId('status')).toHaveAttribute('data-status', 'connected');
-  await resize({ width: 1440, height: 900 });
-  if ((await page.getByTestId('zone-right').getAttribute('data-visible')) !== 'true') await page.getByTestId('plans-button').click();
+  await layOut(SIZES[0]!, ['right']);
   const ready = await app.evaluate(() => (globalThis as unknown as { __siannShell: { current(): { port: number; mcpToken: string } } }).__siannShell.current());
   const agent = new Agent(ready.port, ready.mcpToken);
   await agent.rpc('initialize', { protocolVersion: '2025-06-18', capabilities: {}, clientInfo: { name: 'mix-assistant', version: '1' } });
@@ -744,8 +764,7 @@ test('the composer, its send control, the request states and their controls fit 
   const check = async (state: string) => {
     for (const [size, locale] of SIZES.flatMap((s) => LOCALES.map((l) => [s, l] as const))) {
       if (locale === LOCALES[0]) {
-        await resize(size);
-        if ((await page.getByTestId('zone-right').getAttribute('data-visible')) !== 'true') await page.getByTestId('plans-button').click();
+        await layOut(size, ['right']);
         await expect(page.locator('[data-part="composer"]')).toBeVisible();
       }
       const what = `${size.width}x${size.height} ${state}`;
@@ -775,7 +794,7 @@ test('the composer, its send control, the request states and their controls fit 
       });
       for (const entry of report) failures.push(`${locale} ${what}: ${entry}`);
     }
-    await resize(SIZES[0]!);
+    await layOut(SIZES[0]!, ['right']);
   };
   await check('empty');
   // next_request takes the oldest pending request.
