@@ -23,8 +23,10 @@
 // modifiers (editor-model.ts), each release one command.execute with the
 // revision the drag began on; a click sends nothing. H and G zoom about the
 // range's centre; the view is the editor's own and never the layout store's.
-// The only data it reads is the read model and PeaksCache.get(contentHash):
-// no protocol request of its own. Colours are tokens.css custom properties
+// Magnetic Cursor snaps an end to the project cursor, read from the realtime
+// playhead through the event display's PlayheadClock. The only data it reads
+// is the read model, PeaksCache.get(contentHash) and that playhead: no
+// protocol request of its own. Colours are tokens.css custom properties
 // read from the container, sizes tokens.ts's.
 
 import { formatDb } from '../format';
@@ -38,7 +40,8 @@ import { GAIN_RADIUS, RULER_HEIGHT, frameToX, type Box, type Viewport } from '..
 import { LayeredSurface } from '../timeline/LayeredSurface';
 import { barOf, gridMarks, rulerMarks } from '../timeline/ruler';
 import { DEFAULT_SNAP, type SnapSettings } from '../timeline/snap';
-import { RULER_MARKS } from '../timeline/TimelineCanvas';
+import { RULER_MARKS, type PlayheadSource } from '../timeline/TimelineCanvas';
+import { PlayheadClock } from '../transport/playhead-clock';
 import { trackColourVar } from '../timeline/track-colour';
 import { waveformColumns } from '../timeline/waveform';
 import {
@@ -69,6 +72,11 @@ export interface SampleEditorOptions {
   // The layout store's snap settings (the event display's).
   readonly snap?: () => SnapSettings;
   readonly platform?: 'mac' | 'other';
+  // The realtime playhead, for Magnetic Cursor as the event display reads it
+  // (RealtimeClient fits); no cursor to snap to when absent.
+  readonly playhead?: Pick<PlayheadSource, 'playhead'>;
+  // The cursor clock's time in milliseconds (performance.now when absent).
+  readonly now?: () => number;
 }
 
 // The editor's hooks for the tests (SIANN_SHELL_TEST=1: window.__siannEditor).
@@ -120,9 +128,11 @@ export class SampleEditorCanvas {
   #gain: Box | null = null;
   #contentDraws = 0;
   #overlayDraws = 0;
+  readonly #clock: PlayheadClock;
 
   constructor(options: SampleEditorOptions) {
     this.#options = options;
+    this.#clock = new PlayheadClock({ now: options.now ?? (() => performance.now()) });
     this.#unsubscribe.push(options.model.subscribe(() => this.#surface.invalidate()));
     this.#unsubscribe.push(options.peaks.subscribe(() => this.#surface.invalidateContent()));
     const overlay = options.overlay;
@@ -289,7 +299,7 @@ export class SampleEditorCanvas {
     const command =
       drag.part === 'gain'
         ? gainDragCommand(drag.snapshot, delta, env)
-        : rangeDragCommand(drag.snapshot, { ...delta, edge: drag.part === 'rangeStart' ? 'left' : 'right' }, this.#view, { ...env, snap: this.#snap() });
+        : rangeDragCommand(drag.snapshot, { ...delta, edge: drag.part === 'rangeStart' ? 'left' : 'right' }, this.#view, { ...env, snap: this.#snap(), cursor: this.#cursorNow() });
     if (command) void this.#options.execute(command.commands, command.expectedRevision).catch(() => undefined);
   }
 
@@ -301,6 +311,14 @@ export class SampleEditorCanvas {
 
   #snap(): SnapSettings {
     return this.#options.snap?.() ?? DEFAULT_SNAP;
+  }
+
+  // The project cursor now, from the clock, as the event display's
+  // #cursorNow reads it: while playing the extrapolated position.
+  #cursorNow(): bigint | null {
+    this.#clock.observe(this.#options.playhead?.playhead() ?? null);
+    const position = this.#clock.position(this.#options.model.getSnapshot()?.root?.sampleRate ?? 48000);
+    return position === null ? null : BigInt(position);
   }
 
   #css(): (name: string) => string {
@@ -450,7 +468,7 @@ export class SampleEditorCanvas {
       return;
     }
     const edge = drag.part === 'rangeStart' ? 'left' : 'right';
-    const { target, snapped } = rangeDragTarget(drag.snapshot, drag.clip, edge, drag.dx, this.#view, { snap: this.#snap(), platform: this.#options.platform ?? 'other', flags: drag.flags, allows: () => true });
+    const { target, snapped } = rangeDragTarget(drag.snapshot, drag.clip, edge, drag.dx, this.#view, { snap: this.#snap(), cursor: this.#cursorNow(), platform: this.#options.platform ?? 'other', flags: drag.flags, allows: () => true });
     const x = Math.round(frameToX(target, this.#view));
     ctx.fillStyle = read('--select');
     ctx.fillRect(x - (edge === 'right' ? 1 : 0), RULER_HEIGHT, 1, height - RULER_HEIGHT);

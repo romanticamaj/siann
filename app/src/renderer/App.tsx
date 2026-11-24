@@ -312,7 +312,7 @@ export function App({
           history={history}
           left={<Inspector client={client} gestures={gestures} trackId={tracks.primary} plans={plans} channelVisible={channelVisible} onEditChannel={onEditChannel} />}
           channel={<ChannelZone client={client} gestures={gestures} realtime={realtime} store={meterStore} trackId={tracks.primary} racks={racks} onEditChannel={onEditChannel} onMeterHooks={onChannelMeterHooks} />}
-          lowerEditor={<EditorTab key={epoch} client={client} peaks={peaks} clipId={clipId} layout={layout} commands={commands} platform={platform} onHooks={onEditorHooks} />}
+          lowerEditor={<EditorTab key={epoch} client={client} peaks={peaks} clipId={clipId} layout={layout} commands={commands} platform={platform} realtime={realtime} onHooks={onEditorHooks} />}
           selectedClip={selectedClip}
           project={
             <Counted id="timeline">

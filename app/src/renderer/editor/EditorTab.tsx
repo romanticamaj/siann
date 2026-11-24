@@ -23,6 +23,7 @@ import type { SessionClient } from '../model/session-client';
 import { useHeard } from '../plans/heard-context';
 import { useCapabilities } from '../shell/Capable';
 import type { LayoutStore } from '../shell/layout-store';
+import type { PlayheadSource } from '../timeline/TimelineCanvas';
 import { editorAllows, editorClip } from './editor-model';
 import { SampleEditorCanvas, type EditorTestHooks } from './SampleEditorCanvas';
 
@@ -35,11 +36,14 @@ export interface EditorTabProps {
   readonly layout: LayoutStore;
   readonly commands: CommandRegistry;
   readonly platform: 'mac' | 'other';
+  // The realtime playhead: Magnetic Cursor snaps the range's ends to the
+  // project cursor, as on the event display.
+  readonly realtime?: Pick<PlayheadSource, 'playhead'> | null;
   // Test-only (SIANN_SHELL_TEST=1): the editor's hooks once it is mounted.
   readonly onHooks?: (hooks: EditorTestHooks | null) => void;
 }
 
-export function EditorTab({ client, peaks, clipId, layout, commands, platform, onHooks }: EditorTabProps) {
+export function EditorTab({ client, peaks, clipId, layout, commands, platform, realtime = null, onHooks }: EditorTabProps) {
   const t = useT();
   const can = useCapabilities();
   const heard = useHeard();
@@ -68,6 +72,7 @@ export function EditorTab({ client, peaks, clipId, layout, commands, platform, o
       allows: (op) => allowsRef.current(op),
       snap: () => layout.getSnapshot().layout.snap,
       platform,
+      playhead: realtime ?? undefined,
     });
     setEditor(surface);
     onHooks?.(surface.testHooks());
@@ -76,7 +81,7 @@ export function EditorTab({ client, peaks, clipId, layout, commands, platform, o
       surface.destroy();
       setEditor(null);
     };
-  }, [present, client, peaks, layout, platform, onHooks]);
+  }, [present, client, peaks, layout, platform, realtime, onHooks]);
 
   useEffect(() => {
     editor?.setClip(shown);
