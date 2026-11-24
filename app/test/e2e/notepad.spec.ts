@@ -21,6 +21,7 @@ import * as os from 'node:os';
 import * as path from 'node:path';
 
 import { en } from '../../src/renderer/i18n/en';
+import { translator } from '../../src/renderer/i18n/t';
 import { engineClient, type EngineClient } from './support/engine-client';
 import { agentFor, launchApp, seedBundle, selectPlan } from './support/seed';
 
@@ -235,7 +236,7 @@ test('an applied plan\'s track.set_notes is followed, and selecting another trac
   await engine!.call('command.execute', { commands: [{ op: 'track.set_notes', trackId: 'trk_b', notes: 'Bass notes' }] });
   await selectTrack('trk_b');
   await expect(area()).toHaveValue('Bass notes');
-  await expect(area()).toHaveAttribute('aria-label', en['notepad.label']({ track: 'Bass' }));
+  await expect(area()).toHaveAttribute('aria-label', translator('en')('notepad.label', { track: 'Bass' }));
   await selectTrack('trk_a');
   await expect(area()).toHaveValue('From the plan');
 });

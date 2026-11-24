@@ -84,7 +84,17 @@ export interface Layout {
   // The rack switches of the lower zone's tab row (mixer-racks; m5b-ui-inserts-master,
   // UI redesign 3.4): whether the strips' rack row shows the insert racks.
   readonly racks: RackSwitches;
+  // The Inspector's sections that open and close (m5b-ui-notepad, UI redesign
+  // 3.4): whether the Notepad is open; shut by default, as the mockup draws it.
+  readonly inspector: InspectorSections;
 }
+
+export interface InspectorSections {
+  readonly notepad: boolean;
+}
+export type InspectorSection = keyof InspectorSections;
+const SECTIONS: readonly InspectorSection[] = ['notepad'];
+const DEFAULT_SECTIONS: InspectorSections = Object.freeze({ notepad: false });
 
 export interface RackSwitches {
   readonly inserts: boolean;
@@ -132,7 +142,9 @@ export type ViewAction =
   // The period key: the primary and the secondary format change places.
   | { readonly type: 'exchangeFormats' }
   // A rack switch: flipped, or set with `visible`.
-  | { readonly type: 'rack'; readonly rack: Rack; readonly visible?: boolean };
+  | { readonly type: 'rack'; readonly rack: Rack; readonly visible?: boolean }
+  // An Inspector section's head (m5b-ui-notepad): flipped, or set with `open`.
+  | { readonly type: 'section'; readonly section: InspectorSection; readonly open?: boolean };
 
 // The track list boundary and the lane heights (m5-ui-arrange): no zone, no viewport.
 export type TrackListAction =
@@ -205,6 +217,7 @@ export const DEFAULT_LAYOUT: Layout = Object.freeze({
   timeFormat: 'bars',
   snap: DEFAULT_SNAP,
   racks: DEFAULT_RACKS,
+  inspector: DEFAULT_SECTIONS,
 });
 
 function isZone(zone: unknown): zone is Zone {
@@ -324,7 +337,7 @@ function reduceTrackList(state: ShellState, action: TrackListAction): ShellState
 }
 
 function isViewAction(action: ShellAction): action is ViewAction {
-  return action.type === 'autoScroll' || action.type === 'exchangeFormats' || action.type === 'rack';
+  return action.type === 'autoScroll' || action.type === 'exchangeFormats' || action.type === 'rack' || action.type === 'section';
 }
 
 function reduceView(state: ShellState, action: ViewAction): ShellState {
@@ -339,6 +352,11 @@ function reduceView(state: ShellState, action: ViewAction): ShellState {
       if (!RACKS.includes(action.rack)) return state;
       const visible = action.visible ?? !state.layout.racks[action.rack];
       return visible === state.layout.racks[action.rack] ? state : withLayout(state, { racks: { ...state.layout.racks, [action.rack]: visible } });
+    }
+    case 'section': {
+      if (!SECTIONS.includes(action.section)) return state;
+      const open = action.open ?? !state.layout.inspector[action.section];
+      return open === state.layout.inspector[action.section] ? state : withLayout(state, { inspector: { ...state.layout.inspector, [action.section]: open } });
     }
   }
 }
@@ -447,6 +465,7 @@ export function serializeLayout(layout: Layout): string {
     timeFormat: layout.timeFormat,
     snap: layout.snap,
     racks: layout.racks,
+    inspector: layout.inspector,
   });
 }
 
@@ -460,6 +479,13 @@ function parseRacks(value: unknown): RackSwitches {
   const racks = record(value);
   if (!racks) return DEFAULT_RACKS;
   return { inserts: typeof racks.inserts === 'boolean' ? racks.inserts : DEFAULT_RACKS.inserts };
+}
+
+// The Inspector's sections: each falls back to its default (shut) on its own.
+function parseSections(value: unknown): InspectorSections {
+  const sections = record(value);
+  if (!sections) return DEFAULT_SECTIONS;
+  return { notepad: typeof sections.notepad === 'boolean' ? sections.notepad : DEFAULT_SECTIONS.notepad };
 }
 
 function parseSnap(value: unknown): SnapSettings {
@@ -519,6 +545,7 @@ export function parseLayout(text: string | null): Layout {
     timeFormat: object.timeFormat === 'seconds' || object.timeFormat === 'bars' ? object.timeFormat : DEFAULT_LAYOUT.timeFormat,
     snap: parseSnap(object.snap),
     racks: parseRacks(object.racks),
+    inspector: parseSections(object.inspector),
   };
 }
 
@@ -537,6 +564,7 @@ export function viewFor(
     timeFormat: layout.timeFormat,
     snap: layout.snap,
     racks: layout.racks,
+    inspector: layout.inspector,
     trackHeights: (sessionId !== null ? layout.trackHeights[sessionId] : undefined) ?? {},
   };
 }

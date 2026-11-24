@@ -527,6 +527,38 @@ button.media-remove { min-height: 0; padding: 0 var(--space-1h); font-size: var(
    mockup; UI redesign 3.0). */
 .inspector-hold.inserts { height: calc(var(--section-head-h) + var(--hairline) + var(--space-7q) + var(--space-9q) + 3 * var(--control-h) + 2 * var(--space)); }
 .inspector-hold.sends, .inspector-hold.automation, .inspector-hold.notepad { height: calc(var(--section-head-h) + var(--hairline)); }
+/* The Notepad landed (m5b-ui-notepad; UI redesign 3.4): on an engine without
+   the command track.set_notes its box above is the closed section, its head
+   and hairline. ui/left-zone.css draws the mockup's .sec, .sec-h and .sec-b;
+   these are the app's rules for what the mockup does not draw: the head as a
+   toggle (the focus ring is the global :focus-visible rule), the open
+   section's text area in the composer's look on existing tokens, six control
+   heights tall and scrolling inside, read-only under the edit guard, and the
+   refusal line and the "changed elsewhere" line in the small size. */
+[data-part="inspector-notepad"] > .sec-h { cursor: pointer; user-select: none; }
+.notepad-text {
+  display: block;
+  box-sizing: border-box;
+  width: 100%;
+  height: calc(6 * var(--control-h));
+  margin: 0;
+  padding: var(--space-1h) var(--space-2);
+  border: var(--hairline) solid var(--line-2);
+  border-radius: var(--radius-4);
+  background: var(--bg-3);
+  color: var(--tx-1);
+  font: inherit;
+  font-size: var(--fs-small);
+  line-height: 1.45;
+  resize: none;
+  overflow-y: auto;
+  scrollbar-width: thin;
+}
+.notepad-text:focus-visible { outline: var(--space-half) solid var(--focus-ring); outline-offset: var(--hairline); }
+.notepad-text[readonly] { color: var(--tx-3); cursor: default; }
+.notepad-refusal, .notepad-changed { font-size: var(--fs-small); line-height: 1.45; overflow-wrap: anywhere; }
+.notepad-refusal { color: var(--err-2); }
+.notepad-changed { color: var(--tx-3); }
 /* The In row (m5b-ui-recording) at its place in the Routing section's box:
    below the section's head and the body's top padding, inside its sides, as
    sec('Routing') draws its first .irow (UI redesign 3.4). The native select

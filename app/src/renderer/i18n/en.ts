@@ -531,6 +531,7 @@ export const en = {
   'error.agent_busy': 'The agent already has as many open requests as it takes',
   'error.agent_not_connected': 'The agent is not connected',
   'error.invalid_request_text': 'The text is empty, too long, or holds characters that cannot be sent',
+  'error.invalid_notes': 'The notes are too long or hold characters that cannot be stored',
 
   // Projects and audio setup (m5b-ui-project): the application menu, the
   // start view, the refusals of New and Open, the saved mark, the transport's
@@ -592,6 +593,10 @@ export const en = {
   'agent.step': 'step {n}',
   'agent.pendingIn': 'pending in',
   'agentChanges.none': 'No pending change on this track.',
+  // The Notepad section (m5b-ui-notepad; UI redesign 3.4).
+  'inspector.notepad': 'Notepad',
+  'notepad.label': '{track} notes',
+  'notepad.changedElsewhere': 'The notes changed elsewhere. Leaving keeps this text; Esc shows theirs.',
   // The insert racks, the rack switch and the plugin picker (m5b-ui-inserts-master).
   'inspector.inserts': 'Inserts',
   'inserts.add': 'Add insert',

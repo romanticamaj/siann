@@ -70,6 +70,9 @@ import { PlanPanel } from './plans/PlanPanel';
 import { CapabilitiesContext } from './shell/Capable';
 import { Counted } from './shell/Counted';
 import { Inspector } from './shell/Inspector';
+import { createNotepadStore } from './shell/notepad';
+import { structuralBlocked } from './model/edit-guard';
+import { refusalOf } from './plans/RefusalLine';
 import { MeterPanel } from './shell/MeterPanel';
 import type { LayoutStore } from './shell/layout-store';
 import { Shell } from './shell/Shell';
@@ -230,6 +233,22 @@ export function App({
   const locate = useCallback((frames: string) => void transport.locate(frames), [transport]);
   const timeFormat = useSyncExternalStore(layout.subscribe, () => layout.getSnapshot().layout.timeFormat);
   const racks = useSyncExternalStore(layout.subscribe, () => layout.getSnapshot().layout.racks);
+  // The Notepad (m5b-ui-notepad): its drafts live as long as the window, its
+  // commits go through the edit guard, and whether it is open is kept in
+  // siann.layout.v1.
+  const notepadOpen = useSyncExternalStore(layout.subscribe, () => layout.getSnapshot().layout.inspector.notepad);
+  const toggleNotepad = useCallback(() => layout.dispatch({ type: 'section', section: 'notepad' }), [layout]);
+  const notepad = useMemo(
+    () =>
+      createNotepadStore({
+        model: client.model,
+        execute: (commands, revision) => client.execute(commands, revision),
+        blocked: () => structuralBlocked(plans.getSnapshot().heard),
+        refusal: refusalOf,
+      }),
+    [client, plans],
+  );
+  useEffect(() => () => notepad.dispose(), [notepad]);
   const openMedia = useCallback(() => void commands.run('window', 'media.open'), [commands]);
   const trackName = useCallback((id: string) => (client.model.select(`track:${id}`) as { name?: string } | undefined)?.name ?? id, [client]);
   // R arms the selected track; Num * and Ctrl+Shift+R record (m5b-ui-recording).
@@ -261,7 +280,7 @@ export function App({
           transport={transport}
           loopClick={loopClick}
           history={history}
-          left={<Inspector client={client} gestures={gestures} trackId={tracks.primary} plans={plans} />}
+          left={<Inspector client={client} gestures={gestures} trackId={tracks.primary} plans={plans} notepad={notepad} notepadOpen={notepadOpen} onNotepadToggle={toggleNotepad} />}
           project={
             <Counted id="timeline">
               <Timeline

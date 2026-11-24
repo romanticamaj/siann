@@ -24,7 +24,7 @@ import { renderToStaticMarkup } from 'react-dom/server';
 import { en } from '../../src/renderer/i18n/en';
 import { zhHant } from '../../src/renderer/i18n/zh-Hant';
 import type { Locale, LocaleStore } from '../../src/renderer/i18n/locale';
-import { installLocaleStore, localeStore } from '../../src/renderer/i18n/t';
+import { installLocaleStore, localeStore, translator } from '../../src/renderer/i18n/t';
 import type { Capabilities } from '../../src/renderer/model/capabilities';
 import type { TrackEntity } from '../../src/renderer/model/document';
 import type { GestureController } from '../../src/renderer/model/gesture-controller';
@@ -84,6 +84,8 @@ function render(options: Options = {}): Element {
 const mockupSection = (lang = 'en') => find(parse(loadMockup(lang).leftzone), byAttr('data-part', 'inspector-notepad'));
 const section = (root: Element) => find(root, byAttr('data-part', 'inspector-notepad'));
 const ADDED = ['role', 'tabindex', 'aria-expanded'];
+// HTML attribute names are case-insensitive (React writes readOnly).
+const readOnly = (el: Element) => Object.keys(el.attrs).some((name) => name.toLowerCase() === 'readonly');
 
 test('closed, the section is the mockup\'s sec(\'Notepad\',\'\'): .sec.shut > .sec-h > (svg, the title, a span), no .sec-b', () => {
   for (const [locale, lang] of [['en', 'en'], ['zh-Hant', 'zh-TW']] as const) {
@@ -118,8 +120,8 @@ test('open, the section is .sec (no shut) with .sec-b holding the text area with
   const area = elements(body!)[0]!;
   assert.equal(area.tag, 'textarea');
   assert.equal(text(area), 'Double the chorus\nbreath at bar 9');
-  assert.equal(area.attrs['aria-label'], en['notepad.label']({ track: 'Vox Lead' }));
-  assert.ok(!('readonly' in area.attrs), 'editable while main is heard');
+  assert.equal(area.attrs['aria-label'], translator('en')('notepad.label', { track: 'Vox Lead' }));
+  assert.ok(!readOnly(area), 'editable while main is heard');
   // Nothing else in the body while there is nothing to say.
   assert.deepEqual(elements(body!).map((el) => el.tag), ['textarea']);
 });
@@ -139,7 +141,7 @@ test('without the command track.set_notes the section is not in the DOM and its 
 test('while a proposal is heard the text area is read-only with the guard\'s reason as its title', () => {
   for (const [locale, catalog] of [['en', en], ['zh-Hant', zhHant]] as const) {
     const area = find(section(render({ open: true, heard: 'prp_1', locale })), (el) => el.tag === 'textarea');
-    assert.ok('readonly' in area.attrs, locale);
+    assert.ok(readOnly(area), locale);
     assert.equal(area.attrs.title, catalog['guard.structural']);
   }
 });

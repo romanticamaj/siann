@@ -15,7 +15,8 @@
 //                at the taper's position), the value (b.num, dB)
 //     .i-row     Pan: the label, the slider (its thumb only), the value (C, L35)
 //   five boxes   where sec() draws Routing, Inserts, Sends, Automation and
-//                Notepad, and between the last two the Agent changes section;
+//                Notepad, and between the last two the Agent changes section
+//                (the Notepad is sec() since m5b-ui-notepad: NotepadSection.tsx);
 //                the Routing box holds the In row (m5b-ui-recording: the
 //                input selector, sec('Routing')'s first .irow) at its place
 //                until m5b-ui-sends-buses ports the section around it
@@ -44,6 +45,13 @@
 // section is an empty box, sized by a shell.css calc() of the tokens the
 // shared rules size the section with (the 117 px the mockup measures).
 //
+// Notepad (m5b-ui-notepad; UI redesign 3.4, 10.11 item 23) is the mockup's
+// sec('Notepad','') (NotepadSection.tsx): shut by default, its head opens it (the
+// Shell keeps whether it is open in siann.layout.v1), and open it holds the
+// track's notes in a text area whose drafts are notepad.ts's store. On an
+// engine without the command track.set_notes it is the empty box of the
+// closed section, sized by shell.css (--section-head-h + --hairline).
+//
 // Agent changes (m5b-ui-ghosts; UI redesign 4.2, 4.4) is the mockup's
 // sec('Agent changes'): a .hist row for each applied plan that touched the
 // track ("r31 · <its step on the track> by <b>plan</b> · N steps", the plan
@@ -63,7 +71,7 @@
 // aria-hidden (the value text says both values) and leave with the ghosts. A
 // pending mute or solo rings M or S (.msr.ghost), as the header and the strip do.
 
-import { useRef, useSyncExternalStore, type CSSProperties, type PointerEvent } from 'react';
+import { useEffect, useMemo, useRef, useSyncExternalStore, type CSSProperties, type PointerEvent } from 'react';
 
 import { formatDb, formatPan } from '../format';
 import { useT } from '../i18n/t';
@@ -95,6 +103,9 @@ import { pluginsListed } from '../mixer/inserts';
 import { recordGates } from '../model/record';
 import { useRecordHost } from './record-context';
 import { InputRow, MonitorButton, RecordEnable } from './Recording';
+import { Notepad } from './NotepadSection';
+import { createNotepadStore, type NotepadStore } from './notepad';
+import { refusalOf } from '../plans/RefusalLine';
 
 export interface InspectorProps {
   readonly client: SessionClient;
@@ -102,6 +113,12 @@ export interface InspectorProps {
   readonly trackId: string | null;
   // The plans, for the Agent changes section (m5b-ui-ghosts).
   readonly plans?: PlanStore;
+  // The Notepad's drafts (m5b-ui-notepad), kept by App while the window
+  // lives; without one the Inspector keeps its own.
+  readonly notepad?: NotepadStore;
+  // Whether the Notepad section is open (siann.layout.v1) and its head's toggle.
+  readonly notepadOpen?: boolean;
+  readonly onNotepadToggle?: () => void;
 }
 
 // The zone's key hint: the preset's last chord that shows it (Alt+I, as the mockup writes it).
@@ -276,9 +293,20 @@ function Foot() {
   );
 }
 
-export function Inspector({ client, gestures, trackId, plans }: InspectorProps) {
+// The Inspector's own drafts when App passes none (a zone rendered alone).
+function useOwnNotepad(client: SessionClient, given: NotepadStore | undefined): NotepadStore {
+  const own = useMemo(
+    () => (given ? null : createNotepadStore({ model: client.model, execute: (commands, revision) => client.execute(commands, revision), blocked: () => false, refusal: refusalOf })),
+    [client, given],
+  );
+  useEffect(() => () => own?.dispose(), [own]);
+  return given ?? own!;
+}
+
+export function Inspector({ client, gestures, trackId, plans, notepad, notepadOpen = false, onNotepadToggle }: InspectorProps) {
   const t = useT();
   const can = useCapabilities();
+  const notes = useOwnNotepad(client, notepad);
   const track = useTrack(client, trackId);
   const view = useGhostView();
   const guard = useEditGuard();
@@ -385,7 +413,7 @@ export function Inspector({ client, gestures, trackId, plans }: InspectorProps) 
         return <Hold key={name} className={SECTION_HOLDS[name]} />;
       })}
       <AgentChanges client={client} track={track} plans={plans} />
-      <Hold className={SECTION_HOLDS.notepad} />
+      {can.command('track.set_notes') ? <Notepad track={track} store={notes} open={notepadOpen} onToggle={onNotepadToggle ?? (() => undefined)} /> : <Hold className={SECTION_HOLDS.notepad} />}
       <Foot />
     </>
   );
