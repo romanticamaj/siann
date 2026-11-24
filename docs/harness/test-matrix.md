@@ -321,6 +321,7 @@ test matrix names the protocol parity tests", "gap 2 ... left the gap list",
 |---|---|---|---|---|---|---|
 | m5b-engine-master | Y (`document_test`, `commands_test`, `history_test`, `plan_test`, `plan_hash_test`, `master_session_test`, `master_methods_test`, `gesture_methods_test`, `mcp_adapter_test`, `playback_test`, `audition_test`, `click_test`, `offline_test`, `engine_host_test`) | Y (`playback_test` alloc guard with a master gesture) | | Y (`fixture-parity`, `read-model-fixtures`; app unit `read-model`, `capabilities`) | 3 | - (no UI: the master strip stays a meter until `m5b-ui-inserts-master`; tour states changed: none) |
 | m5b-engine-buses-sends | Y (`document_test`, `commands_test`, `history_test`, `plan_test`, `plan_hash_test`, `buses_session_test`, `graph_test`, `offline_test`, `playback_test`, `plugin_instances_test`, `realtime_channel_test`, `buses_methods_test`, `gesture_methods_test`, `plugin_methods_test`, `mcp_adapter_test`, `engine_host_test`) | Y (`playback_test` alloc guard with a bus and a send gesture) | | Y (`fixture-parity`, `read-model-fixtures`, `plan-hash`; app unit `read-model`, `plan-diff`, `capabilities`) | 3 | - (no UI: buses reach the mixer in a later UI feature; tour states changed: none) |
+| m5b-engine-markers (E-8, UR-9) | Y (`marker_test`, `document_test`, `commands_test`, `history_test`, `plan_test`, `plan_hash_test`, `marker_session_test`, `locators_session_test`, `master_session_test`, `buses_session_test`, `marker_methods_test`, `mcp_adapter_test`, `live_recompile_test`, `cli_test`) | | | Y (`fixture-parity`, `read-model-fixtures`, `plan-hash`; app unit `read-model`, `capabilities`) | 3 | - (no UI: the marker track row stays empty until `m5b-ui-markers`; tour states changed: none) |
 
 Per acceptance item (`m5b-engine-master`): 1 `document_test` "The master
 fixture gives the Node bridge's hashes ...", "A v2 document without the master
@@ -391,6 +392,54 @@ bundle with buses and sends replays to identical hashes"; `buses_methods_test`
 lists features.buses and features.sends ...", sync chunks; `fixture-parity`,
 `read-model-fixtures`, `plan-hash`; app unit `read-model` "(f) bus and send refs
 parse ...", "the buses model fixture syncs ...". 5 none (no UI).
+
+Per acceptance item (`m5b-engine-markers`): 1 `marker_test` "The markers
+fixture gives the Node bridge's hashes and round-trips under JCS", "validate()
+checks marker ranges with invalid_marker", "validate() reports a stored
+display-unsafe marker name as invalid_name", "Marker numbers are unique per kind
+(marker_number_taken)", "Markers are added, modified and removed like any
+entity", "Marker JSON rejects a wrong schema, unknown fields and wrong types";
+`commands_test` "marker.add adds a position or cycle marker and declares exactly
+marker:<id>", "marker.add without a number takes the lowest free one of its
+kind", "marker.add refuses a taken number, a used id and bad values",
+"marker.move keeps number and name, resizes only a cycle marker", "marker.rename
+sets the name, empty included, ...", "marker.add and marker.rename refuse a
+display-unsafe name with invalid_name", "marker.remove removes the marker ...",
+"Marker commands pass the declared-effects check inside a transaction";
+`history_test` "Each marker command is one revision; undo and redo restore the
+exact entity and document hash", "A branch whose marker.add left the number out
+conflicts when main took that number", "Rolling back a plan that removed a
+marker whose number was taken since is rollback_conflict"; `plan_test` "A plan
+with marker steps writes marker refs, applies and rolls back", "A marker plan
+goes stale when its marker changes after submit, not on a rename", "A marker.add
+plan whose number main took meanwhile is stale, not applied as another marker";
+`marker_session_test` "Markers survive a checkpoint and reopen, and journal-only
+replay" (journal lines of type `marker`); `marker_methods_test` "marker commands
+through command.execute reach a second connection as session.changed", "Marker
+errors pass through command.execute and change nothing"; `mcp_adapter_test`
+"execute runs marker.add, submit_plan carries a marker step; list_commands names
+them"; `live_recompile_test` "A marker revision during playback publishes no new
+graph". 2 `marker_test` "v1, v2 and v3 fixtures read with every entity and
+document hash unchanged", "A v1, v2 or v3 document that carries markers is
+unknown_field", "A document without markers writes v4 without a markers
+member"; `marker_session_test` "A literal v3 bundle opens with its recorded
+hashes, has no markers and is written as v4" (session.json and journal.ndjson
+written by siann-cli built from beefbbc3, embedded verbatim); `document_test`,
+`locators_session_test`, `master_session_test` and `buses_session_test` assert
+the written v4; `fixture-parity` "the markers model fixture matches its Node
+generator and keeps every v3 hash". 3 `marker_methods_test` "plan.preview shows
+a marker with before and after", "command.list and engine.capabilities list the
+marker commands; features.markers is true", "session.sync lists markers after
+the master; session.fetch returns marker:<id>", "A sync chunk boundary keeps
+markers after every other entity"; `plan_hash_test` "A writeSet may name a
+marker; the vector hashes as in Node"; `cli_test` "The command catalog is
+listed"; `read-model-fixtures` "the marker steps add, move, rename and remove
+marker:mk_cyc and hash with src/hash"; `plan-hash` "a marker ref is accepted in
+the entity sets ..."; app unit `read-model` "(i) marker refs parse, sync as a
+table and follow session.changed", "the markers model fixture syncs with its
+document hash", `capabilities` "has(method) and feature(name) over the full and
+the reduced capabilities". 4 none (no UI; no token, CSS, mockup or tour change,
+and `marker-track` stays pending in the fidelity manifest).
 
 | Feature | N | R | U | B | Platforms | Gaps |
 |---|---|---|---|---|---|---|
@@ -721,7 +770,7 @@ moved the start there from the client's first connection), all within 5.6.
 No code, so no tests. What matters now is whether each acceptance item says how
 it will be tested. Share of acceptance items that name a test (unit, e2e,
 ctest, ...): M5b 67/133 (the nine UI features that own mockup parts each gained an item for those parts, layer F: since 2026-11-17 "ported from the mockup's markup, side-by-side screenshot attached", with the fidelity run as a report; the four test-gap features appended later are not in this count; `m5b-engine-record`, `m5b-engine-master` and `m5b-engine-clip-fades` (1/4 before its plan, 4/4 since) moved to the table above), M6a 1/3, M6b 0/3, M6c 2/3, M7 1/3. Weakest in M5b:
-`m5b-engine-markers` 0/4 (`m5b-engine-buses-sends`, `m5b-engine-punch-count-in` and `m5b-ui-edit-more`, 10/10 since its plan, moved to the table above).
+none is at 0/4 any more (`m5b-engine-buses-sends`, `m5b-engine-punch-count-in` and `m5b-ui-edit-more`, 10/10 since its plan, and `m5b-engine-markers`, 4/4, moved to the table above).
 
 Added on 2026-11-15, with the maintainer's decision that no part of the mockup
 is unowned (UI redesign 10.5); not in the counts above:

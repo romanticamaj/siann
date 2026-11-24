@@ -115,3 +115,20 @@ test('planHash rejects values that are not plans', () => {
     assert.throws(() => planHash(value), { code: 'invalid_plan' });
   }
 });
+
+// m5b-engine-markers: marker is an entity type, not a singleton (any entity id),
+// and sorts between locators and master by type name.
+test('a marker ref is accepted in the entity sets with any entity id, sorted by type name', () => {
+  const c = byName.marker_write_set;
+  assert.deepEqual(c.plan.writeSet.map((e) => e.type), ['clip', 'locators', 'marker', 'master']);
+  assert.equal(planHash(c.plan), c.planHash);
+  const base = { ...c.plan, writeSet: [] };
+  for (const id of ['mrk_1', 'mk-2', 'marker']) {
+    const plan = { ...base, readSet: [{ type: 'marker', id, hash: null }] };
+    assert.match(planHash(plan), /^sha256:[0-9a-f]{64}$/, id);
+  }
+  const outOfOrder = { ...base, writeSet: [c.plan.writeSet[2], c.plan.writeSet[1]] };
+  assert.throws(() => planHash(outOfOrder), (error) => error.code === 'invalid_entity_set');
+  const badId = { ...base, writeSet: [{ type: 'marker', id: 'mrk 1', hash: null }] };
+  assert.throws(() => planHash(badId), (error) => error.code === 'invalid_entity_set');
+});

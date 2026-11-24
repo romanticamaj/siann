@@ -1202,3 +1202,132 @@ TEST_CASE("clip.set_fade is one revision; undo and redo restore the hashes", "[h
     CHECK(history.undo("a", "t").envelope.documentHash == faded);
     CHECK(history.head().document.clip("clp_1")->fadeOut.length == 960);
 }
+
+// ---- m5b-engine-markers: marker revisions, undo, merge and rollback --------
+
+namespace {
+
+Command addMarker(const std::string& id, const std::string& extra = "") {
+    return cmd(R"({"op":"marker.add","markerId":")" + id + R"(","position":"1000")" + extra + "}");
+}
+
+EntityRef markerRef(const std::string& id) {
+    return EntityRef{EntityType::marker, id};
+}
+
+}  // namespace
+
+TEST_CASE("Each marker command is one revision; undo and redo restore the exact entity and document hash",
+          "[history][markers]") {
+    History history = fresh();
+    const auto none = history.head().envelope.documentHash;
+    const EntityRef ref = markerRef("mk_1");
+    const std::size_t start = history.revisions().size();
+
+    const Revision& added = history.commit({addMarker("mk_1", R"(,"length":"500","name":"Loop")")}, "a", "t");
+    REQUIRE(added.diff.size() == 1);
+    CHECK(added.diff[0].entity == ref);
+    CHECK(added.diff[0].change == DiffEntry::Change::added);
+    const auto hAdded = added.envelope.documentHash;
+    const auto eAdded = added.document.entityHash(ref);
+    const Revision& moved =
+        history.commit({cmd(R"({"op":"marker.move","markerId":"mk_1","position":"2000","length":"700"})")}, "a", "t");
+    REQUIRE(moved.diff.size() == 1);
+    CHECK(moved.diff[0].change == DiffEntry::Change::modified);
+    const auto hMoved = moved.envelope.documentHash;
+    const auto eMoved = moved.document.entityHash(ref);
+    const Revision& renamed =
+        history.commit({cmd(R"({"op":"marker.rename","markerId":"mk_1","name":"Chorus"})")}, "a", "t");
+    REQUIRE(renamed.diff.size() == 1);
+    CHECK(renamed.diff[0].change == DiffEntry::Change::modified);
+    const auto hRenamed = renamed.envelope.documentHash;
+    const Revision& removed = history.commit({cmd(R"({"op":"marker.remove","markerId":"mk_1"})")}, "a", "t");
+    REQUIRE(removed.diff.size() == 1);
+    CHECK(removed.diff[0].change == DiffEntry::Change::removed);
+    CHECK(removed.envelope.documentHash == none);
+    CHECK(history.revisions().size() == start + 4);
+
+    CHECK(history.undo("a", "t").envelope.documentHash == hRenamed);
+    CHECK(history.head().document.marker("mk_1")->name == "Chorus");
+    CHECK(history.undo("a", "t").envelope.documentHash == hMoved);
+    CHECK(history.head().document.entityHash(ref) == eMoved);
+    CHECK(history.undo("a", "t").envelope.documentHash == hAdded);
+    CHECK(history.head().document.entityHash(ref) == eAdded);
+    CHECK(history.head().document.marker("mk_1")->length == std::optional<std::int64_t>(500));
+    const Revision& gone = history.undo("a", "t");
+    CHECK(gone.envelope.documentHash == none);
+    CHECK(history.head().document.marker("mk_1") == nullptr);
+
+    CHECK(history.redo("a", "t").envelope.documentHash == hAdded);
+    CHECK(history.head().document.entityHash(ref) == eAdded);
+    CHECK(history.redo("a", "t").envelope.documentHash == hMoved);
+    CHECK(history.redo("a", "t").envelope.documentHash == hRenamed);
+    CHECK(history.redo("a", "t").envelope.documentHash == none);
+}
+
+TEST_CASE("A branch whose marker.add left the number out conflicts when main took that number",
+          "[history][branch][markers]") {
+    SECTION("main took the number meanwhile") {
+        History h = fresh();
+        h.commit({addMarker("mk_0")}, "a", "t");  // r2: number 1
+        const BranchId b = h.branch(h.head().envelope.id);
+        h.commitOn(b, {addMarker("mk_b")}, "agent", "t");  // number 2 on the branch
+        CHECK(h.branchHead(b).document.marker("mk_b")->number == 2);
+        h.commit({addMarker("mk_m")}, "user", "t");  // number 2 on main
+        const std::size_t count = h.revisions().size();
+        try {
+            h.merge(b, "user", "t");
+            FAIL("expected branch_conflict");
+        } catch (const CommandError& error) {
+            CHECK(error.code() == "branch_conflict");
+            CHECK(std::string(error.what()).find("marker:mk_b") != std::string::npos);
+        }
+        CHECK(h.revisions().size() == count);
+    }
+    SECTION("main did not take it: the merge lands the branch's marker") {
+        History h = fresh();
+        h.commit({addMarker("mk_0")}, "a", "t");
+        const BranchId b = h.branch(h.head().envelope.id);
+        h.commitOn(b, {addMarker("mk_b")}, "agent", "t");
+        h.commit({addMarker("mk_c", R"(,"length":"10")")}, "user", "t");  // a cycle marker numbers apart
+        const Revision& merged = h.merge(b, "user", "t");
+        CHECK(merged.document.marker("mk_b")->number == 2);
+        CHECK(merged.document.marker("mk_c")->number == 1);
+    }
+    SECTION("an explicit number taken on main fails to apply") {
+        History h = fresh();
+        const BranchId b = h.branch(h.head().envelope.id);
+        h.commitOn(b, {addMarker("mk_b", R"(,"number":3)")}, "agent", "t");
+        h.commit({addMarker("mk_m", R"(,"number":3)")}, "user", "t");
+        CHECK(errorCode([&] { h.merge(b, "user", "t"); }) == "branch_conflict");
+    }
+}
+
+TEST_CASE("Rolling back a plan that removed a marker whose number was taken since is rollback_conflict",
+          "[history][rollback][markers]") {
+    History history = fresh();
+    history.commit({addMarker("mk_1", R"(,"number":4)")}, "a", "t");  // r2
+    history.commit({cmd(R"({"op":"marker.remove","markerId":"mk_1"})")}, "agent", "t", Cause::plan);  // r3
+    history.commit({addMarker("mk_2", R"(,"number":4)")}, "a", "t");  // r4 takes number 4
+    // The conflict names the marker that holds the number now.
+    CHECK(rollbackConflicts(history, "r3") == std::vector<EntityRef>{markerRef("mk_2")});
+    CHECK(history.head().document.marker("mk_1") == nullptr);
+
+    SECTION("a number of the other kind does not conflict") {
+        History other = fresh();
+        other.commit({addMarker("mk_1", R"(,"number":4)")}, "a", "t");
+        other.commit({cmd(R"({"op":"marker.remove","markerId":"mk_1"})")}, "agent", "t", Cause::plan);  // r3
+        other.commit({addMarker("mk_2", R"(,"number":4,"length":"10")")}, "a", "t");
+        const Revision& back = other.rollback("r3", "user", "t");
+        CHECK(back.document.marker("mk_1")->number == 4);
+        CHECK(back.document.marker("mk_2")->number == 4);
+        CHECK(refsOf(back.diff) == std::vector<EntityRef>{markerRef("mk_1")});
+    }
+    SECTION("a plan that added a marker rolls back to none") {
+        History added = fresh();
+        added.commit({addMarker("mk_1")}, "agent", "t", Cause::plan);  // r2
+        const Revision& back = added.rollback("r2", "user", "t");
+        CHECK(back.document.marker("mk_1") == nullptr);
+        CHECK(back.envelope.documentHash == added.revisions().front().envelope.documentHash);
+    }
+}

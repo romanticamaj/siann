@@ -113,7 +113,10 @@ set entries), `invalid_plan` (anything else malformed, including unknown fields)
 ## Lifecycle errors
 
 `plan_stale` (with `changedEntities`: `"<type>:<id>"` and `added`, `removed` or
-`modified`), `invalid_state`, `not_found`, `invalid_params`, and at submission
+`modified`; a `writeSet` entity is also `modified` when every recorded hash
+matches but replaying the steps on the head gives it another result than on
+`baseRevision`, as for a `marker.add` without a number whose number main took),
+`invalid_state`, `not_found`, `invalid_params`, and at submission
 `invalid_plan_metadata`. Plans live in engine
 memory in M3 and are not stored in the session bundle.
 

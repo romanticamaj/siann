@@ -59,11 +59,12 @@ bool contains(const std::string& text, const std::string& part) {
     return text.find(part) != std::string::npos;
 }
 
-// Rewrites every "siann.session_document.v3" in a JCS text as v2: the bundle an
+// Rewrites every "siann.session_document.v4" (what the engine writes since
+// m5b-engine-markers) in a JCS text as v2: the bundle an
 // engine before m5b-engine-buses-sends wrote (it has no bus or send field).
 std::string asV2(const std::string& text) {
     std::string out = text;
-    const std::string from = "siann.session_document.v3";
+    const std::string from = "siann.session_document.v4";
     for (auto pos = out.find(from); pos != std::string::npos; pos = out.find(from, pos)) {
         out.replace(pos, from.size(), "siann.session_document.v2");
     }
@@ -103,7 +104,7 @@ std::vector<Command> routing() {
 
 }  // namespace
 
-TEST_CASE("A v2 bundle opens with every recorded hash, has no buses and is written as v3 at its next checkpoint",
+TEST_CASE("A v2 bundle opens with every recorded hash, has no buses and is written as v4 at its next checkpoint",
           "[session][buses][migration]") {
     TempDir dir;
     std::vector<siann::hash::Digest> hashes;
@@ -126,9 +127,9 @@ TEST_CASE("A v2 bundle opens with every recorded hash, has no buses and is writt
     siann::io::writeFileAtomic(dir.bundle() / "journal.ndjson", journalAsV2(journal));
     siann::io::writeFileAtomic(dir.bundle() / "session.json", asV2(checkpoint));
     REQUIRE(contains(siann::io::readFile(dir.bundle() / "journal.ndjson"), "siann.session_document.v2"));
-    REQUIRE_FALSE(contains(siann::io::readFile(dir.bundle() / "journal.ndjson"), "siann.session_document.v3"));
+    REQUIRE_FALSE(contains(siann::io::readFile(dir.bundle() / "journal.ndjson"), "siann.session_document.v4"));
     REQUIRE(contains(siann::io::readFile(dir.bundle() / "session.json"), "siann.session_document.v2"));
-    REQUIRE_FALSE(contains(siann::io::readFile(dir.bundle() / "session.json"), "siann.session_document.v3"));
+    REQUIRE_FALSE(contains(siann::io::readFile(dir.bundle() / "session.json"), "siann.session_document.v4"));
 
     {
         OpenReport report;
@@ -147,7 +148,7 @@ TEST_CASE("A v2 bundle opens with every recorded hash, has no buses and is writt
         CHECK(head.root().busOrder.empty());
         session.checkpoint();
         const std::string written = siann::io::readFile(dir.bundle() / "session.json");
-        CHECK(contains(written, "siann.session_document.v3"));
+        CHECK(contains(written, "siann.session_document.v4"));
         CHECK_FALSE(contains(written, "siann.session_document.v2"));
         CHECK_FALSE(contains(written, R"("buses")"));
         // The journal is append-only: its v2 records stay as they were.

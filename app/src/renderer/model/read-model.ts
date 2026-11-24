@@ -26,6 +26,7 @@ import {
   type Entity,
   type FetchedEntity,
   type LocatorsEntity,
+  type MarkerEntity,
   type MasterEntity,
   type MediaEntity,
   type PluginSlotEntity,
@@ -69,6 +70,8 @@ export interface Snapshot {
   readonly buses: readonly BusEntity[];
   readonly sends: readonly SendEntity[];
   readonly busOrder: readonly string[];
+  // Position and cycle markers in id order (m5b-engine-markers).
+  readonly markers: readonly MarkerEntity[];
   // The user-visible track order (root.trackOrder).
   readonly trackOrder: readonly string[];
 }
@@ -150,7 +153,15 @@ function buildSnapshot(
   entities: Record<string, Entity>,
   hashes: Record<string, string>,
 ): Snapshot {
-  const tables: Record<string, Entity[]> = { media: [], track: [], clip: [], plugin_slot: [], bus: [], send: [] };
+  const tables: Record<string, Entity[]> = {
+    media: [],
+    track: [],
+    clip: [],
+    plugin_slot: [],
+    bus: [],
+    send: [],
+    marker: [],
+  };
   let root: RootEntity | null = null;
   let locators: LocatorsEntity | null = null;
   let master: MasterEntity | null = null;
@@ -178,6 +189,7 @@ function buildSnapshot(
     buses: Object.freeze(tables.bus as BusEntity[]),
     sends: Object.freeze(tables.send as SendEntity[]),
     busOrder: root?.busOrder ?? Object.freeze([]),
+    markers: Object.freeze(tables.marker as MarkerEntity[]),
     trackOrder: root ? root.trackOrder : Object.freeze([]),
   });
 }

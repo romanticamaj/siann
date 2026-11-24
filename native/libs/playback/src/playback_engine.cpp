@@ -339,12 +339,13 @@ CompiledPlayback compileWith(const model::Document& document, const std::filesys
 // True when the edit changes nothing but track gain, pan or mute, the master
 // gain (a parameter of the master gain node however the entity changes), bus
 // gain, pan or mute, send level or enabled (while the solo-silence set stays
-// the same), and the locators (the transport's cycle range, never part of a
-// graph).
+// the same), the locators (the transport's cycle range, never part of a
+// graph) and markers (m5b-engine-markers; never part of a graph).
 bool onlyFaderChanges(const model::Document& before, const model::Document& after) {
     bool mixChanged = false;
     for (const model::DiffEntry& entry : model::diff(before, after)) {
-        if (entry.entity.type == model::EntityType::locators || entry.entity.type == model::EntityType::master) {
+        if (entry.entity.type == model::EntityType::locators || entry.entity.type == model::EntityType::master ||
+            entry.entity.type == model::EntityType::marker) {
             continue;
         }
         if (entry.entity.type == model::EntityType::bus || entry.entity.type == model::EntityType::send) {

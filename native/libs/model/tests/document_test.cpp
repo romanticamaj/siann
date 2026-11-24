@@ -74,13 +74,16 @@ std::vector<std::string> codes(const Document& doc) {
     return out;
 }
 
-// A v2 fixture as the engine writes it: format v3 (m5b-engine-buses-sends),
-// otherwise the same JCS text, since every v3 field is omitted when empty.
-std::string writtenAsV3(const Value& document) {
+// An earlier fixture as the engine writes it: format v4 (m5b-engine-markers),
+// otherwise the same JCS text, since every later field is omitted when empty.
+std::string writtenAsCurrent(const Value& document) {
     std::string text = siann::jcs::canonicalize(document);
-    const std::string from = "siann.session_document.v2";
-    if (const auto pos = text.find(from); pos != std::string::npos) {
-        text.replace(pos, from.size(), "siann.session_document.v3");
+    const std::string earlier[] = {"siann.session_document.v1", "siann.session_document.v2",
+                                   "siann.session_document.v3"};
+    for (const std::string& from : earlier) {
+        if (const auto pos = text.find(from); pos != std::string::npos) {
+            text.replace(pos, from.size(), "siann.session_document.v4");
+        }
     }
     return text;
 }
@@ -131,7 +134,7 @@ TEST_CASE("JSON round trip is byte-identical under JCS", "[model]") {
     const Value fixture = readFixture("model/session-document-v2.json");
     const Value& original = *fixture.find("document");
     const Document doc = Document::fromJson(original);
-    CHECK(siann::jcs::canonicalize(doc.toJson()) == writtenAsV3(original));
+    CHECK(siann::jcs::canonicalize(doc.toJson()) == writtenAsCurrent(original));
     CHECK(Document::fromJson(doc.toJson()).documentHash() == doc.documentHash());
 }
 
@@ -171,13 +174,13 @@ TEST_CASE("A v1 document reads through the migration with no locators and its v1
     CHECK_FALSE(doc.findEntityHash(EntityRef{EntityType::locators, "locators"}).has_value());
     CHECK(formatHash(doc.documentHash()) == v1.find("documentHash")->asString());
 
-    // Written as v3 (m5b-engine-buses-sends), with locators omitted while absent; otherwise the same JSON.
+    // Written as v4 (m5b-engine-markers), with locators omitted while absent; otherwise the same JSON.
     const Value written = doc.toJson();
-    CHECK(written.find("schemaVersion")->asString() == "siann.session_document.v3");
+    CHECK(written.find("schemaVersion")->asString() == "siann.session_document.v4");
     CHECK(written.find("locators") == nullptr);
     std::string expected = siann::jcs::canonicalize(*v1.find("document"));
     const std::string from = "siann.session_document.v1";
-    expected.replace(expected.find(from), from.size(), "siann.session_document.v3");
+    expected.replace(expected.find(from), from.size(), "siann.session_document.v4");
     CHECK(siann::jcs::canonicalize(written) == expected);
     CHECK(Document::fromJson(written).documentHash() == doc.documentHash());
 
@@ -533,12 +536,12 @@ TEST_CASE("The input fixture gives the Node bridge's hashes and v2 keeps its own
         }
     }
     CHECK(formatHash(doc.documentHash()) == fixture.find("documentHash")->asString());
-    CHECK(siann::jcs::canonicalize(doc.toJson()) == writtenAsV3(*fixture.find("document")));
+    CHECK(siann::jcs::canonicalize(doc.toJson()) == writtenAsCurrent(*fixture.find("document")));
 
     // The pre-feature document reads and writes exactly as before.
     const Value v2 = readFixture("model/session-document-v2.json");
     const Document old = Document::fromJson(*v2.find("document"));
-    CHECK(siann::jcs::canonicalize(old.toJson()) == writtenAsV3(*v2.find("document")));
+    CHECK(siann::jcs::canonicalize(old.toJson()) == writtenAsCurrent(*v2.find("document")));
     CHECK(formatHash(old.documentHash()) == v2.find("documentHash")->asString());
 }
 
@@ -656,7 +659,7 @@ TEST_CASE("The media-name fixture gives the Node bridge's hashes and round-trips
         CHECK(formatHash(doc.entityHash(EntityRef{entityTypeOf(type), id})) == leaf.find("entityHash")->asString());
     }
     CHECK(formatHash(doc.documentHash()) == fixture.find("documentHash")->asString());
-    CHECK(siann::jcs::canonicalize(doc.toJson()) == writtenAsV3(original));
+    CHECK(siann::jcs::canonicalize(doc.toJson()) == writtenAsCurrent(original));
 }
 
 TEST_CASE("A media without a name serializes as before and keeps the v1 and v2 hashes", "[model][media]") {
@@ -746,7 +749,7 @@ TEST_CASE("The master fixture gives the Node bridge's hashes and round-trips und
     CHECK(formatHash(doc.documentHash()) == fixture.find("documentHash")->asString());
     CHECK(siann::model::entityTypeName(EntityType::master) == "master");
     CHECK(siann::model::kMasterId == "master");
-    CHECK(siann::jcs::canonicalize(doc.toJson()) == writtenAsV3(original));
+    CHECK(siann::jcs::canonicalize(doc.toJson()) == writtenAsCurrent(original));
     CHECK(siann::jcs::canonicalize(siann::model::toJson(*doc.master())) ==
           siann::jcs::canonicalize(*original.find("master")));
     CHECK(Document::fromJson(doc.toJson()).documentHash() == doc.documentHash());
@@ -759,7 +762,7 @@ TEST_CASE("A v2 document without the master reads with its hash unchanged and wr
     CHECK_FALSE(doc.findEntityHash(kMasterRef).has_value());
     CHECK(formatHash(doc.documentHash()) == v2.find("documentHash")->asString());
     CHECK(doc.toJson().find("master") == nullptr);
-    CHECK(siann::jcs::canonicalize(doc.toJson()) == writtenAsV3(*v2.find("document")));
+    CHECK(siann::jcs::canonicalize(doc.toJson()) == writtenAsCurrent(*v2.find("document")));
     // The master fixture minus its master is the v2 document.
     const Document withMaster =
         Document::fromJson(*readFixture("model/session-document-v2-master.json").find("document"));
@@ -952,7 +955,7 @@ TEST_CASE("The buses fixture gives the Node bridge's hashes and round-trips unde
     CHECK(formatHash(doc.documentHash()) == fixture.find("documentHash")->asString());
     CHECK(siann::model::entityTypeName(EntityType::bus) == "bus");
     CHECK(siann::model::entityTypeName(EntityType::send) == "send");
-    CHECK(siann::jcs::canonicalize(doc.toJson()) == siann::jcs::canonicalize(original));
+    CHECK(siann::jcs::canonicalize(doc.toJson()) == writtenAsCurrent(original));
     CHECK(Document::fromJson(doc.toJson()).documentHash() == doc.documentHash());
 
     // The shapes, entity by entity.
@@ -1014,7 +1017,7 @@ TEST_CASE("Empty bus and send fields are omitted, so a v2 document keeps every h
     }
     CHECK(formatHash(doc.documentHash()) == v2.find("documentHash")->asString());
     const Value written = doc.toJson();
-    CHECK(written.find("schemaVersion")->asString() == "siann.session_document.v3");
+    CHECK(written.find("schemaVersion")->asString() == "siann.session_document.v4");
     CHECK(written.find("buses") == nullptr);
     CHECK(written.find("sends") == nullptr);
     CHECK(written.find("root")->find("busOrder") == nullptr);
@@ -1029,7 +1032,7 @@ TEST_CASE("Empty bus and send fields are omitted, so a v2 document keeps every h
     // Otherwise the same JSON as the v2 input.
     std::string expected = siann::jcs::canonicalize(*v2.find("document"));
     const std::string from = "siann.session_document.v2";
-    expected.replace(expected.find(from), from.size(), "siann.session_document.v3");
+    expected.replace(expected.find(from), from.size(), "siann.session_document.v4");
     CHECK(siann::jcs::canonicalize(written) == expected);
     CHECK(Document::fromJson(written).documentHash() == doc.documentHash());
     // v1 reads too, with its hash.
@@ -1048,11 +1051,12 @@ TEST_CASE("A v1 or v2 document that carries a v3 field is rejected", "[model][bu
     CHECK(errorCode(v2With(R"("solo":false)", R"("sends":[],"solo":false)")) == "unknown_field");
     CHECK(errorCode(v2With(R"("solo":false)", R"("output":{"busId":"bus_x"},"solo":false)")) == "unknown_field");
     CHECK(errorCode(v2With(R"("bypass":false)", R"("busId":"bus_x","bypass":false)")) == "unknown_field");
-    // A newer version is unsupported.
-    CHECK(errorCode(busesFixtureWith("siann.session_document.v3", "siann.session_document.v4")) ==
+    // A version this build does not know is unsupported.
+    CHECK(errorCode(busesFixtureWith("siann.session_document.v3", "siann.session_document.v9")) ==
           "unsupported_version");
-    // The same fields are accepted in v3.
+    // The same fields are accepted in v3 and in v4 (m5b-engine-markers).
     CHECK(errorCode(busesFixtureWith("siann.session_document.v3", "siann.session_document.v3")) == "no error");
+    CHECK(errorCode(busesFixtureWith("siann.session_document.v3", "siann.session_document.v4")) == "no error");
 }
 
 TEST_CASE("Bus, send and slot JSON reject malformed fields", "[model][buses]") {
@@ -1296,11 +1300,11 @@ TEST_CASE("The fades fixture round-trips with the Node bridge's hashes", "[model
         CHECK(formatHash(doc.entityHash(EntityRef{leafType(type), id})) == leaf.find("entityHash")->asString());
     }
     CHECK(formatHash(doc.documentHash()) == fixture.find("documentHash")->asString());
-    // Written as v3 (m5b-engine-buses-sends writes every document in format v3);
+    // Written as v4 (m5b-engine-markers writes every document in format v4);
     // otherwise the same JSON, fades included.
     std::string expected = siann::jcs::canonicalize(original);
     const std::string from = "siann.session_document.v2";
-    expected.replace(expected.find(from), from.size(), "siann.session_document.v3");
+    expected.replace(expected.find(from), from.size(), "siann.session_document.v4");
     CHECK(siann::jcs::canonicalize(doc.toJson()) == expected);
     CHECK(Document::fromJson(doc.toJson()).documentHash() == doc.documentHash());
 
@@ -1401,7 +1405,7 @@ TEST_CASE("The notes fixture gives the Node bridge's hashes and round-trips unde
         CHECK(formatHash(doc.entityHash(EntityRef{entityTypeOf(type), id})) == leaf.find("entityHash")->asString());
     }
     CHECK(formatHash(doc.documentHash()) == fixture.find("documentHash")->asString());
-    CHECK(siann::jcs::canonicalize(doc.toJson()) == writtenAsV3(original));
+    CHECK(siann::jcs::canonicalize(doc.toJson()) == writtenAsCurrent(original));
 }
 
 TEST_CASE("A track without notes serializes as before and every earlier fixture keeps its hashes", "[model][notes]") {

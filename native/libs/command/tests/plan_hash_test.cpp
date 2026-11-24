@@ -248,3 +248,23 @@ TEST_CASE("A clip.set_fade step hashes as the fixture says and prepares against 
     CHECK(clip->fadeOut.length == 960);
     CHECK(clip->fadeOut.curve == siann::model::FadeCurve::equal_power);
 }
+
+// m5b-engine-markers: marker is an entity type of the plan entity sets, not a
+// singleton, and sorts between locators and master.
+TEST_CASE("A writeSet may name a marker; the vector hashes as in Node", "[plan][fixtures][markers]") {
+    const Value* c = &validCase("marker_write_set");  // a pointer: GCC's -Wdangling-reference
+    const Plan plan = Plan::fromJson(*c->find("plan"));
+    REQUIRE(plan.writeSet.size() == 4);
+    CHECK(plan.writeSet[2].ref == siann::model::EntityRef{siann::model::EntityType::marker, "mrk_1"});
+    CHECK_FALSE(plan.writeSet[2].entityHash.has_value());
+    CHECK(plan.steps[0].op() == "marker.add");
+    CHECK(formatHash(planHash(plan)) == c->find("planHash")->asString());
+    CHECK(formatHash(planHash(Plan::fromJson(plan.toJson()))) == c->find("planHash")->asString());
+    // The marker steps apply to a document holding nothing else.
+    const auto applied = siann::command::prepareTransaction(
+        siann::model::Document::create("Song", 48'000),
+        std::vector<siann::command::Command>(plan.steps.begin(), plan.steps.begin() + 2));
+    REQUIRE(applied.result.marker("mrk_1") != nullptr);
+    CHECK(applied.result.marker("mrk_1")->position == 192'000);
+    CHECK(applied.result.marker("mrk_1")->name == "Verse");
+}

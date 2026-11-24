@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include <atomic>
+#include <optional>
 #include <utility>
 
 #include "siann/command/display_text.hpp"
@@ -39,7 +40,7 @@ bool setLess(const EntityRef& a, const EntityRef& b) noexcept {
 std::optional<EntityType> entityTypeFromName(std::string_view name) noexcept {
     for (const EntityType type :
          {EntityType::root, EntityType::media, EntityType::track, EntityType::clip, EntityType::plugin_slot,
-          EntityType::locators, EntityType::master, EntityType::bus, EntityType::send}) {
+          EntityType::locators, EntityType::master, EntityType::bus, EntityType::send, EntityType::marker}) {
         if (model::entityTypeName(type) == name) {
             return type;
         }
@@ -200,7 +201,36 @@ std::vector<EntitySnapshot> writeSetOf(const model::Document& base, const Declar
     return snapshot(base, std::vector<EntityRef>(effects.begin(), effects.end()));
 }
 
-std::vector<StaleEntity> staleEntities(const model::Document& head, const Plan& plan) {
+// The written entities whose outcome on `head` differs from the outcome on the
+// plan's base, though `head` holds them as the plan recorded them: a step whose
+// result depends on more than its declared set (marker.add without a number
+// takes the lowest free number of its kind) would otherwise apply an entity
+// other than the one previewed and approved. Reported as modified. A replay on
+// `head` that fails reports nothing here; apply's commit refuses it with the
+// command's own error.
+std::vector<StaleEntity> changedOutcomes(const model::Document& base, const model::Document& head, const Plan& plan) {
+    std::vector<StaleEntity> out;
+    if (plan.steps.empty() || base.documentHash() == head.documentHash()) {
+        return out;
+    }
+    std::optional<Prepared> onHead;
+    std::optional<Prepared> onBase;
+    try {
+        onHead.emplace(prepareTransaction(head, plan.steps));
+        onBase.emplace(prepareTransaction(base, plan.steps));
+    } catch (const CommandError&) {
+        return out;
+    }
+    for (const EntitySnapshot& entry : plan.writeSet) {
+        if (onHead->result.findEntityHash(entry.ref) != onBase->result.findEntityHash(entry.ref)) {
+            out.push_back(StaleEntity{entry.ref, DiffEntry::Change::modified});
+        }
+    }
+    return out;
+}
+
+std::vector<StaleEntity> staleEntities(const History& history, const Plan& plan) {
+    const model::Document& head = history.head().document;
     std::vector<EntitySnapshot> recorded = plan.readSet;
     recorded.insert(recorded.end(), plan.writeSet.begin(), plan.writeSet.end());
     std::sort(recorded.begin(), recorded.end(),
@@ -220,7 +250,11 @@ std::vector<StaleEntity> staleEntities(const model::Document& head, const Plan& 
                                               : DiffEntry::Change::modified;
         out.push_back(StaleEntity{entry.ref, change});
     }
-    return out;
+    if (!out.empty()) {
+        return out;
+    }
+    const Revision* base = history.find(plan.baseRevision);
+    return base == nullptr ? out : changedOutcomes(base->document, head, plan);
 }
 
 const Revision& requireRevision(const History& history, const std::string& id) {
@@ -469,7 +503,7 @@ std::vector<const Plan*> PlanStore::list() const {
 }
 
 void PlanStore::requireFresh(const History& history, const Plan& plan) const {
-    std::vector<StaleEntity> changed = staleEntities(history.head().document, plan);
+    std::vector<StaleEntity> changed = staleEntities(history, plan);
     if (!changed.empty()) {
         throw PlanStaleError(*plan.hashText, std::move(changed));
     }
@@ -497,7 +531,7 @@ std::vector<StaleEntity> PlanStore::validate(const History& history, std::string
     if (plan == nullptr) {
         throw CommandError("not_found", "no plan with hash " + std::string(planHashText));
     }
-    return staleEntities(history.head().document, *plan);
+    return staleEntities(history, *plan);
 }
 
 const Plan& PlanStore::approve(const History& history, std::string_view planHashText, std::string approvedBy,

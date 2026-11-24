@@ -290,11 +290,11 @@ Content the head document already holds (same `contentHash`) ends `done` with th
 
 ## Names
 
-Every name the document stores, `root.name`, a track's, a bus's, a media's and a plugin slot's `name` (and a marker's when markers land), is well-formed UTF-8 without a control character (U+0000 to U+001F, U+007F to U+009F) and without a display-unsafe character: the bidi formatting characters U+061C, U+200E, U+200F, U+202A to U+202E and U+2066 to U+2069, and U+2028 and U+2029 (the set [Plan v1](plan-v1.md), "Metadata", refuses in plan titles; architecture spec, "siann-model", names). An RLO or an isolate in a track name could otherwise make a plan step read as other text.
+Every name the document stores, `root.name`, a track's, a bus's, a media's, a plugin slot's and a marker's `name`, is well-formed UTF-8 without a control character (U+0000 to U+001F, U+007F to U+009F) and without a display-unsafe character: the bidi formatting characters U+061C, U+200E, U+200F, U+202A to U+202E and U+2066 to U+2069, and U+2028 and U+2029 (the set [Plan v1](plan-v1.md), "Metadata", refuses in plan titles; architecture spec, "siann-model", names). An RLO or an isolate in a track name could otherwise make a plan step read as other text.
 
 | Where | Answer |
 |---|---|
-| `track.add`, `track.rename`, `bus.add`, `bus.rename`, `media.add`, `media.rename`, `session.rename` `name`; `plugin.insert` `descriptor.name` (through `command.execute`, a plan or MCP `execute`) | `invalid_name`; nothing is applied, and in a transaction or plan the error carries the step |
+| `track.add`, `track.rename`, `bus.add`, `bus.rename`, `media.add`, `media.rename`, `marker.add`, `marker.rename`, `session.rename` `name`; `plugin.insert` `descriptor.name` (through `command.execute`, a plan or MCP `execute`) | `invalid_name`; nothing is applied, and in a transaction or plan the error carries the step |
 | `session.create` `name` | `invalid_name`; nothing is created |
 | a name the engine derives: `media.import` (the file name), `session.create` without `name` (the folder name), `plugin.instantiate` (the name the plugin reports) | stripped of those characters, never refused |
 | a bundle whose checkpoint or journal holds such a name | `session.open` fails with `invalid_document` (`invalid_name: ...`); the document is not repaired, since stripping would change the hashes the journal is checked against |
@@ -329,3 +329,16 @@ An unknown track, bus or send is `not_found`, a used id `already_exists`, anothe
 `command.list {}` answers `{commands, cascades}`: `commands` is the sorted string array of `command::commandNames()`, as before, and `cascades` maps a command to the sorted entity types it may remove or change besides its target, `{"bus.remove": ["bus", "plugin_slot", "root", "send", "track"], "track.remove": ["clip", "plugin_slot", "root", "send"]}`; a command without cascades is absent. `engine.capabilities` lists the fourteen commands in `commands` and reports `features.buses: true` and `features.sends: true`.
 
 A bus meters under the key `bus:<id>` ([Protocol events v1](protocol-events-v1.md), `meters.legend`). Bus gain and send level are gesture targets ([Protocol gestures v0](protocol-gestures-v0.md)).
+
+### Markers (m5b-engine-markers, UI redesign E-8)
+
+Position markers and cycle markers are document data, changed with commands through `command.execute`, a plan or MCP `execute`; no method or port is dedicated to them. The entity (architecture spec, "siann-model", M5b marker) is `{schema: "siann.entity.marker.v1", id, number, name, position, length?}`, ref `marker:<id>`: `number` an integer `1..9999`, `name` 0 to 255 UTF-8 bytes (always present, may be empty) that holds what any stored name may ("Names" above), `position` audio-domain frames as a decimal string with `0 <= position <= 2^42`, and `length`, present only on a cycle marker, a decimal string with `1 <= length` and `position + length <= 2^42`. Numbers are unique per kind: a position marker 1 and a cycle marker 1 coexist. The document's `markers` table is omitted while empty, so the document format is `siann.session_document.v4` and every earlier bundle reads unchanged.
+
+| Command | Params | Declares |
+|---|---|---|
+| `marker.add` | `{markerId, position, length?, name?, number?}` | the marker |
+| `marker.move` | `{markerId, position, length?}` | the marker |
+| `marker.rename` | `{markerId, name}` | the marker |
+| `marker.remove` | `{markerId}` | the marker |
+
+`marker.add` without `name` names the marker `""`; without `number` it takes the lowest free number `>= 1` of its kind (position or cycle) in the document it is applied to. `marker.move` keeps the number and the name; `length` resizes a cycle marker and is `invalid_params` on a position marker (a marker never changes its kind). A used id is `already_exists`, an unknown one `not_found`, a taken number `marker_number_taken`, a position, length or number out of range or a name longer than 255 bytes `invalid_marker`, a name with a control or display-unsafe character `invalid_name`, any other field or a value of the wrong type `invalid_params`. Each command is one revision declaring exactly `{marker:<id>}`, so it never makes a rename, tempo or track plan stale; a plan whose `marker.add` left the number out is `plan_stale` on that marker (`modified`) when main took the number it previewed, since apply would add it with another number ([Plan v1](plan-v1.md), "Lifecycle errors"); a marker revision during playback recompiles nothing. `engine.capabilities` lists the four commands in `commands` (and `command.list` in `commands`; no marker command has cascades) and reports `features.markers: true`.

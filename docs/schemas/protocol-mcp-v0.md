@@ -209,7 +209,10 @@ command `session.set_locators` through `execute` (trusted) or a plan, and the
 master gain (m5b-engine-master) with the command `master.set_gain` the same way; no
 tool is dedicated to either. Buses and sends (m5b-engine-buses-sends) likewise go
 through `execute` or a plan with their commands, and `list_commands` returns
-`command.list`'s `{commands, cascades}` unchanged.
+`command.list`'s `{commands, cascades}` unchanged. Markers (m5b-engine-markers)
+are the same: `marker.add`, `marker.move`, `marker.rename` and `marker.remove`
+run through `execute` (trusted) or a plan step (`submit_plan`, propose), and
+`list_commands` lists them; no tool is dedicated to them.
 
 `engine_status` carries `load {average, peak}` (m5b-engine-load-loudness, Protocol
 v0 item 31) like the method it wraps. No tool wraps `meter.reset_loudness`, by

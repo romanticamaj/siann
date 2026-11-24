@@ -91,6 +91,15 @@ const valid = [
     entity('root', 'root'),
     entity('bus', 'bus_a'),
   ]],
+  // m5b-engine-markers: marker leaves sort between locators and master
+  // ("loc" < "mar" < "mas") like any other leaf.
+  ['marker_leaves', [
+    entity('master', 'master'),
+    entity('marker', 'mrk_2'),
+    entity('root', 'root'),
+    entity('locators', 'locators'),
+    entity('marker', 'mrk-1'),
+  ]],
 ].map(([name, entities]) => ({ name, entities, documentHash: expectedDocumentHash(entities) }));
 
 const valid64 = 'a'.repeat(64);

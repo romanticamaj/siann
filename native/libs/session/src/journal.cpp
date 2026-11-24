@@ -59,6 +59,7 @@ EntityType typeFromName(const std::string& name) {
     if (name == "master") return EntityType::master;
     if (name == "bus") return EntityType::bus;
     if (name == "send") return EntityType::send;
+    if (name == "marker") return EntityType::marker;
     throw SessionError("corrupt_record", "unknown entity type " + name);
 }
 

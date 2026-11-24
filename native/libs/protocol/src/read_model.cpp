@@ -19,7 +19,8 @@ constexpr std::string_view kSyncPrefix = "sync_";
 std::optional<model::EntityType> typeFromName(std::string_view name) {
     for (const auto type : {model::EntityType::root, model::EntityType::media, model::EntityType::track,
                             model::EntityType::clip, model::EntityType::plugin_slot, model::EntityType::locators,
-                            model::EntityType::master, model::EntityType::bus, model::EntityType::send}) {
+                            model::EntityType::master, model::EntityType::bus, model::EntityType::send,
+                            model::EntityType::marker}) {
         if (model::entityTypeName(type) == name) {
             return type;
         }
@@ -93,6 +94,10 @@ std::vector<model::EntityRef> syncOrder(const model::Document& document) {
     for (const model::Send* send : document.allSends()) {
         out.push_back({model::EntityType::send, send->id});
     }
+    // Markers in id order, after the sends (m5b-engine-markers).
+    for (const model::Marker* value : document.allMarkers()) {
+        out.push_back({model::EntityType::marker, value->id});
+    }
     return out;
 }
 
@@ -143,6 +148,11 @@ std::optional<json::Value> entityJson(const model::Document& document, const mod
                 return model::toJson(*send);
             }
             return std::nullopt;
+        case model::EntityType::marker:
+            if (const auto* value = document.marker(ref.id)) {
+                return model::toJson(*value);
+            }
+            return std::nullopt;
     }
     return std::nullopt;
 }
@@ -190,6 +200,7 @@ json::Value ReadModel::sync(ConnectionId connection, const json::Value& params, 
     std::optional<Value> master;
     Array buses;
     Array sends;
+    Array markers;
     for (std::size_t i = offset; i < end; ++i) {
         const auto& ref = pin.order[i];
         Value entity = *entityJson(pin.document, ref);
@@ -203,6 +214,7 @@ json::Value ReadModel::sync(ConnectionId connection, const json::Value& params, 
             case model::EntityType::master: master = std::move(entity); break;
             case model::EntityType::bus: buses.push_back(std::move(entity)); break;
             case model::EntityType::send: sends.push_back(std::move(entity)); break;
+            case model::EntityType::marker: markers.push_back(std::move(entity)); break;
         }
     }
     Object chunk;
@@ -230,6 +242,10 @@ json::Value ReadModel::sync(ConnectionId connection, const json::Value& params, 
     }
     if (!sends.empty()) {
         chunk.emplace_back("sends", Value(std::move(sends)));
+    }
+    // The markers likewise, after the sends (m5b-engine-markers).
+    if (!markers.empty()) {
+        chunk.emplace_back("markers", Value(std::move(markers)));
     }
     const Value next = end < pin.order.size() ? Value(pin.syncId + ":" + std::to_string(end)) : Value(nullptr);
     return Value(Object{{"revision", Value(pin.envelope.id)},

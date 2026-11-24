@@ -61,6 +61,9 @@ EntityRef busRef(std::string id) {
 EntityRef sendRef(std::string id) {
     return {EntityType::send, std::move(id)};
 }
+EntityRef markerRef(std::string id) {
+    return {EntityType::marker, std::move(id)};
+}
 
 // Reads a command's parameters; "op" is consumed up front.
 class Params {
@@ -738,6 +741,101 @@ Prepared clipTrim(const Document& doc, const Command& command) {
     });
 }
 
+// ---- markers (m5b-engine-markers) ------------------------------------------
+// Each command declares exactly marker:<id>. Ranges and a taken number are the
+// document's validate() codes (invalid_marker, marker_number_taken); a name is
+// nameParam's rule (invalid_name); a missing or mistyped field is invalid_params.
+
+const model::Marker& requireMarker(const Document& doc, const std::string& id) {
+    const model::Marker* m = doc.marker(id);
+    if (m == nullptr) {
+        throw CommandError("not_found", "no marker with id " + id);
+    }
+    return *m;
+}
+
+// The lowest number >= 1 no marker of the kind holds in `doc`.
+std::int32_t lowestFreeMarkerNumber(const Document& doc, bool cycle) {
+    std::vector<std::int32_t> taken;
+    for (const model::Marker* m : doc.allMarkers()) {
+        if (m->isCycle() == cycle) {
+            taken.push_back(m->number);
+        }
+    }
+    std::sort(taken.begin(), taken.end());
+    std::int32_t next = model::kMinMarkerNumber;
+    for (const std::int32_t number : taken) {
+        if (number == next) {
+            ++next;
+        } else if (number > next) {
+            break;
+        }
+    }
+    return next;
+}
+
+// marker.add {markerId, position, length?, name?, number?}.
+Prepared markerAdd(const Document& doc, const Command& command) {
+    Params p(command);
+    model::Marker m;
+    m.id = p->string("markerId");
+    m.position = p->int64String("position");
+    if (p->optional("length") != nullptr) {
+        m.length = p->int64String("length");
+    }
+    if (p->optional("name") != nullptr) {
+        m.name = nameParam(*p);
+    }
+    const bool hasNumber = p->optional("number") != nullptr;
+    if (hasNumber) {
+        m.number = static_cast<std::int32_t>(p->integer("number", INT32_MIN, INT32_MAX));
+    }
+    p.finish();
+    if (doc.marker(m.id) != nullptr) {
+        throw CommandError("already_exists", "a marker with id " + m.id + " already exists");
+    }
+    if (!hasNumber) {
+        m.number = lowestFreeMarkerNumber(doc, m.isCycle());
+    }
+    const std::string id = m.id;
+    return {{markerRef(id)}, doc.withMarker(std::move(m))};
+}
+
+// marker.move {markerId, position, length?}: number and name stay; a length
+// resizes a cycle marker and is invalid_params on a position marker (a marker
+// never changes its kind).
+Prepared markerMove(const Document& doc, const Command& command) {
+    Params p(command);
+    model::Marker m = requireMarker(doc, p->string("markerId"));
+    m.position = p->int64String("position");
+    if (p->optional("length") != nullptr) {
+        if (!m.isCycle()) {
+            p->fail("length", "only a cycle marker has a length; a marker never changes its kind");
+        }
+        m.length = p->int64String("length");
+    }
+    p.finish();
+    const std::string id = m.id;
+    return {{markerRef(id)}, doc.withMarker(std::move(m))};
+}
+
+Prepared markerRename(const Document& doc, const Command& command) {
+    Params p(command);
+    model::Marker m = requireMarker(doc, p->string("markerId"));
+    m.name = nameParam(*p);
+    p.finish();
+    const std::string id = m.id;
+    return {{markerRef(id)}, doc.withMarker(std::move(m))};
+}
+
+Prepared markerRemove(const Document& doc, const Command& command) {
+    Params p(command);
+    const std::string id = p->string("markerId");
+    p.finish();
+    requireMarker(doc, id);
+    return {{markerRef(id)}, doc.withoutMarker(id)};
+}
+
 using Handler = Prepared (*)(const Document&, const Command&);
 
 const std::map<std::string, Handler, std::less<>>& registry() {
@@ -776,6 +874,10 @@ const std::map<std::string, Handler, std::less<>>& registry() {
              return editClip(d, c, [](Clip& clip, FieldReader& r) { clip.gain = gainParam(r, "gainMilliDb"); });
          }},
         {"clip.trim", &clipTrim},
+        {"marker.add", &markerAdd},
+        {"marker.move", &markerMove},
+        {"marker.remove", &markerRemove},
+        {"marker.rename", &markerRename},
         {"master.set_gain", &masterSetGain},
         {"media.add", &mediaAdd},
         {"media.remove", &mediaRemove},

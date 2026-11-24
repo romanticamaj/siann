@@ -25,6 +25,7 @@ function hashDocument(document) {
   if (document.master) entities.push({ type: 'master', id: 'master', entityHash: sha256Jcs(document.master) });
   for (const entity of document.buses || []) entities.push({ type: 'bus', id: entity.id, entityHash: sha256Jcs(entity) });
   for (const entity of document.sends || []) entities.push({ type: 'send', id: entity.id, entityHash: sha256Jcs(entity) });
+  for (const entity of document.markers || []) entities.push({ type: 'marker', id: entity.id, entityHash: sha256Jcs(entity) });
   return documentHash(entities);
 }
 
@@ -246,4 +247,37 @@ test('the bus steps add, modify and remove bus:b1 and send:s1 and hash with src/
   assert.deepEqual(buses[0].chunk.buses, steps[0].document.buses);
   assert.deepEqual(sends[0].chunk.sends, steps[0].document.sends);
   for (const chunk of sync) assert.equal(chunk.documentHash, steps[0].documentHash);
+});
+
+// m5b-engine-markers: the markers part continues the bus steps in format v4.
+test('the marker steps add, move, rename and remove marker:mk_cyc and hash with src/hash', () => {
+  const { steps, sync } = fixture.markers;
+  assert.deepEqual(steps.map((s) => s.event.changedIds.map((c) => `${c.ref}/${c.change}`)), [
+    ['marker:mk_pos/added'],
+    ['marker:mk_cyc/added'],
+    ['marker:mk_cyc/modified'],
+    ['marker:mk_cyc/modified'],
+    ['marker:mk_cyc/removed'],
+  ]);
+  for (const step of steps) {
+    assert.equal(step.document.schemaVersion, 'siann.session_document.v4');
+    assert.equal(hashDocument(step.document), step.documentHash);
+    for (const { ref, entity } of step.fetch.result.entities) {
+      const id = ref.slice('marker:'.length);
+      assert.deepEqual(entity, step.document.markers.find((m) => m.id === id));
+    }
+  }
+  // The table is sorted by id; move keeps number and name, rename keeps the range.
+  assert.deepEqual(steps[1].document.markers.map((m) => m.id), ['mk_cyc', 'mk_pos']);
+  assert.equal(steps[1].document.markers[0].length, '48000');
+  assert.deepEqual(steps[2].document.markers[0], { ...steps[1].document.markers[0], position: '144000', length: '96000' });
+  assert.equal(steps[3].document.markers[0].name, 'Chorus 聲');
+  assert.equal(steps[4].documentHash, steps[0].documentHash);
+  // The sync: the markers table once, after every other entity.
+  const withMarkers = sync.filter((chunk) => 'markers' in chunk.chunk);
+  assert.equal(withMarkers[withMarkers.length - 1], sync[sync.length - 1]);
+  assert.deepEqual(withMarkers.flatMap((chunk) => chunk.chunk.markers), steps[1].document.markers);
+  for (const chunk of sync) assert.equal(chunk.documentHash, steps[1].documentHash);
+  const keys = Object.keys(sync[sync.length - 1].chunk);
+  assert.equal(keys[keys.length - 1], 'markers');
 });
