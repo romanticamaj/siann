@@ -38,6 +38,14 @@ export interface SlotName {
   readonly name: string;
 }
 
+// A marker as a step names it (m5b-ui-markers): its number (null while a
+// plan's marker.add leaves it to the engine), its name and its kind.
+export interface MarkerName {
+  readonly number: number | null;
+  readonly name: string;
+  readonly cycle: boolean;
+}
+
 // What the session knows of the entities a step names.
 export interface StepNames {
   track(id: string): string | undefined;
@@ -55,6 +63,7 @@ export interface StepNames {
   // A bus by its name and a send by its track and bus (m5b-ui-sends-buses).
   bus?(id: string): string | undefined;
   send?(id: string): SendName | undefined;
+  marker?(id: string): MarkerName | undefined;
 }
 
 export interface SendName {
@@ -94,6 +103,11 @@ export function namesFromSnapshot(snapshot: Snapshot | null, timeFormat: TimeFor
       return typeof name === 'string' && name !== '' ? name : undefined;
     },
     trackOrder: snapshot.trackOrder,
+    marker: (id) => {
+      const marker = entity(`marker:${id}`);
+      if (typeof marker?.name !== 'string' || typeof marker.number !== 'number') return undefined;
+      return { number: marker.number, name: marker.name, cycle: typeof marker.length === 'string' };
+    },
     slot: (id) => {
       const slot = entity(`plugin_slot:${id}`);
       if (typeof slot?.trackId !== 'string' || typeof slot.name !== 'string' || slot.name === '') return undefined;
@@ -127,6 +141,7 @@ export function overlay(names: StepNames, earlier: readonly Record<string, unkno
   const slots = new Map<string, SlotName>();
   const buses = new Map<string, string>();
   const sends = new Map<string, SendName>();
+  const markers = new Map<string, MarkerName>();
   for (const step of earlier) {
     const trackId = str(step.trackId);
     const clipId = str(step.clipId);
@@ -168,6 +183,11 @@ export function overlay(names: StepNames, earlier: readonly Record<string, unkno
         if (sendId && trackId && busId) sends.set(sendId, { trackId, busId });
         break;
       }
+      case 'marker.add': {
+        const markerId = str(step.markerId);
+        if (markerId) markers.set(markerId, { number: typeof step.number === 'number' ? step.number : null, name: str(step.name) ?? '', cycle: typeof step.length === 'string' });
+        break;
+      }
       default:
         break;
     }
@@ -185,6 +205,8 @@ export function overlay(names: StepNames, earlier: readonly Record<string, unkno
     // A rename in the plan does not hide the bus name the user sees now.
     bus: (id) => names.bus?.(id) ?? buses.get(id),
     send: (id) => sends.get(id) ?? names.send?.(id),
+    // A marker the plan adds is named from its step; a rename in the plan does not hide the name the user sees now.
+    marker: (id) => names.marker?.(id) ?? markers.get(id),
   };
 }
 
@@ -247,6 +269,23 @@ function pluginOf(slot: SlotName | undefined, names: StepNames, t: T): string {
   const track = named(names.track(slot.trackId));
   const plugin = isolateName(slot.name);
   return track ? t('step.pluginOn', { plugin, track }) : plugin;
+}
+
+// "marker 3 Chorus", "cycle marker 1", "marker Bridge" (a plan's marker
+// without its number yet), or "a marker".
+function markerOf(id: unknown, names: StepNames, t: T): string {
+  const marker = typeof id === 'string' ? names.marker?.(id) : undefined;
+  if (!marker) return t('step.aMarker');
+  const name = named(marker.name);
+  if (marker.number === null) return name ? t('step.markerNamed', { name }) : t('step.aMarker');
+  if (marker.cycle) return name ? t('step.cycleMarkerNamed', { number: marker.number, name }) : t('step.cycleMarker', { number: marker.number });
+  return name ? t('step.positionMarkerNamed', { number: marker.number, name }) : t('step.positionMarker', { number: marker.number });
+}
+
+// A marker step's end: position + length.
+function endOf(position: string | undefined, length: unknown): string | undefined {
+  if (position === undefined || typeof length !== 'string' || !/^\d+$/.test(position) || !/^\d+$/.test(length)) return undefined;
+  return (BigInt(position) + BigInt(length)).toString();
 }
 
 // An entity ref ("<type>:<id>", as plan_stale's changedEntities name them)
@@ -366,6 +405,29 @@ export function describeStep(
       if (fadeIn !== undefined) return fadeIn === 0n ? t('step.removeFadeIn', { clip }) : t('step.setFadeIn', { clip, length: ms(fadeIn) });
       return fadeOut === 0n ? t('step.removeFadeOut', { clip }) : t('step.setFadeOut', { clip, length: ms(fadeOut!) });
     }
+    case 'marker.add': {
+      // m5b-ui-markers (4.2): a flag at its position, or a range from its start to its end.
+      const at = str(step.position);
+      const time = position(at, names) ?? t('step.newPosition');
+      const name = named(str(step.name));
+      if (typeof step.length === 'string') {
+        const end = position(endOf(at, step.length), names) ?? t('step.newPosition');
+        return name ? t('step.addCycleMarker', { name, time, end }) : t('step.addCycleMarkerUnnamed', { time, end });
+      }
+      return name ? t('step.addMarker', { name, time }) : t('step.addMarkerUnnamed', { time });
+    }
+    case 'marker.move': {
+      const marker = markerOf(step.markerId, names, t);
+      const at = str(step.position);
+      const time = position(at, names) ?? t('step.newPosition');
+      if (typeof step.length === 'string') return t('step.resizeMarker', { marker, time, end: position(endOf(at, step.length), names) ?? t('step.newPosition') });
+      return t('step.moveMarker', { marker, time });
+    }
+    case 'marker.rename':
+      if (typeof step.name === 'string') return t('step.renameMarker', { marker: markerOf(step.markerId, names, t), name: isolateName(step.name) });
+      break;
+    case 'marker.remove':
+      return t('step.removeMarker', { marker: markerOf(step.markerId, names, t) });
     case 'media.add':
       return t('step.addMedia');
     case 'media.remove':

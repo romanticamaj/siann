@@ -977,3 +977,77 @@ TEST_CASE("A marker.add plan whose number main took meanwhile is stale, not appl
     REQUIRE(history.head().document.marker("mk_new") != nullptr);
     CHECK(history.head().document.marker("mk_new")->number == 1);
 }
+
+// A cascading step reaches whatever the document it is applied to holds: on a
+// newer head a track.remove also removes clips placed on the track since the
+// base, and a bus.remove also reroutes tracks and buses routed to it since. The
+// write set, taken at the base, holds none of them, so the plan is stale on
+// each entity its steps would change on head beyond the write set, as
+// History::merge refuses such a branch.
+TEST_CASE("A track.remove plan is stale once a clip is placed on the track after submit", "[plan][cascade]") {
+    History history = base();
+    PlanStore store;
+    const std::string hash = *store.submit(history, {removeTrack("t1")}, {}, "r2").hashText;
+    history.commit({setPan("t3", 100)}, "user", "t");
+    CHECK(store.validate(history, hash).empty());
+    store.approve(history, hash, "user", "t");
+
+    history.commit({placeClip("c1", "t1")}, "user", "t");
+    const auto stale = store.validate(history, hash);
+    REQUIRE(stale.size() == 1);
+    CHECK(stale[0].entity == EntityRef{EntityType::clip, "c1"});
+    CHECK(stale[0].change == DiffEntry::Change::added);
+    const std::string before = history.head().envelope.id;
+    const auto error = staleError([&] { store.apply(history, hash, "agent", "t"); });
+    REQUIRE(error.has_value());
+    CHECK(error->changedEntityKeys() == std::vector<std::string>{"clip:c1"});
+    CHECK(history.head().envelope.id == before);
+    CHECK(history.head().document.clip("c1") != nullptr);
+    CHECK(store.find(hash)->state == PlanState::approved);
+
+    // A clip placed on another track does not reach the plan.
+    history.commit({cmd(R"({"op":"clip.remove","clipId":"c1"})"), placeClip("c2", "t2")}, "user", "t");
+    CHECK(store.validate(history, hash).empty());
+    store.apply(history, hash, "agent", "t");
+    CHECK(history.head().document.track("t1") == nullptr);
+    CHECK(history.head().document.clip("c2") != nullptr);
+}
+
+TEST_CASE("A bus.remove plan is stale once a track, bus or send is routed to the bus after submit",
+          "[plan][cascade][buses]") {
+    History history = base();
+    history.commit({cmd(R"({"op":"bus.add","busId":"b1","name":"Reverb"})"),
+                    cmd(R"({"op":"bus.add","busId":"b2","name":"Delay"})")},
+                   "user", "t");
+    const std::string baseId = history.head().envelope.id;
+    PlanStore store;
+    const std::string hash =
+        *store.submit(history, {cmd(R"({"op":"bus.remove","busId":"b1"})")}, {}, baseId).hashText;
+    CHECK(store.validate(history, hash).empty());
+
+    history.commit({cmd(R"({"op":"track.set_output","trackId":"t2","output":{"busId":"b1"}})")}, "user", "t");
+    auto error = staleError([&] { store.approve(history, hash, "user", "t"); });
+    REQUIRE(error.has_value());
+    CHECK(error->changedEntityKeys() == std::vector<std::string>{"track:t2"});
+    CHECK(error->changedEntities()[0].change == DiffEntry::Change::modified);
+    history.undo("user", "t");
+    CHECK(store.validate(history, hash).empty());
+
+    history.commit({cmd(R"({"op":"bus.set_output","busId":"b2","output":{"busId":"b1"}})")}, "user", "t");
+    error = staleError([&] { store.approve(history, hash, "user", "t"); });
+    REQUIRE(error.has_value());
+    CHECK(error->changedEntityKeys() == std::vector<std::string>{"bus:b2"});
+    history.undo("user", "t");
+
+    history.commit({cmd(R"({"op":"send.add","sendId":"s1","trackId":"t3","busId":"b1"})")}, "user", "t");
+    error = staleError([&] { store.approve(history, hash, "user", "t"); });
+    REQUIRE(error.has_value());
+    CHECK(error->changedEntityKeys() == std::vector<std::string>{"send:s1", "track:t3"});
+    CHECK(error->changedEntities()[0].change == DiffEntry::Change::added);
+    CHECK(error->changedEntities()[1].change == DiffEntry::Change::modified);
+    history.undo("user", "t");
+
+    store.approve(history, hash, "user", "t");
+    store.apply(history, hash, "agent", "t");
+    CHECK(history.head().document.bus("b1") == nullptr);
+}

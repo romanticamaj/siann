@@ -13,6 +13,7 @@
 
 import type { BusEntity, SendEntity, TrackEntity } from '../model/document';
 import type { Snapshot } from '../model/read-model';
+import { recheck, sameList, type Recheck } from '../model/recheck';
 import type { TimelineCommand } from '../timeline/commands';
 
 function hexId(prefix: string): string {
@@ -125,4 +126,33 @@ export function removalSummary(busId: string, snapshot: Snapshot): RemovalSummar
 
 export function needsConfirmation(summary: RemovalSummary): boolean {
   return summary.sends.length > 0 || summary.tracks.length > 0 || summary.buses.length > 0;
+}
+
+// What the bus removal's confirmation shows: the bus's name and its removal
+// summary, and the revision they were read at. Null for a bus the snapshot
+// does not hold.
+export interface BusRemoval {
+  readonly busId: string;
+  readonly name: string;
+  readonly summary: RemovalSummary;
+  readonly revision: string;
+}
+
+export function busRemoval(snapshot: Snapshot, busId: string): BusRemoval | null {
+  const bus = busOf(snapshot, busId);
+  return bus ? { busId, name: bus.name, summary: removalSummary(busId, snapshot), revision: snapshot.revision } : null;
+}
+
+const sameBusRemoval = (a: BusRemoval, b: BusRemoval): boolean =>
+  a.busId === b.busId &&
+  a.name === b.name &&
+  sameList(a.summary.sends, b.summary.sends) &&
+  sameList(a.summary.tracks, b.summary.tracks) &&
+  sameList(a.summary.buses, b.summary.buses);
+
+// The confirmation confirmed (model/recheck.ts): `allowed` is the capability
+// and the edit guard read now.
+export function recheckBusRemoval(shown: BusRemoval, snapshot: Snapshot | null, allowed: boolean): Recheck<BusRemoval> {
+  const current = snapshot ? busRemoval(snapshot, shown.busId) : null;
+  return recheck(shown, current, allowed, sameBusRemoval, () => (snapshot ? removeBusCommand(snapshot, shown.busId) : null));
 }

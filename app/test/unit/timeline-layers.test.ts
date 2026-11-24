@@ -26,7 +26,8 @@ import { ghostClipBox } from '../../src/renderer/timeline/ghost-geometry';
 import { bandRect, type LocatorRange } from '../../src/renderer/timeline/locators';
 import type { LocatorsEntity } from '../../src/renderer/model/document';
 import { clearFrames, fakeSurface, type Call, flushFrames, installSurfaceGlobals, setDevicePixelRatio } from './support/surface';
-import { media, sampleSnapshot, snapshotOf, track } from './support/timeline';
+import { clip, marker, media, sampleSnapshot, snapshotOf, track, withMarkers } from './support/timeline';
+import { markerColourVar } from '../../src/renderer/timeline/markers';
 
 installSurfaceGlobals();
 
@@ -1516,5 +1517,272 @@ test("a plan's fade step: the proposed side a dashed --ai curve at its length, a
       assert.ok(calls.some((c) => c.kind === 'fillText' && c.text === '2'), 'the step number');
       r.canvas.destroy();
     }
+  });
+});
+
+// ---- m5b-ui-markers (UI redesign 3.2, "Marker track" and "How markers are
+// drawn"; 4.2): with the marker track enabled (features.markers and the four
+// commands) the content layer draws draw()'s marker row (--bg-info, the
+// divider at TOP - 1) and on it each position marker's 14 % tint, 2 px bar and
+// "N  name" label in its track-palette colour, then each cycle marker's tinted
+// range with its two bars and label; parts() reports marker-track. The
+// gestures each send one command list; without the track the row stays empty.
+
+const MARKER_SET = [marker('mk_1', 1, '0', 'Intro'), marker('mk_2', 2, '384000', 'Verse 1'), marker('mk_c', 1, '768000', 'Loop', '384000')];
+
+// One track with a clip over bars 1 to 16 (40 px a bar at 2400 frames per pixel), and the markers.
+function markerSnapshot(markers = MARKER_SET): Snapshot {
+  return withMarkers(snapshotOf(['t0'], [track('t0')], [media('med_sq', '1536000')], [clip('clp_1', 't0', 'med_sq', '0', '0', '1536000')]), markers);
+}
+
+function markerRig(options: { enabled?: boolean; snapshot?: Snapshot; ghosts?: readonly Ghost[]; allows?: (op: string) => boolean } = {}) {
+  clearFrames();
+  setDevicePixelRatio(1);
+  const surface = fakeSurface(800, 300);
+  const m = modelOf(options.snapshot ?? markerSnapshot());
+  const playhead = playheadOf();
+  const band = bandSource();
+  const ghosts = ghostSource(options.ghosts ?? []);
+  const executed: Array<{ commands: unknown; revision: string }> = [];
+  const canvas = new TimelineCanvas({
+    content: surface.content,
+    overlay: surface.overlay,
+    container: surface.container,
+    model: m.model,
+    peaks,
+    execute: async (commands, revision) => void executed.push({ commands, revision }),
+    framesPerPixel: 2400,
+    playhead: playhead.source,
+    locators: band.source,
+    ghosts: ghosts.source,
+    ...(options.allows ? { allows: options.allows } : {}),
+    markersEnabled: () => options.enabled ?? true,
+  });
+  flushFrames();
+  return { surface, m, canvas, playhead, band, executed, hooks: canvas.testHooks() };
+}
+
+test("the marker row: draw()'s --bg-info row and divider, each flag's tint, bar and label, then the cycle marker; marker-track in parts()", () => {
+  withNamedTokens(() => {
+    const r = markerRig();
+    const calls = r.surface.contentCalls.calls;
+    const at = (style: string, rect: readonly number[], alpha = 1) =>
+      calls.findIndex((c) => c.kind === 'fillRect' && c.style === style && c.alpha === alpha && rect.every((v, i) => c.args[i] === v));
+    const row = at('--bg-info', [0, 40, 800, 20]);
+    const divider = at('--divider', [0, 59, 800, 1]);
+    const c1 = markerColourVar('mk_1');
+    const c2 = markerColourVar('mk_2');
+    const cc = markerColourVar('mk_c');
+    // Intro: its tint to Verse 1 at 160 px; Verse 1's to the end of the clip at 640 px (a cycle marker ends no tint).
+    const tint1 = at(c1, [1, 42, 158, 15], 0.14);
+    const bar1 = at(c1, [0, 42, 2, 15]);
+    const tint2 = at(c2, [161, 42, 478, 15], 0.14);
+    const bar2 = at(c2, [160, 42, 2, 15]);
+    // The cycle marker over bars 9 to 13: its range at 14 % and a bar inside each end.
+    const cycleTint = at(cc, [320, 42, 160, 15], 0.14);
+    const cycleLeft = at(cc, [320, 42, 2, 15]);
+    const cycleRight = at(cc, [478, 42, 2, 15]);
+    for (const [name, index] of Object.entries({ row, divider, tint1, bar1, tint2, bar2, cycleTint, cycleLeft, cycleRight })) assert.ok(index >= 0, name);
+    assert.ok(row < tint1 && tint1 < bar1, 'the row, then the flags');
+    assert.ok(Math.max(tint2, bar2) < cycleTint, 'the cycle marker above the position tints');
+    // The labels at x + 7 and the row's middle, in --fw-strong --fs-micro.
+    const labels = calls.filter((c) => c.kind === 'fillText' && c.args[1] === 50);
+    assert.deepEqual(labels.map((c) => [c.text, c.args[0]]), [['1  Intro', 7], ['2  Verse 1', 167], ['1  Loop', 327]]);
+    for (const label of labels) assert.ok(label.font.startsWith(`${TOKENS['fw-strong']} ${TOKENS['fs-micro']} `), label.font);
+    // The parts: the marker row, and one part per marker drawn.
+    const parts = Object.fromEntries(r.hooks.parts().map((p) => [p.id, p]));
+    assert.deepEqual(parts['marker-track'], { id: 'marker-track', x: 0, y: 40, w: 800, h: 20 });
+    assert.deepEqual(r.hooks.markers().map((s) => s.id), ['mk_1', 'mk_2', 'mk_c']);
+    r.canvas.destroy();
+  });
+});
+
+test('without the marker track: no marker-track part, nothing drawn in the row, and a press there sends nothing', () => {
+  withNamedTokens(() => {
+    const r = markerRig({ enabled: false });
+    const calls = r.surface.contentCalls.calls;
+    assert.ok(!r.hooks.parts().some((p) => p.id.startsWith('marker')), 'no marker part');
+    const inRow = calls.filter((c) => (c.kind === 'fillRect' || c.kind === 'strokeRect') && c.args[1]! < LANES_TOP && c.args[1]! + c.args[3]! > RULER_HEIGHT);
+    assert.deepEqual(inRow, [], 'the row is empty');
+    assert.deepEqual(r.hooks.markers(), []);
+    r.surface.fire('pointerdown', { clientX: 103, clientY: 50, altKey: true });
+    r.surface.fire('pointerup', { clientX: 103, clientY: 50, altKey: true });
+    r.surface.fire('pointerdown', { clientX: 560, clientY: 50, ctrlKey: true });
+    r.surface.fire('pointermove', { clientX: 640, clientY: 50, ctrlKey: true });
+    r.surface.fire('pointerup', { clientX: 640, clientY: 50, ctrlKey: true });
+    assert.equal(r.canvas.insertMarker(), false);
+    assert.deepEqual(r.executed, []);
+    r.canvas.destroy();
+  });
+});
+
+test('Alt-click adds a snapped position marker, Ctrl-drag on empty space a cycle marker, Insert one at the cursor: one command list each', () => {
+  const r = markerRig();
+  // Snap on, Adapt to Zoom: a beat (24000 frames, 10 px) at this zoom. 103 px is 247200 frames: beat 10.
+  r.surface.fire('pointerdown', { clientX: 103, clientY: 50, altKey: true });
+  r.surface.fire('pointerup', { clientX: 103, clientY: 50, altKey: true });
+  assert.equal(r.executed.length, 1);
+  const [add] = r.executed[0]!.commands as Array<Record<string, unknown>>;
+  assert.deepEqual({ ...add, markerId: undefined }, { op: 'marker.add', markerId: undefined, position: '240000' });
+  assert.match(String(add!.markerId), /^mk_[0-9a-f]{16}$/);
+  assert.equal(r.executed[0]!.revision, 'r7');
+  // Ctrl-drag from 560 to 640 px (bars 15 to 17).
+  r.surface.fire('pointerdown', { clientX: 560, clientY: 50, ctrlKey: true });
+  r.surface.fire('pointermove', { clientX: 600, clientY: 50, ctrlKey: true });
+  r.surface.fire('pointerup', { clientX: 640, clientY: 50, ctrlKey: true });
+  assert.equal(r.executed.length, 2);
+  const [cycle] = r.executed[1]!.commands as Array<Record<string, unknown>>;
+  assert.deepEqual({ op: cycle!.op, position: cycle!.position, length: cycle!.length }, { op: 'marker.add', position: '1344000', length: '192000' });
+  // A Ctrl-click without a drag draws nothing.
+  r.surface.fire('pointerdown', { clientX: 700, clientY: 50, ctrlKey: true });
+  r.surface.fire('pointerup', { clientX: 700, clientY: 50, ctrlKey: true });
+  assert.equal(r.executed.length, 2);
+  // Insert: at the project cursor, unsnapped.
+  r.playhead.emit('100001', false);
+  flushFrames();
+  assert.equal(r.canvas.insertMarker(), true);
+  const [inserted] = r.executed[2]!.commands as Array<Record<string, unknown>>;
+  assert.deepEqual({ op: inserted!.op, position: inserted!.position }, { op: 'marker.add', position: '100001' });
+  r.canvas.destroy();
+});
+
+test('a drag moves a marker (snapped; Ctrl unsnapped), an edge drag resizes a cycle marker, a click selects and Delete removes it', () => {
+  const r = markerRig();
+  // Verse 1's flag at 160 px dragged 24 px (57600 frames): 441600, snapped to beat 18.
+  r.surface.fire('pointerdown', { clientX: 161, clientY: 50 });
+  r.surface.fire('pointermove', { clientX: 175, clientY: 50 });
+  r.surface.fire('pointerup', { clientX: 185, clientY: 50 });
+  assert.deepEqual(r.executed.map((e) => e.commands), [[{ op: 'marker.move', markerId: 'mk_2', position: '432000' }]]);
+  // With Ctrl: unsnapped.
+  r.surface.fire('pointerdown', { clientX: 161, clientY: 50, ctrlKey: true });
+  r.surface.fire('pointermove', { clientX: 185, clientY: 50, ctrlKey: true });
+  r.surface.fire('pointerup', { clientX: 185, clientY: 50, ctrlKey: true });
+  assert.deepEqual(r.executed[1]!.commands, [{ op: 'marker.move', markerId: 'mk_2', position: '441600' }]);
+  // The cycle marker's right edge (480 px) to 520 px: length 480000.
+  r.surface.fire('pointerdown', { clientX: 480, clientY: 50 });
+  r.surface.fire('pointermove', { clientX: 500, clientY: 50 });
+  r.surface.fire('pointerup', { clientX: 520, clientY: 50 });
+  assert.deepEqual(r.executed[2]!.commands, [{ op: 'marker.move', markerId: 'mk_c', position: '768000', length: '480000' }]);
+  // A click selects (no command); a click on empty space clears; Delete removes the selected one.
+  r.surface.fire('pointerdown', { clientX: 161, clientY: 50 });
+  r.surface.fire('pointerup', { clientX: 161, clientY: 50 });
+  assert.equal(r.executed.length, 3);
+  assert.equal(r.hooks.selectedMarker(), 'mk_2');
+  void r.canvas.deleteSelected();
+  assert.deepEqual(r.executed[3]!.commands, [{ op: 'marker.remove', markerId: 'mk_2' }]);
+  r.surface.fire('pointerdown', { clientX: 700, clientY: 50 });
+  r.surface.fire('pointerup', { clientX: 700, clientY: 50 });
+  assert.equal(r.hooks.selectedMarker(), null);
+  r.canvas.destroy();
+});
+
+test('a marker selection and a clip selection exclude each other', () => {
+  const r = markerRig();
+  r.surface.fire('pointerdown', { clientX: 161, clientY: 50 });
+  r.surface.fire('pointerup', { clientX: 161, clientY: 50 });
+  assert.equal(r.hooks.selectedMarker(), 'mk_2');
+  // A click on the clip in the lane selects it and drops the marker.
+  r.surface.fire('pointerdown', { clientX: 300, clientY: LANES_TOP + 30 });
+  r.surface.fire('pointerup', { clientX: 300, clientY: LANES_TOP + 30 });
+  assert.deepEqual(r.hooks.selectedClips(), ['clp_1']);
+  assert.equal(r.hooks.selectedMarker(), null);
+  // And the other way round.
+  r.surface.fire('pointerdown', { clientX: 161, clientY: 50 });
+  r.surface.fire('pointerup', { clientX: 161, clientY: 50 });
+  assert.equal(r.hooks.selectedMarker(), 'mk_2');
+  assert.deepEqual(r.hooks.selectedClips(), []);
+  void r.canvas.deleteSelected();
+  assert.deepEqual(r.executed.map((e) => e.commands), [[{ op: 'marker.remove', markerId: 'mk_2' }]], 'the marker, not the clip');
+  r.canvas.destroy();
+});
+
+test('a double-click on a cycle marker outside its name sets the locators to it; on its name it does not', () => {
+  const r = markerRig();
+  r.surface.fire('dblclick', { clientX: 400, clientY: 50 });
+  assert.deepEqual(r.band.edits, [{ left: 768000n, right: 1152000n }]);
+  // The name "1  Loop" from 327 px.
+  r.surface.fire('dblclick', { clientX: 335, clientY: 50 });
+  assert.equal(r.band.edits.length, 1);
+  assert.deepEqual(r.executed, []);
+  r.canvas.destroy();
+});
+
+test('the edit guard (allows) holds every marker gesture: nothing is sent', () => {
+  const r = markerRig({ allows: (op) => !op.startsWith('marker.') });
+  r.surface.fire('pointerdown', { clientX: 103, clientY: 50, altKey: true });
+  r.surface.fire('pointerup', { clientX: 103, clientY: 50, altKey: true });
+  r.surface.fire('pointerdown', { clientX: 161, clientY: 50 });
+  r.surface.fire('pointermove', { clientX: 185, clientY: 50 });
+  r.surface.fire('pointerup', { clientX: 185, clientY: 50 });
+  assert.equal(r.canvas.insertMarker(), false);
+  assert.deepEqual(r.executed, []);
+  r.canvas.destroy();
+});
+
+test('the marker keys locate: position markers by number (never a cycle marker), next and previous over both kinds', () => {
+  clearFrames();
+  const surface = fakeSurface(800, 300);
+  const m = modelOf(markerSnapshot([...MARKER_SET, marker('mk_3', 3, '960000', 'Chorus'), marker('mk_c3', 3, '48000', 'Fill', '24000')]));
+  const playhead = playheadOf();
+  const located: bigint[] = [];
+  const canvas = new TimelineCanvas({
+    content: surface.content,
+    overlay: surface.overlay,
+    container: surface.container,
+    model: m.model,
+    peaks,
+    execute: async () => undefined,
+    playhead: playhead.source,
+    locate: (frame) => void located.push(frame),
+    markersEnabled: () => true,
+  });
+  flushFrames();
+  assert.equal(canvas.goToMarker(3), true);
+  assert.equal(canvas.goToMarker(4), false);
+  playhead.emit('400000', false);
+  flushFrames();
+  assert.equal(canvas.nextMarker(), true);
+  assert.equal(canvas.previousMarker(), true);
+  assert.deepEqual(located, [960000n, 768000n, 384000n]);
+  playhead.emit('960000', false);
+  flushFrames();
+  assert.equal(canvas.nextMarker(), false, 'nothing after the last marker');
+  canvas.destroy();
+});
+
+test("a plan's marker steps: a ghost flag and a ghost range numbered by step, a moved or removed marker dimmed (parts marker-ghost-*)", () => {
+  withNamedTokens(() => {
+    const ghosts: Ghost[] = [
+      { kind: 'marker-add', step: 2, markerId: 'mk_new', number: 3, name: 'Bridge', position: '1152000', length: null },
+      { kind: 'marker-add', step: 3, markerId: 'mk_cy2', number: 2, name: 'Fill', position: '1344000', length: '96000' },
+      { kind: 'marker-move', step: 4, markerId: 'mk_1', number: 1, name: 'Intro', before: { position: '0', length: null }, after: { position: '96000', length: null } },
+      { kind: 'marker-remove', step: 5, markerId: 'mk_2', number: 2, name: 'Verse 1', position: '384000', length: null },
+    ];
+    const r = markerRig({ ghosts });
+    const calls = r.surface.contentCalls.calls;
+    const parts = r.hooks.parts().map((p) => p.id);
+    for (const id of ['marker-ghost-add', 'marker-ghost-add-2', 'marker-ghost-move', 'marker-ghost-remove']) assert.ok(parts.includes(id), id);
+    const byId = Object.fromEntries(r.hooks.parts().map((p) => [p.id, p]));
+    // The ghost flag at bar 13 (480 px), the ghost range over bars 15 and 16 (560 to 600 px), in the marker row.
+    assert.equal(byId['marker-ghost-add']!.x, 480);
+    assert.deepEqual([byId['marker-ghost-add-2']!.x, byId['marker-ghost-add-2']!.w], [560, 40]);
+    for (const id of ['marker-ghost-add', 'marker-ghost-add-2', 'marker-ghost-move']) assert.deepEqual([byId[id]!.y, byId[id]!.h], [42, 15], id);
+    // In the agent violet: the bars in --ai, each with its step's number.
+    assert.ok(calls.some((c) => c.kind === 'fillRect' && c.style === '--ai' && c.args[0] === 480 && c.args[2] === 2), 'the ghost flag\'s bar');
+    // Each step's number on its disc, in the marker row (the ruler's bar numbers are above it).
+    for (const step of ['2', '3', '4', '5']) {
+      assert.ok(calls.some((c) => c.kind === 'fillText' && c.text === step && c.style === '--ai-ink' && c.args[1]! > RULER_HEIGHT && c.args[1]! < LANES_TOP), `step ${step}`);
+    }
+    // The moved and the removed marker are dimmed (draw()'s 38 %).
+    const dimmed = (colour: string, x: number) => calls.some((c) => c.kind === 'fillRect' && c.style === colour && c.args[0] === x && c.args[2] === 2 && c.alpha === 0.38);
+    assert.ok(dimmed(markerColourVar('mk_1'), 0), 'Intro dimmed where it is');
+    assert.ok(dimmed(markerColourVar('mk_2'), 160), 'Verse 1 dimmed');
+    // The cycle marker no step names stays at full strength.
+    assert.ok(calls.some((c) => c.kind === 'fillRect' && c.style === markerColourVar('mk_c') && c.args[0] === 320 && c.args[2] === 2 && c.alpha === 1));
+    // Without the marker track no marker ghost is drawn either.
+    const off = markerRig({ ghosts, enabled: false });
+    assert.ok(!off.hooks.parts().some((p) => p.id.startsWith('marker')));
+    off.canvas.destroy();
+    r.canvas.destroy();
   });
 });

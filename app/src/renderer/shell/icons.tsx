@@ -158,6 +158,13 @@ const PATHS = {
     </>
   ),
   grid: <path d="M2.5 5.5h11M2.5 10.5h11M5.5 2.5v11M10.5 2.5v11" />,
+  // The marker head's flag (m5b-ui-markers).
+  flag: (
+    <>
+      <path d="M4 13.5v-11" />
+      <path d="M4 3h8l-2 2.75 2 2.75H4" />
+    </>
+  ),
   // Record and monitor (m5b-ui-recording; mockup.html, P.rec and P.mon).
   rec: <circle cx="8" cy="8" r="4.2" fill="currentColor" stroke="none" />,
   mon: (

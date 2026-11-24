@@ -53,8 +53,10 @@ export function isSnapType(value: unknown): value is SnapType {
   return value === 'grid' || value === 'gridRelative' || value === 'events' || value === 'cursor';
 }
 
-// The starts and ends of every audio clip on a lane but the `exclude`d ones
-// (the clips being dragged), and the cursor.
+// The starts and ends of every audio clip on a lane, every position marker
+// and the start and end of every cycle marker (m5b-ui-markers), but the
+// `exclude`d ones (the clips or the marker being dragged, by id), and the
+// cursor.
 export function snapContext(snapshot: Snapshot, exclude: readonly string[], cursor: bigint | null): SnapContext {
   const lanes = new Set(snapshot.trackOrder);
   const skip = new Set(exclude);
@@ -63,6 +65,12 @@ export function snapContext(snapshot: Snapshot, exclude: readonly string[], curs
     if (clip.position.domain !== 'audio' || !lanes.has(clip.trackId) || skip.has(clip.id)) continue;
     const start = BigInt(clip.position.value);
     edges.push(start, start + BigInt(clip.length));
+  }
+  for (const marker of snapshot.markers ?? []) {
+    if (skip.has(marker.id)) continue;
+    const start = BigInt(marker.position);
+    edges.push(start);
+    if (typeof marker.length === 'string') edges.push(start + BigInt(marker.length));
   }
   return { edges, cursor };
 }

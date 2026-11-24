@@ -38,6 +38,12 @@
 //   a send ghost needs its track in the session (a proposed track has no
 //   rack) and its bus in the session or in a ticked bus.add. The other bus
 //   and send steps get no ghost in M5b.
+// - a marker ghost (m5b-ui-markers; 4.2) is a flag (a position marker) or a
+//   range (with a length) in the marker track: marker.add takes its number
+//   from the step, else the lowest free number of its kind among the markers
+//   the ticked steps before it leave, as the engine does; a move, rename or
+//   remove of a marker neither the snapshot nor a ticked marker.add holds
+//   gives none.
 // One descriptor per (step, kind, target): two steps on one field give two.
 
 import type { ClipFade } from '../model/document';
@@ -114,8 +120,27 @@ export type Ghost = (
       readonly before: FadePair;
       readonly after: FadePair;
     }
+  // m5b-ui-markers: a marker's add, move, rename and remove; length null for a position marker.
+  | { readonly kind: 'marker-add'; readonly step: number; readonly markerId: string; readonly number: number; readonly name: string; readonly position: string; readonly length: string | null }
+  | {
+      readonly kind: 'marker-move';
+      readonly step: number;
+      readonly markerId: string;
+      readonly number: number;
+      readonly name: string;
+      readonly before: MarkerPlace;
+      readonly after: MarkerPlace;
+    }
+  | { readonly kind: 'marker-rename'; readonly step: number; readonly markerId: string; readonly number: number; readonly position: string; readonly length: string | null; readonly before: string; readonly after: string }
+  | { readonly kind: 'marker-remove'; readonly step: number; readonly markerId: string; readonly number: number; readonly name: string; readonly position: string; readonly length: string | null }
 ) &
   GhostMode;
+
+// Where a marker is: its position, and a cycle marker's length (null for a position marker).
+export interface MarkerPlace {
+  readonly position: string;
+  readonly length: string | null;
+}
 
 // A clip's two fades; null for a side without one.
 export interface FadePair {
@@ -187,6 +212,19 @@ export function ghostsOf(
   // The tracks a ticked track.add proposes: they have no rack.
   const proposedTracks = new Set<string>();
   const rackTrack = (id: string | undefined): id is string => trackKnown(id) && !proposedTracks.has(id);
+  // The markers as the walk has them now: the snapshot's and the preview's, then the steps'.
+  const markerIds = new Set<string>([...(snapshot?.markers ?? []).map((m) => m.id), ...preview.entities.filter((e) => e.ref.startsWith('marker:')).map((e) => e.ref.slice('marker:'.length))]);
+  const markerOf = (id: string | undefined): Entity | null => (id === undefined ? null : read(`marker:${id}`));
+  const lowestFree = (cycle: boolean): number => {
+    const taken = new Set<number>();
+    for (const id of markerIds) {
+      const m = markerOf(id);
+      if (m && (typeof m.length === 'string') === cycle && typeof m.number === 'number') taken.add(m.number);
+    }
+    let n = 1;
+    while (taken.has(n)) n += 1;
+    return n;
+  };
   const insertsOf = (track: Entity | null): string[] => (Array.isArray(track?.inserts) ? (track.inserts as unknown[]).filter((s): s is string => typeof s === 'string') : []);
 
   // The cascades of plan.preview: the removed clips of a removed track that
@@ -434,6 +472,48 @@ export function ghostsOf(
         if (!send || sendId === undefined || busId === undefined || !rackTrack(owner)) return;
         out.push({ kind: 'send-remove', step: n, sendId, trackId: owner, busId, cascade: false });
         state.set(`send:${sendId}`, null);
+        return;
+      }
+      case 'marker.add': {
+        const markerId = str(step.markerId);
+        const position = str(step.position);
+        if (markerId === undefined || position === undefined || !/^\d+$/.test(position)) return;
+        const length = str(step.length) ?? null;
+        const number = num(step.number) ?? lowestFree(length !== null);
+        const name = str(step.name) ?? '';
+        out.push({ kind: 'marker-add', step: n, markerId, number, name, position, length });
+        markerIds.add(markerId);
+        state.set(`marker:${markerId}`, { id: markerId, number, name, position, ...(length !== null ? { length } : {}) });
+        return;
+      }
+      case 'marker.move':
+      case 'marker.rename':
+      case 'marker.remove': {
+        const markerId = str(step.markerId);
+        const marker = markerOf(markerId);
+        const position = str(marker?.position);
+        if (!marker || markerId === undefined || position === undefined) return;
+        const number = num(marker.number) ?? 0;
+        const name = str(marker.name) ?? '';
+        const length = str(marker.length) ?? null;
+        const ref = `marker:${markerId}`;
+        if (op === 'marker.remove') {
+          out.push({ kind: 'marker-remove', step: n, markerId, number, name, position, length });
+          state.set(ref, null);
+          return;
+        }
+        if (op === 'marker.rename') {
+          const after = str(step.name);
+          if (after === undefined) return;
+          out.push({ kind: 'marker-rename', step: n, markerId, number, position, length, before: name, after });
+          state.set(ref, { ...marker, name: after });
+          return;
+        }
+        const to = str(step.position);
+        if (to === undefined || !/^\d+$/.test(to)) return;
+        const nextLength = length !== null ? (str(step.length) ?? length) : null;
+        out.push({ kind: 'marker-move', step: n, markerId, number, name, before: { position, length }, after: { position: to, length: nextLength } });
+        state.set(ref, { ...marker, position: to, ...(nextLength !== null ? { length: nextLength } : {}) });
         return;
       }
       case 'session.set_locators': {

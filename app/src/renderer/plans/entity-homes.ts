@@ -33,6 +33,7 @@ export function refsOf(step: Record<string, unknown>): string[] {
   if (op.startsWith('bus.') && id('busId')) out.push(`bus:${id('busId')}`);
   if (op.startsWith('send.') && id('sendId')) out.push(`send:${id('sendId')}`);
   if (op.startsWith('master.')) out.push('master:master');
+  if (op.startsWith('marker.') && id('markerId')) out.push(`marker:${id('markerId')}`);
   if (op.startsWith('locators.')) out.push('locators:locators');
   return out;
 }

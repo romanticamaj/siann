@@ -2314,9 +2314,16 @@ Decisions of 2026-11-04 (m3-plans):
   replays the steps on the head and on `baseRevision`: a `writeSet` entity whose
   result differs between the two is `modified` (m5b-engine-markers: a step whose
   result depends on more than its declared set, `marker.add` without a number,
-  would otherwise apply an entity other than the one previewed and approved). A
-  replay that fails on the head adds nothing; apply then refuses with the
-  command's own error, as before.
+  would otherwise apply an entity other than the one previewed and approved).
+  The replay also diffs the head against the steps' result on it: an entity the
+  steps change on the head that is not in `writeSet` is stale too, with its
+  change from `baseRevision` to the head (`modified` when it is as at the base).
+  A cascade reaches what the head holds, so a `track.remove` also removes a clip
+  placed on the track since the base and a `bus.remove` also reroutes a track,
+  bus or send routed to the bus since; the reviewer saw none of them
+  (fix/plan-stale-cascades, the rule `History::merge` applies to a proposal
+  branch). A replay that fails on the head adds nothing; apply then refuses with
+  the command's own error, as before.
   `plan_stale` never changes the plan's state; an undo that restores the recorded
   hashes makes the plan valid again (per entity, not per head revision).
 - Approval (full or partial) needs a `validated` plan, rejection a `validated` or

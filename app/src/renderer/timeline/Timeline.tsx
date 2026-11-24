@@ -32,6 +32,10 @@
 // Ctrl+Shift+A; the toolbar's snap type menu; the info line's typed values
 // (infoLineEditCommand, one command list through the canvas); a refused glue
 // is a toast (the `toasts` store) worded in the locale.
+// m5b-ui-markers: the marker track while the engine lists features.markers
+// and the marker commands (markers.ts markersEnabled), and its keys Insert,
+// Shift+3..9, Num 3..9, Shift+N and Shift+B as window commands; Delete
+// removes the selected marker.
 // m5b-ui-audition (UI redesign 4.5 C5): while a proposal is heard the edit
 // guard (model/edit-guard.ts) holds every structural edit: the canvas's
 // `allows` refuses the structural ops, so no drag, split, place or volume
@@ -69,7 +73,7 @@ import { ConfirmDialog } from '../shell/ConfirmDialog';
 import { createLayoutStore, type LayoutStore } from '../shell/layout-store';
 import type { ToastStore } from '../shell/toast-store';
 import type { TimelineCommand } from './commands';
-import { removeTracksCommand, trackMuteCommand, trackSoloCommand, type GlueRefusal } from './edit-commands';
+import { recheckTrackRemoval, trackMuteCommand, trackRemoval, trackSoloCommand, type GlueRefusal, type TrackRemoval } from './edit-commands';
 import { infoLineEditCommand, type InfoField } from './info-line';
 import { InfoLine } from './InfoLine';
 import { RepeatDialog } from './RepeatDialog';
@@ -89,6 +93,7 @@ import { Toolbar } from './Toolbar';
 import { TrackList, addTrack } from './TrackList';
 import { TrackListDivider } from './TrackListDivider';
 import { MAX_FRAMES_PER_PIXEL } from './zoom';
+import { markersEnabled } from './markers';
 
 const EMPTY_HEIGHTS: Readonly<Record<string, number>> = Object.freeze({});
 const NO_IDS: readonly string[] = Object.freeze([]);
@@ -327,7 +332,7 @@ export function Timeline({
   const layout = given ?? own!;
   const sessionId = useSessionId(client);
   const [timeline, setTimeline] = useState<TimelineCanvas | null>(null);
-  const [removing, setRemoving] = useState<readonly string[] | null>(null);
+  const [removing, setRemoving] = useState<TrackRemoval | null>(null);
   // Ctrl+K's count dialog (m5b-ui-edit-more).
   const [repeating, setRepeating] = useState(false);
   const toastsRef = useRef(toasts);
@@ -396,6 +401,8 @@ export function Timeline({
       allows: allowed,
       // m5b-ui-fades: the handles while the engine lists the feature and the command.
       fadesEnabled: () => canRef.current.feature('clipFades') && canRef.current.command('clip.set_fade'),
+      // m5b-ui-markers: the marker track while the engine lists features.markers and the marker commands.
+      markersEnabled: () => markersEnabled(canRef.current),
       playhead: realtime ?? undefined,
       laneHeights: {
         get: heights,
@@ -463,11 +470,28 @@ export function Timeline({
     timeline?.setSnap(snap);
   }, [timeline, snap]);
 
-  // The band follows the capabilities; P and Alt+P take this canvas's selection.
+  // The band and the marker track follow the capabilities; P and Alt+P take this canvas's selection.
   const bandGate = loopClickGates(can).locators;
+  const markerGate = markersEnabled(can);
   useEffect(() => {
     timeline?.invalidate();
-  }, [timeline, bandGate]);
+  }, [timeline, bandGate, markerGate]);
+  // The marker keys (m5b-ui-markers; window commands, as the locator keys):
+  // Insert adds a position marker at the cursor (held while a proposal is
+  // heard, the edit guard), Shift+3..9 and Num 3..9 go to position markers 3
+  // to 9, Shift+N and Shift+B to the next and the previous marker. None
+  // exists without the marker track.
+  useEffect(() => {
+    if (!timeline || !markerGate) return undefined;
+    const goTo = [3, 4, 5, 6, 7, 8, 9] as const;
+    const offs = [
+      commands.register('window', 'marker.insert', () => (structuralBlocked(heardRef.current) ? false : timeline.insertMarker())),
+      ...goTo.map((n) => commands.register('window', `marker.goTo${n}`, () => timeline.goToMarker(n))),
+      commands.register('window', 'marker.next', () => timeline.nextMarker()),
+      commands.register('window', 'marker.previous', () => timeline.previousMarker()),
+    ];
+    return () => offs.forEach((off) => off());
+  }, [timeline, commands, markerGate]);
   useEffect(() => (timeline && loopClick ? loopClick.useSelection(() => timeline.selectionSpan()) : undefined), [timeline, loopClick]);
 
   const state = useSyncExternalStore(
@@ -562,20 +586,24 @@ export function Timeline({
     });
     edit('track.removeSelected', () => {
       const current = client.model.getSnapshot();
-      const ids = tracks().filter((id) => current?.entities[`track:${id}`]);
-      if (ids.length === 0) return false;
-      setRemoving(ids);
+      const removal = current ? trackRemoval(current, tracks()) : null;
+      if (!removal) return false;
+      setRemoving(removal);
       return true;
     });
     if (canAdd) offs.push(commands.register('project', 'track.add', () => (structuralBlocked(heardRef.current) ? false : addTrack(client, translator(localeStore().getSnapshot())))));
     return () => offs.forEach((off) => off());
   }, [timeline, commands, gateKey, canAdd, client, layout]);
 
+  // Confirm rechecks the capability, the edit guard and the tracks
+  // (model/recheck.ts): a changed set is shown and asked again; a reconnect
+  // closes the dialog (below; an epoch remounts the timeline).
   const confirmRemove = () => {
-    const ids = removing;
+    if (!removing) return;
+    const result = recheckTrackRemoval(removing, client.model.getSnapshot(), allowed('track.remove'));
+    if (result.kind === 'ask') return setRemoving(result.pending);
     setRemoving(null);
-    const current = client.model.getSnapshot();
-    if (ids && current) send(client, removeTracksCommand(current, ids));
+    if (result.kind === 'send') send(client, result.command);
   };
 
   useEffect(() => {
@@ -785,7 +813,7 @@ export function Timeline({
       />
       <ConfirmDialog
         open={removing !== null}
-        message={t('confirm.removeTracks', { count: removing?.length ?? 0 })}
+        message={t('confirm.removeTracks', { count: removing?.trackIds.length ?? 0 })}
         confirmLabel={t('confirm.remove')}
         cancelLabel={t('confirm.cancel')}
         onConfirm={confirmRemove}

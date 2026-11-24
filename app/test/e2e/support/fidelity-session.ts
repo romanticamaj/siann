@@ -161,6 +161,12 @@ export function prepareBundle(scratch: string): string {
   if (RATE === 48000) {
     exec({ op: 'clip.set_fade', clipId: clipId(SELECTED_CLIP), fadeIn: { length: '576', curve: 'linear' }, fadeOut: { length: '8640', curve: 'equal_power' } });
   }
+  // The mockup's three markers (m5b-ui-markers; draw()'s SEC): 1 Intro at bar
+  // 1, 2 Verse 1 at bar 5, 3 Chorus at bar 9, so the marker track lines up
+  // with the mockup's side by side.
+  for (const [number, bar, name] of [[1, 1, 'Intro'], [2, 5, 'Verse 1'], [3, 9, 'Chorus']] as const) {
+    exec({ op: 'marker.add', markerId: `mk_${number}`, number, name, position: String((bar - 1) * BAR) });
+  }
   return path.dirname(bundle);
 }
 

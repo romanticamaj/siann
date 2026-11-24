@@ -86,6 +86,10 @@ export const en = {
   'tracklist.mute': 'Mute {track}',
   'tracklist.solo': 'Solo {track}',
   'tracklist.meter': '{track} meter',
+  // The marker track (m5b-ui-markers; UI redesign 3.2): its head's label (the
+  // mockup's L('Markers')) and the in-place rename field, {marker} as a step names it.
+  'markers.label': 'Markers',
+  'markers.rename': 'Rename {marker}',
   // Editing (m5-ui-edit-basics): the tools, snap and grid, the clip volume
   // control's tooltip and the track removal confirmation.
   'tool.label': 'Tools',
@@ -474,6 +478,22 @@ export const en = {
   'step.unnameMedia': 'Clear the name of an audio file in the pool',
   'step.insertPlugin': 'Insert {plugin}',
   'step.removePlugin': 'Remove {plugin}',
+  // Marker steps (m5b-ui-markers; UI redesign 4.2): {marker} names a marker
+  // (step.*Marker below), {time} and {end} are positions.
+  'step.addMarker': 'Add marker {name} at {time}',
+  'step.addMarkerUnnamed': 'Add a marker at {time}',
+  'step.addCycleMarker': 'Add cycle marker {name} from {time} to {end}',
+  'step.addCycleMarkerUnnamed': 'Add a cycle marker from {time} to {end}',
+  'step.moveMarker': 'Move {marker} to {time}',
+  'step.resizeMarker': 'Set {marker} to {time} – {end}',
+  'step.renameMarker': 'Rename {marker} to {name}',
+  'step.removeMarker': 'Remove {marker}',
+  'step.aMarker': 'a marker',
+  'step.markerNamed': 'marker {name}',
+  'step.positionMarker': 'marker {number}',
+  'step.positionMarkerNamed': 'marker {number} {name}',
+  'step.cycleMarker': 'cycle marker {number}',
+  'step.cycleMarkerNamed': 'cycle marker {number} {name}',
   'step.bypassPlugin': 'Bypass {plugin}',
   'step.unbypassPlugin': 'Turn {plugin} back on',
   'step.renameSession': 'Rename the session to {name}',

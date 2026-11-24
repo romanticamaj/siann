@@ -5,8 +5,10 @@
 // (support/mockup.ts) and from app/test/fidelity/manifest.json (which parts are
 // pending), not from the code under test:
 //
-// - .headers holds .corner (.add, then .cnt), the marker row's empty box, then
-//   the headers (in the app inside the scroll wrappers, as their only
+// - .headers holds .corner (.add, then .cnt), the marker head (the mockup's
+//   div.mk[marker-head] with the flag icon and "Markers" when the engine lists
+//   features.markers and the marker commands, m5b-ui-markers; the row's empty
+//   box otherwise), then the headers (in the app inside the scroll wrappers, as their only
 //   children, so .th:nth-child(odd) keeps the mockup's parity);
 // - a header is .th with --c, .col, .idx, .body with .r1 (.name, .msr.m,
 //   .msr.s, record enable .msr.r (m5b-ui-recording), then the empty boxes of
@@ -166,7 +168,7 @@ function ids(root: Element): string[] {
   return out.sort();
 }
 
-test('the list is .headers holding .corner (.add, then .cnt), the empty marker box, then the headers', () => {
+test('the list is .headers holding .corner (.add, then .cnt), the marker head, then the headers', () => {
   const root = list(render(mockupEntities(), { clips: 17 }));
   const mockup = mockupHeaders();
   assert.equal(sig(root), sig(mockup));
@@ -180,11 +182,19 @@ test('the list is .headers holding .corner (.add, then .cnt), the empty marker b
   assert.equal(sig(corner!), sig(mCorner));
   assert.equal(corner!.attrs['data-part'], 'track-list-head');
   assert.deepEqual(elements(corner!).map((el) => classes(el)), elements(mCorner).map((el) => classes(el)));
-  // The marker row (m5b-ui-markers): the mockup's .mk[marker-head] is an empty box, without .mk.
-  assert.equal(sig(elements(mockup)[1]!), 'div.mk');
-  assert.equal(marker!.tag, 'div');
-  assert.deepEqual(classes(marker!), [], 'no .mk: it would draw the marker row');
-  assertEmptyBox(marker!, 'the marker box');
+  // The marker head (m5b-ui-markers): the mockup's div.mk[marker-head], the flag icon and "Markers".
+  const mMarker = elements(mockup)[1]!;
+  assert.equal(sig(mMarker), 'div.mk');
+  assert.equal(sig(marker!), sig(mMarker));
+  assert.equal(marker!.attrs['data-part'], 'marker-head');
+  assert.equal(marker!.attrs['data-part'], mMarker.attrs['data-part']);
+  assert.deepEqual(elements(marker!).map(sig), elements(mMarker).map(sig), 'svg.i');
+  assert.deepEqual(elements(marker!).map(sig), ['svg.i']);
+  const paths = (el: Element) => findAll(el, (e) => e.tag === 'path').map((e) => e.attrs.d);
+  assert.deepEqual(paths(marker!), paths(mMarker), "the mockup's flag");
+  assert.equal(text(marker!), 'Markers');
+  assert.equal(text(marker!), text(mMarker));
+  assert.ok(!('role' in marker!.attrs) && !('tabindex' in marker!.attrs), 'a label, not a control');
   // The headers, in document order, are the only children of the scroll column.
   assert.ok(classes(body!).includes('track-list-body'));
   const column = find(body!, byClass('track-list-column'));
@@ -284,19 +294,21 @@ test('the ids are the mockup\'s minus the pending parts\', and no pending id is 
   const root = list(render(mockupEntities(), { clips: 17 }));
   const mockup = mockupHeaders();
   const mockupIds = findAll(mockup, byAttr('data-part')).map((el) => el.attrs['data-part']!);
-  // The mockup's list names the marker head, the read and write buttons: pending; record landed (m5b-ui-recording).
-  for (const id of ['marker-head', 'track-1-read', 'track-1-write']) {
+  // The mockup's list names the read and write buttons: pending; record landed (m5b-ui-recording), the marker head too (m5b-ui-markers).
+  for (const id of ['track-1-read', 'track-1-write']) {
     assert.ok(mockupIds.includes(id), `the mockup has ${id}`);
     assert.ok(pending(id), `${id} is pending`);
   }
   assert.ok(mockupIds.includes('track-1-record') && !pending('track-1-record'));
+  assert.ok(mockupIds.includes('marker-head') && !pending('marker-head'), 'marker-head landed');
   // The ghost track landed with m5b-ui-ghosts: it is drawn for a reviewable plan only, and there is none here.
   assert.ok(mockupIds.includes('track-ghost') && !pending('track-ghost'));
   assert.deepEqual(ids(root), mockupIds.filter((id) => !pending(id) && !/ghost/.test(id)).sort());
   for (const id of ids(root)) assert.ok(!pending(id), id);
-  assert.ok(!ids(root).some((id) => /^(marker-head|track-ghost|track-\d+-(read|write))$/.test(id)));
+  assert.ok(!ids(root).some((id) => /^(track-ghost|track-\d+-(read|write))$/.test(id)));
   assert.ok(ids(root).includes('track-1-record'));
-  assert.ok(!findAll(root, byAttr('data-part')).some((el) => /ghost|marker/.test(el.attrs['data-part']!)));
+  assert.ok(ids(root).includes('marker-head'));
+  assert.ok(!findAll(root, byAttr('data-part')).some((el) => /ghost/.test(el.attrs['data-part']!)));
   // The test ids the specs use stay.
   const h = headers(root)[0]!;
   for (const part of ['colour', 'number', 'name', 'mute', 'solo', 'record', 'gain', 'pan', 'meter']) {
@@ -304,6 +316,33 @@ test('the ids are the mockup\'s minus the pending parts\', and no pending id is 
   }
   assert.equal(h.attrs['data-testid'], `track-header-${IDS[0]}`);
   assert.equal(find(h, byClass('track-resize')).attrs['data-testid'], `track-resize-${IDS[0]}`);
+});
+
+test("the marker head's label is the mockup's L('Markers') in en and zh-TW, the glossary's in zh-Hans", () => {
+  for (const [locale, lang, label] of [
+    ['en', 'en', 'Markers'],
+    ['zh-Hant', 'zh-TW', '標記'],
+    ['zh-Hans', 'zh-TW', '标记'],
+  ] as const) {
+    const marker = find(render(mockupEntities(), { locale }), byAttr('data-part', 'marker-head'));
+    const mMarker = find(mockupHeaders(lang), byAttr('data-part', 'marker-head'));
+    assert.equal(text(marker), label, locale);
+    if (locale !== 'zh-Hans') assert.equal(text(marker), text(mMarker), `${locale}: the mockup's label`);
+  }
+});
+
+// m5b-ui-markers (UI redesign 3.0): without features.markers or the marker
+// commands the marker head is the row's empty box, as before the feature.
+test('reduced capabilities: the marker head is the empty box (no .mk, no id, no role, no focus, hidden)', () => {
+  const noFeature: Capabilities = { ...FULL, features: Object.fromEntries(Object.entries(FULL.features ?? {}).filter(([name]) => name !== 'markers')) };
+  const noCommands: Capabilities = { ...FULL, commands: (FULL.commands ?? []).filter((c) => !c.startsWith('marker.')) };
+  for (const [what, caps] of [['no feature', noFeature], ['no commands', noCommands], ['unknown', null]] as const) {
+    const [, marker] = elements(list(render(mockupEntities(), { caps })));
+    assert.equal(marker!.tag, 'div', what);
+    assert.deepEqual(classes(marker!), [], `${what}: no .mk, which would draw the row`);
+    assertEmptyBox(marker!, `${what}: the marker box`);
+    assert.ok(!ids(list(render(mockupEntities(), { caps }))).includes('marker-head'), what);
+  }
 });
 
 test('reduced capabilities remove the add button, M and S, and their boxes stay', () => {

@@ -12,7 +12,12 @@
 //   --lane-odd, the locator range's tint, the beat and bar lines (bars and
 //   beats through root.tempo), the lane dividers, the ruler's two halves
 //   with the locator band, ticks and bar numbers, the --marker-h marker
-//   track row left empty until m5b-ui-markers, and each audio clip as
+//   track row (m5b-ui-markers, while `markersEnabled`: draw()'s --bg-info row
+//   and divider, each position marker's tint, bar and "N  name" label in its
+//   track-palette colour, then each cycle marker's tinted range with a bar at
+//   both ends; a plan's marker steps as ghost flags and ranges in the agent
+//   violet with their step, a moved or removed marker at 38 %; markers.ts;
+//   otherwise the row is left empty, UI redesign 3.0), and each audio clip as
 //   draw()'s clip(): its box inset from its bars and lane, the body and the
 //   title strip in its track's colour mixed into the tokens, the title
 //   (clip-title.ts), the waveform in two tones from the engine's peak
@@ -110,6 +115,19 @@
 // auto-scroll on (F) the overlay frame turns the page when the cursor leaves
 // the view while playing, never while a drag is held (auto-scroll.ts), so the
 // content layer redraws only on a page turn.
+//
+// The marker track (m5b-ui-markers; UI redesign 3.2, "Marker track"), while
+// `markersEnabled` and through `allows` (the edit guard): Alt-click adds a
+// position marker there (snapped), a Ctrl-drag (Mod) on its empty space draws
+// a cycle marker, a drag of a marker moves it (snapped, Ctrl unsnapped), a
+// drag of a cycle marker's edge resizes it, a click selects a marker (and
+// drops the clip selection; the two exclude each other) and Delete removes it
+// (deleteSelected), a double-click on its name opens an input over the label
+// (Enter renames, Escape and leaving it cancel) and a double-click elsewhere
+// on a cycle marker sets the locators to it through the `locators` source.
+// Each gesture is one command.execute (markers.ts builds them). insertMarker
+// (Insert) adds one at the project cursor; goToMarker, nextMarker and
+// previousMarker locate.
 //
 // Colours are tokens.css custom properties read from the container; the one
 // sentence the canvas words itself, the empty session's guidance, comes from
@@ -256,8 +274,33 @@ import {
   type LocatorRange,
 } from './locators';
 import { DEFAULT_SNAP, gridStepFrames, moveSnapperFor, snapContext, snapperFor, type SnapSettings, type Snapper } from './snap';
+import {
+  MARKER_LABEL_MIX,
+  MARKER_TINT_ALPHA,
+  addCycleCommand,
+  addMarkerCommand,
+  clipsEnd,
+  cycleBox,
+  flagBox,
+  labelBox,
+  locatorsOf,
+  markerColourVar,
+  markerHit,
+  markerLabel,
+  markerShapes,
+  moveMarkerCommand,
+  newMarkerId,
+  nextMarker as nextMarkerFrame,
+  positionMarkerByNumber,
+  previousMarker as previousMarkerFrame,
+  removeMarkerCommand,
+  renameMarkerCommand,
+  resizeCycleCommand,
+  type MarkerShape,
+} from './markers';
+import type { MarkerEntity } from '../model/document';
 import { planDrop, type DropPlan } from './media-drop';
-import { SELECTED_OUTLINE_W, clipPalette, trackColourVar, type ClipPalette } from './track-colour';
+import { SELECTED_OUTLINE_W, clipPalette, mix, trackColourVar, type ClipPalette } from './track-colour';
 import { waveformColumns, type WaveColumn } from './waveform';
 import { ZOOM_STEP, maxScrollY, scrollFramesBy, scrollYBy, stepLaneHeight, zoomAbout, zoomFull, zoomToRange } from './zoom';
 import { frameMarks } from '../perf/frame-marks';
@@ -365,6 +408,10 @@ export interface TimelineCanvasOptions {
   // modifier (m5b-ui-editor-channel; UI redesign 2.1, 3.2): the clip, now the
   // selection's primary, is shown in the lower zone's Editor tab (editor.open).
   readonly onOpenEditor?: (clipId: string) => void;
+  // Whether the marker track is drawn and takes its gestures and keys
+  // (m5b-ui-markers: the engine lists features.markers and the marker
+  // commands); off when absent, the row left empty.
+  readonly markersEnabled?: () => boolean;
 }
 
 // A clip's fades as the canvas draws and hits them (m5b-ui-fades; the e2e
@@ -498,6 +545,10 @@ export interface TimelineTestHooks {
   // Each clip's fades and handles (m5b-ui-fades), and the part a point hits.
   fades(): FadeDrawn[];
   hitAt(x: number, y: number): { clipId: string; part: HitPart } | null;
+  // The markers of the last content frame as drawn (m5b-ui-markers; none
+  // with the marker track off), and the selected marker.
+  markers(): MarkerShape[];
+  selectedMarker(): string | null;
 }
 
 // Why the last split at the cursor sent nothing, or what it built, with the
@@ -565,8 +616,25 @@ interface GhostBox {
   readonly pure: boolean;
   readonly clipId?: string;
   readonly ruler?: boolean;
+  // A marker ghost in the marker row (m5b-ui-markers): reveal scrolls to it sideways only.
+  readonly marker?: boolean;
   // While the proposal is heard (m5b-ui-audition): the band drawn unbroken.
   readonly mode?: 'solid';
+}
+
+// A gesture on the marker track (m5b-ui-markers): a marker's move, a cycle
+// marker's edge, or a Ctrl-drag that draws a cycle marker; the marker, where
+// it began, the snapshot it began on, and the pointer so far.
+interface MarkerDrag {
+  readonly kind: 'move' | 'left' | 'right' | 'draw';
+  readonly markerId: string | null;
+  readonly startX: number;
+  readonly snapshot: Snapshot;
+  // The id a drawn cycle marker gets (one per gesture).
+  readonly newId: string;
+  x: number;
+  flags: ModifierFlags;
+  moved: boolean;
 }
 
 // A ghost clip to draw: its box, the rectangle its waveform reads, its title
@@ -648,7 +716,11 @@ interface Palette {
   readonly aiLane: string;
   // A fade's shade (m5b-ui-fades: draw()'s --bg-0-a550).
   readonly fadeShade: string;
+  // The marker row (m5b-ui-markers: draw()'s --bg-info).
+  readonly bgInfo: string;
   track(trackId: string): string;
+  // A marker's colour: the track palette by the hash of its id.
+  marker(markerId: string): string;
 }
 
 // A fade ghost to draw (m5b-ui-fades): its clip's box and the ghost.
@@ -707,6 +779,13 @@ const CURSOR_HEAD_POINT = 13;
 const CURSOR_GLOW = 6;
 // The volume control's value: GAIN_TEXT_X inside its box, at its middle.
 const GAIN_TEXT_X = 4;
+// A marker ghost (m5b-ui-markers): its step disc right of the 2 px bar, its
+// label after the disc (the ghost clip's title offset, STEP_DISC.titleX).
+const GHOST_DISC_X = Number.parseFloat(TOKENS['space-half']);
+const GHOST_LABEL_X = STEP_DISC.titleX;
+// The marker rename field: this far left of the label, at least this wide.
+const RENAME_PAD = Number.parseFloat(TOKENS['space']);
+const RENAME_MIN_W = Number.parseFloat(TOKENS['track-list-w']) / 2;
 
 export class TimelineCanvas {
   readonly #options: TimelineCanvasOptions;
@@ -767,6 +846,13 @@ export class TimelineCanvas {
   #ghostRows: Array<{ readonly step: number; readonly top: number; readonly height: number }> = [];
   #ghostOutline: number | null = null;
   #ghostLanes = 0;
+  // The marker track (m5b-ui-markers): the shapes of the last content frame
+  // (hit and reported from there), the selected marker, an open gesture and
+  // an open rename field.
+  #markerShapes: MarkerShape[] = [];
+  #selectedMarker: string | null = null;
+  #markerDrag: MarkerDrag | null = null;
+  #rename: { readonly markerId: string; readonly input: HTMLInputElement } | null = null;
 
   constructor(options: TimelineCanvasOptions) {
     this.#options = options;
@@ -849,6 +935,7 @@ export class TimelineCanvas {
   }
 
   destroy(): void {
+    this.#closeRename();
     for (const off of this.#unsubscribe.splice(0)) off();
     this.#surface?.destroy();
     this.#listeners.clear();
@@ -913,15 +1000,53 @@ export class TimelineCanvas {
     this.#select([], null);
   }
 
-  // Delete and Backspace: clip.remove of every selected clip, in one list.
+  // Delete and Backspace: the selected marker's marker.remove (m5b-ui-markers;
+  // a marker and clips are never selected together), else clip.remove of
+  // every selected clip, in one list.
   async deleteSelected(): Promise<void> {
     const snapshot = this.#options.model.getSnapshot();
+    const marker = this.#selectedMarker;
+    if (snapshot && marker !== null && this.#markersOn()) {
+      await this.#send(() => removeMarkerCommand(snapshot, marker));
+      return;
+    }
     const ids = this.#state.selectedClipIds;
     if (!snapshot || ids.length === 0) return;
     await this.#send(() => {
       const commands = ids.filter((id) => snapshot.entities[`clip:${id}`]).map((clipId) => ({ op: 'clip.remove', clipId }));
       return commands.length > 0 ? { expectedRevision: snapshot.revision, commands } : null;
     });
+  }
+
+  // Insert (m5b-ui-markers): a position marker at the project cursor, as it
+  // is (no snap); false when the marker track is off or the command is held.
+  insertMarker(): boolean {
+    const snapshot = this.#options.model.getSnapshot();
+    if (!snapshot || !this.#markersOn() || !this.#allows('marker.add')) return false;
+    const at = this.#cursorFrame();
+    void this.#send(() => addMarkerCommand(snapshot, at, (frame) => frame, newMarkerId()));
+    return true;
+  }
+
+  // Shift+3..9, Num 3..9: the cursor to position marker `number` (never a cycle marker).
+  goToMarker(number: number): boolean {
+    const snapshot = this.#options.model.getSnapshot();
+    if (!snapshot || !this.#markersOn()) return false;
+    const marker = positionMarkerByNumber(snapshot, number);
+    return this.#locate(marker ? BigInt(marker.position) : null);
+  }
+
+  // Shift+N and Shift+B: the next or previous marker start (both kinds) from the cursor.
+  nextMarker(): boolean {
+    const snapshot = this.#options.model.getSnapshot();
+    if (!snapshot || !this.#markersOn()) return false;
+    return this.#locate(nextMarkerFrame(snapshot, this.#cursorFrame()));
+  }
+
+  previousMarker(): boolean {
+    const snapshot = this.#options.model.getSnapshot();
+    if (!snapshot || !this.#markersOn()) return false;
+    return this.#locate(previousMarkerFrame(snapshot, this.#cursorFrame()));
   }
 
   // 1, 3, 4 and 5: the Object Selection, Split, Glue and Erase tools.
@@ -1210,7 +1335,14 @@ export class TimelineCanvas {
         const hit = hitTest(this.#rects, x, y, { fades: this.#fadeHits() });
         return hit ? { clipId: hit.rect.clipId, part: hit.part } : null;
       },
+      markers: () => this.#markerShapes.map((s) => ({ ...s })),
+      selectedMarker: () => this.#selectedMarker,
     };
+  }
+
+  // The marker track is drawn and takes its gestures (m5b-ui-markers).
+  #markersOn(): boolean {
+    return this.#options.markersEnabled?.() ?? false;
   }
 
   // The fade handles are drawn and hit (the engine lists the feature and the command).
@@ -1236,6 +1368,10 @@ export class TimelineCanvas {
     const snapshot = this.#options.model.getSnapshot();
     if (!snapshot) return;
     const { x, y } = this.#point(e);
+    if (y >= this.#view.rulerHeight && y < lanesTopOf(this.#view)) {
+      if (this.#markersOn()) this.#markerDoubleClick(snapshot, x, y);
+      return;
+    }
     if (y < lanesTopOf(this.#view)) return;
     const fades = this.#fadeHits();
     const hit = hitTest(clipRects(snapshot, this.#view), x, y, { fades });
@@ -1290,7 +1426,7 @@ export class TimelineCanvas {
     const x0 = boxes.length > 0 ? Math.min(...boxes.map((b) => b.box.x)) : 0;
     const x1 = boxes.length > 0 ? Math.max(...boxes.map((b) => b.box.x + b.box.width)) : 0;
     // The ruler's ghost (the locator band) scrolls only sideways.
-    const lanes = [...boxes.filter((b) => !b.ruler).map((b) => ({ y: b.box.y, bottom: b.box.y + b.box.height })), ...rows.map((r) => ({ y: r.top, bottom: r.top + r.height }))];
+    const lanes = [...boxes.filter((b) => !b.ruler && !b.marker).map((b) => ({ y: b.box.y, bottom: b.box.y + b.box.height })), ...rows.map((r) => ({ y: r.top, bottom: r.top + r.height }))];
     const y0 = lanes.length > 0 ? Math.min(...lanes.map((b) => b.y)) : top;
     const y1 = lanes.length > 0 ? Math.max(...lanes.map((b) => b.bottom)) : top;
     const order = this.#options.model.getSnapshot()?.trackOrder ?? [];
@@ -1352,6 +1488,9 @@ export class TimelineCanvas {
     }
     const placing = this.#state.placingMediaId;
     if (placing && !snapshot?.entities[`media:${placing}`]) this.#update({ placingMediaId: null });
+    // A removed marker is no longer selected, and its rename field closes.
+    if (this.#selectedMarker !== null && !snapshot?.entities[`marker:${this.#selectedMarker}`]) this.#selectedMarker = null;
+    if (this.#rename && !snapshot?.entities[`marker:${this.#rename.markerId}`]) this.#closeRename();
     this.invalidate();
   }
 
@@ -1419,6 +1558,8 @@ export class TimelineCanvas {
   }
 
   #select(ids: readonly string[], primary: string | null): void {
+    // Clips and a marker are never selected together (m5b-ui-markers).
+    if (ids.length > 0) this.#selectMarker(null);
     const same = ids.length === this.#state.selectedClipIds.length && ids.every((id, i) => id === this.#state.selectedClipIds[i]);
     this.#update({ selectedClipIds: same ? this.#state.selectedClipIds : [...ids], selectedClipId: primary });
   }
@@ -1463,8 +1604,13 @@ export class TimelineCanvas {
       }
       return;
     }
-    // The marker track row is empty until m5b-ui-markers: a press there does nothing.
-    if (y < lanesTopOf(this.#view)) return;
+    // The marker track (m5b-ui-markers): its gestures while it is on; with it off a press there does nothing.
+    if (y < lanesTopOf(this.#view)) {
+      if (snapshot && this.#markersOn()) this.#markerDown(e, snapshot, x, y);
+      return;
+    }
+    // A press on the lanes drops the marker selection (m5b-ui-markers).
+    this.#selectMarker(null);
     // Shift+Alt-click in the event display locates too (spec 3.1, "Set the
     // cursor"), on a clip or not, and neither selects, drags nor places.
     if (e.shiftKey && e.altKey) {
@@ -1600,6 +1746,15 @@ export class TimelineCanvas {
   #pointerMove(e: PointerEvent): void {
     const { x, y } = this.#point(e);
     this.#lastPointer = { x, y };
+    const marking = this.#markerDrag;
+    if (marking) {
+      marking.x = x;
+      marking.flags = this.#flags(e);
+      if (!marking.moved && Math.abs(x - marking.startX) < DRAG_THRESHOLD_PX) return;
+      marking.moved = true;
+      this.#invalidateContent();
+      return;
+    }
     const ruler = this.#rulerDrag;
     if (ruler) {
       if (!ruler.moved && Math.abs(y - ruler.startY) < DRAG_THRESHOLD_PX && Math.abs(x - ruler.startX) < DRAG_THRESHOLD_PX) return;
@@ -1653,7 +1808,12 @@ export class TimelineCanvas {
       const hit = locatorHit(rangeOf(this.#options.model.getSnapshot()?.locators), this.#view, x, y);
       return hit === 'left' || hit === 'right' ? 'ew-resize' : hit === 'body' ? 'grab' : 'default';
     }
-    if (y < lanesTopOf(this.#view)) return 'default';
+    if (y < lanesTopOf(this.#view)) {
+      // The marker track: an edge resizes, a marker moves.
+      if (!this.#markersOn()) return 'default';
+      const hit = markerHit(this.#markerShapes, x, y)?.part;
+      return hit === 'cycle-left' || hit === 'cycle-right' ? 'ew-resize' : hit && hit !== 'empty' ? 'grab' : 'default';
+    }
     if (this.#state.tool === 'split') return part ? 'crosshair' : 'default';
     if (this.#state.tool === 'glue' || this.#state.tool === 'erase') return part ? 'pointer' : 'default';
     switch (part) {
@@ -1677,6 +1837,21 @@ export class TimelineCanvas {
   }
 
   #pointerUp(e: PointerEvent): void {
+    const marking = this.#markerDrag;
+    if (marking) {
+      this.#pointerMove(e);
+      this.#markerDrag = null;
+      this.#release(e);
+      this.#invalidateContent();
+      if (!marking.moved) {
+        // A plain click on empty space drops the marker selection.
+        if (marking.kind === 'draw' || marking.markerId === null) this.#selectMarker(null);
+        return;
+      }
+      const command = this.#markerPlan(marking);
+      if (command) void this.#send(() => command);
+      return;
+    }
     const locator = this.#locatorDrag;
     if (locator) {
       this.#pointerMove(e);
@@ -1883,6 +2058,265 @@ export class TimelineCanvas {
     return this.#options.locators?.enabled() ?? false;
   }
 
+  // ---- the marker track (m5b-ui-markers)
+
+  // The selected marker (null: none); a marker drops the clip selection.
+  #selectMarker(markerId: string | null): void {
+    if (markerId === this.#selectedMarker) return;
+    this.#selectedMarker = markerId;
+    if (markerId !== null && this.#state.selectedClipIds.length > 0) this.#select([], null);
+    this.#invalidateContent();
+  }
+
+  // A press on the marker track: Alt-click adds a position marker there
+  // (snapped); on a marker it selects it and begins its move (or, on a cycle
+  // marker's edge, its resize); a Ctrl-press on empty space begins drawing a
+  // cycle marker; a plain press on empty space drops the selection.
+  #markerDown(e: PointerEvent, snapshot: Snapshot, x: number, y: number): void {
+    const hit = markerHit(this.#markerShapes, x, y);
+    if (!hit) return;
+    const flags = this.#flags(e);
+    const mods = toolModifiers(flags, this.#platform());
+    if (flags.altKey && !flags.shiftKey) {
+      const position = this.#snapper(snapshot)(frameAt(x, this.#view));
+      void this.#send(() => addMarkerCommand(snapshot, position, (frame) => frame, newMarkerId()));
+      return;
+    }
+    if (hit.part === 'empty') {
+      if (!mods.noSnap) {
+        this.#selectMarker(null);
+        return;
+      }
+      this.#markerDrag = { kind: 'draw', markerId: null, startX: x, snapshot, newId: newMarkerId(), x, flags, moved: false };
+      this.#capture(e);
+      return;
+    }
+    this.#selectMarker(hit.markerId);
+    const kind = hit.part === 'cycle-left' ? 'left' : hit.part === 'cycle-right' ? 'right' : 'move';
+    this.#markerDrag = { kind, markerId: hit.markerId, startX: x, snapshot, newId: '', x, flags, moved: false };
+    this.#capture(e);
+  }
+
+  // What a marker gesture sends at its current pointer and modifiers: snapped
+  // (the dragged marker is no target of its own snap) unless Ctrl is held for
+  // a move or a resize; a drawn cycle marker's ends always snap.
+  #markerPlan(drag: MarkerDrag) {
+    const snapshot = drag.snapshot;
+    const view = this.#view;
+    const mods = toolModifiers(drag.flags, this.#platform());
+    if (drag.kind === 'draw') return addCycleCommand(snapshot, frameAt(drag.startX, view), frameAt(drag.x, view), this.#snapper(snapshot), drag.newId);
+    const markerId = drag.markerId!;
+    const snap = this.#snapper(snapshot, mods.noSnap, [markerId]);
+    if (drag.kind === 'move') return moveMarkerCommand(snapshot, markerId, deltaFrames(drag.x - drag.startX, view), snap);
+    const marker = snapshot.entities[`marker:${markerId}`] as MarkerEntity | undefined;
+    if (!marker || marker.length === undefined) return null;
+    const start = BigInt(marker.position);
+    const at = drag.kind === 'left' ? start : start + BigInt(marker.length);
+    return resizeCycleCommand(snapshot, markerId, drag.kind, at + deltaFrames(drag.x - drag.startX, view), snap);
+  }
+
+  // The markers to draw: the document's, with an open gesture's preview.
+  #markersFor(snapshot: Snapshot): readonly MarkerEntity[] {
+    const drag = this.#markerDrag;
+    const command = drag?.moved ? this.#markerPlan(drag) : null;
+    const c = command?.commands[0] as { op?: string; markerId?: string; position?: string; length?: string } | undefined;
+    if (!c || typeof c.markerId !== 'string' || typeof c.position !== 'string') return snapshot.markers;
+    if (c.op === 'marker.add') {
+      const taken = new Set(snapshot.markers.filter((m) => m.length !== undefined).map((m) => m.number));
+      let number = 1;
+      while (taken.has(number)) number += 1;
+      return [...snapshot.markers, { schema: 'siann.entity.marker.v1', id: c.markerId, number, name: '', position: c.position, ...(c.length ? { length: c.length } : {}) }];
+    }
+    return snapshot.markers.map((m) => (m.id === c.markerId ? { ...m, position: c.position!, ...(c.length ? { length: c.length } : {}) } : m));
+  }
+
+  // A double-click on a marker's name renames it in place; elsewhere on a
+  // cycle marker it sets the locators to its range (one session.set_locators).
+  #markerDoubleClick(snapshot: Snapshot, x: number, y: number): void {
+    const hit = markerHit(this.#markerShapes, x, y);
+    if (!hit || hit.part === 'empty') return;
+    const marker = snapshot.entities[`marker:${hit.markerId}`] as MarkerEntity | undefined;
+    if (!marker) return;
+    if (hit.part === 'name') {
+      this.#openRename(marker);
+      return;
+    }
+    const range = locatorsOf(marker);
+    const source = this.#options.locators;
+    if (range && source && source.enabled()) source.setLocators(range);
+  }
+
+  // The rename field: an input over the marker's label (an app-only element,
+  // shell.css .marker-rename). Enter sends one marker.rename; Escape and
+  // leaving the field close it and send nothing.
+  #openRename(marker: MarkerEntity): void {
+    this.#closeRename();
+    const shape = this.#markerShapes.find((s) => s.id === marker.id);
+    const doc = (this.#container as { ownerDocument?: Document | null }).ownerDocument;
+    if (!shape || !doc || typeof doc.createElement !== 'function' || !this.#allows('marker.rename')) return;
+    const input = doc.createElement('input');
+    input.type = 'text';
+    input.classList.add('marker-rename');
+    input.dataset.testid = 'marker-rename';
+    input.value = marker.name;
+    input.spellcheck = false;
+    const words = this.#options.locale?.t() ?? translator('en');
+    const named = marker.name === '' ? null : marker.name;
+    const which =
+      marker.length !== undefined
+        ? named ? words('step.cycleMarkerNamed', { number: marker.number, name: named }) : words('step.cycleMarker', { number: marker.number })
+        : named ? words('step.positionMarkerNamed', { number: marker.number, name: named }) : words('step.positionMarker', { number: marker.number });
+    input.setAttribute('aria-label', words('markers.rename', { marker: which }));
+    const left = Math.max(0, shape.label.x - RENAME_PAD);
+    input.style.left = `${left}px`;
+    input.style.width = `${Math.max(1, Math.min(this.#view.width - left, Math.max(shape.label.width + 2 * RENAME_PAD, RENAME_MIN_W)))}px`;
+    const markerId = marker.id;
+    let done = false;
+    const finish = (commit: boolean) => {
+      if (done) return;
+      done = true;
+      const name = input.value;
+      this.#closeRename();
+      const snapshot = this.#options.model.getSnapshot();
+      if (commit && snapshot) void this.#send(() => renameMarkerCommand(snapshot, markerId, name));
+    };
+    input.addEventListener('keydown', (event) => {
+      event.stopPropagation();
+      if (event.key === 'Enter') {
+        event.preventDefault();
+        finish(true);
+      } else if (event.key === 'Escape') {
+        event.preventDefault();
+        finish(false);
+      }
+    });
+    input.addEventListener('blur', () => finish(false));
+    this.#container.appendChild(input);
+    this.#rename = { markerId, input };
+    input.focus();
+    input.select();
+  }
+
+  #closeRename(): void {
+    const open = this.#rename;
+    if (!open) return;
+    this.#rename = null;
+    open.input.remove();
+  }
+
+  // draw()'s marker track: the --bg-info row, the divider at TOP - 1, then
+  // each position marker (its 14 % tint, its 2 px bar, its label in its
+  // colour mixed 25 % into --select), then each cycle marker (its range at
+  // 14 %, a bar inside each end, its label); a selected marker's label in
+  // --select; a moved or removed marker of the plan at 38 %, the plan's
+  // marker steps over them in the agent violet with their step discs.
+  #drawMarkers(ctx: CanvasRenderingContext2D, snapshot: Snapshot, palette: Palette, parts: SurfacePart[]): void {
+    const view = this.#view;
+    const ruler = view.rulerHeight;
+    const top = lanesTopOf(view);
+    ctx.save();
+    ctx.globalAlpha = 1;
+    ctx.fillStyle = palette.bgInfo;
+    ctx.fillRect(0, ruler, view.width, top - ruler);
+    ctx.fillStyle = palette.divider;
+    ctx.fillRect(0, top - 1, view.width, 1);
+    ctx.beginPath();
+    ctx.rect(0, ruler, view.width, top - ruler);
+    ctx.clip();
+    ctx.font = `${TOKENS['fw-strong']} ${TOKENS['fs-micro']} ${palette.font}`;
+    ctx.textBaseline = 'middle';
+    ctx.textAlign = 'left';
+    const measure = (text: string) => ctx.measureText(text).width;
+    const shapes = markerShapes(this.#markersFor(snapshot), clipsEnd(snapshot), view, measure);
+    this.#markerShapes = shapes;
+    const ghosts = this.#ghosts.filter((g) => g.kind === 'marker-add' || g.kind === 'marker-move' || g.kind === 'marker-rename' || g.kind === 'marker-remove');
+    const dimmed = new Set(ghosts.filter((g) => g.kind === 'marker-move' || g.kind === 'marker-remove').map((g) => (g as { markerId: string }).markerId));
+    shapes.forEach((shape, index) => {
+      const colour = palette.marker(shape.id);
+      const alpha = dimmed.has(shape.id) ? MOVED_ORIGINAL_ALPHA : 1;
+      const tint = shape.tint;
+      if (tint) {
+        ctx.globalAlpha = alpha * MARKER_TINT_ALPHA;
+        ctx.fillStyle = colour;
+        ctx.fillRect(tint.x, tint.y, tint.width, tint.height);
+      }
+      ctx.globalAlpha = alpha;
+      ctx.fillStyle = colour;
+      const bars = shape.kind === 'position' ? [shape.bar] : [shape.left, shape.right];
+      for (const bar of bars) ctx.fillRect(bar.x, bar.y, bar.width, bar.height);
+      ctx.fillStyle = shape.id === this.#selectedMarker ? palette.select : mix(colour, palette.select, MARKER_LABEL_MIX);
+      const room = shape.kind === 'cycle' ? Math.max(0, shape.x1 - shape.label.x) : undefined;
+      if (room === undefined) ctx.fillText(shape.label.text, shape.label.x, shape.label.y);
+      else if (room > 0) ctx.fillText(shape.label.text, shape.label.x, shape.label.y, room);
+      const box = shape.kind === 'position' ? { ...shape.bar, width: shape.label.x + shape.label.width - shape.bar.x } : shape.tint;
+      parts.push({ id: `marker-${index + 1}`, x: box.x, y: box.y, w: box.width, h: box.height });
+    });
+    ctx.globalAlpha = 1;
+    this.#drawMarkerGhosts(ctx, ghosts, palette, parts);
+    ctx.restore();
+  }
+
+  // The plan's marker steps (4.2): a flag (a position marker's bar at the
+  // place it would get, its label after the step disc) or a range (a cycle
+  // marker's, filled with the ghost body and outlined dashed), in the agent
+  // violet, unbroken while the proposal is heard; a rename's new label; a
+  // removed marker's flag struck through. Parts marker-ghost-add, -move,
+  // -rename, -remove (numbered from the second of a kind).
+  #drawMarkerGhosts(ctx: CanvasRenderingContext2D, ghosts: readonly Ghost[], palette: Palette, parts: SurfacePart[]): void {
+    const view = this.#view;
+    const counts = new Map<string, number>();
+    const part = (name: string, box: Box) => {
+      const n = (counts.get(name) ?? 0) + 1;
+      counts.set(name, n);
+      parts.push({ id: n === 1 ? name : `${name}-${n}`, x: box.x, y: box.y, w: box.width, h: box.height });
+    };
+    const measure = (text: string) => ctx.measureText(text).width;
+    for (const g of ghosts) {
+      if (g.kind !== 'marker-add' && g.kind !== 'marker-move' && g.kind !== 'marker-rename' && g.kind !== 'marker-remove') continue;
+      const place =
+        g.kind === 'marker-add' ? { position: g.position, length: g.length }
+        : g.kind === 'marker-move' ? g.after
+        : { position: g.position, length: g.length };
+      const name = g.kind === 'marker-rename' ? g.after : g.name;
+      const x0 = frameToX(place.position, view);
+      const stroke = ghostStroke(g.mode);
+      let box: Box;
+      if (place.length !== null) {
+        const x1 = frameToX(BigInt(place.position) + BigInt(place.length), view);
+        const shape = cycleBox(x0, x1);
+        box = shape.tint;
+        ctx.fillStyle = palette.aiBody;
+        ctx.fillRect(box.x, box.y, box.width, box.height);
+        ctx.fillStyle = palette.ai;
+        ctx.fillRect(shape.left.x, shape.left.y, shape.left.width, shape.left.height);
+        ctx.fillRect(shape.right.x, shape.right.y, shape.right.width, shape.right.height);
+        ctx.setLineDash([...stroke.dash]);
+        ctx.strokeStyle = palette.ai;
+        ctx.lineWidth = GHOST_OUTLINE_W;
+        ctx.strokeRect(box.x + OUTLINE_INSET, box.y + OUTLINE_INSET, box.width - 2 * OUTLINE_INSET, box.height - 2 * OUTLINE_INSET);
+        ctx.setLineDash([]);
+      } else {
+        const { bar } = flagBox(x0, null);
+        box = { ...bar, width: GHOST_LABEL_X + measure(markerLabel(g.number, name)) };
+        ctx.fillStyle = palette.ai;
+        ctx.fillRect(bar.x, bar.y, bar.width, bar.height);
+      }
+      // The step's disc right of the bar, then the label after it.
+      if (g.step > 0) this.#drawStepDisc(ctx, { x: x0 + GHOST_DISC_X, y: box.y, width: 0, height: 0 }, g.step, palette);
+      ctx.fillStyle = palette.ai;
+      ctx.font = `${TOKENS['fw-strong']} ${TOKENS['fs-micro']} ${palette.font}`;
+      ctx.textAlign = 'left';
+      ctx.textBaseline = 'middle';
+      const label = labelBox(x0, markerLabel(g.number, name), measure);
+      ctx.fillText(label.text, x0 + GHOST_LABEL_X, label.y);
+      if (g.kind === 'marker-remove') {
+        ctx.fillRect(box.x, box.y + box.height / 2, box.width, GHOST_OUTLINE_W);
+      }
+      this.#ghostBoxes.push({ step: g.step, box, pure: false, marker: true, ...(g.mode ? { mode: g.mode } : {}) });
+      part(`marker-ghost-${g.kind.slice('marker-'.length)}`, box);
+    }
+  }
+
   // The range the band shows: an open drag's preview, else the document's.
   #bandRange(snapshot: Snapshot | null): LocatorRange | null {
     const drag = this.#locatorDrag;
@@ -1891,8 +2325,9 @@ export class TimelineCanvas {
   }
 
   #cancelDrag(): void {
-    if (this.#locatorDrag?.moved) this.#invalidateContent();
+    if (this.#locatorDrag?.moved || this.#markerDrag?.moved) this.#invalidateContent();
     this.#locatorDrag = null;
+    this.#markerDrag = null;
     this.#drag = null;
     this.#band = null;
     this.#rulerDrag = null;
@@ -2008,6 +2443,8 @@ export class TimelineCanvas {
       aiInk: read('--ai-ink'),
       aiLane: read('--ai-a070'),
       fadeShade: read('--bg-0-a550'),
+      bgInfo: read('--bg-info'),
+      marker: (markerId) => read(markerColourVar(markerId)),
       track: (trackId) => {
         let colour = tracks.get(trackId);
         if (colour === undefined) {
@@ -2029,7 +2466,8 @@ export class TimelineCanvas {
 
   // draw(), in its order: the lanes, the locator range's tint, the beat and
   // bar lines, the lane dividers (all below the marker row, under which the
-  // lanes scroll), the ruler's two halves, the empty marker row, the clips.
+  // lanes scroll), the ruler's two halves, the marker row (empty with the
+  // marker track off), the clips.
   #drawContent(): void {
     this.#contentDraws += 1;
     const snapshot = this.#options.model.getSnapshot();
@@ -2061,6 +2499,10 @@ export class TimelineCanvas {
       { id: 'ruler-upper', x: 0, y: 0, w: width, h: RULER_UPPER },
       { id: 'ruler-lower', x: 0, y: RULER_UPPER, w: width, h: view.rulerHeight - RULER_UPPER },
     ];
+    // The marker track's row (m5b-ui-markers), as draw()'s fp('marker-track', 0, RULER, W, MK).
+    const markersOn = snapshot !== null && this.#markersOn();
+    if (markersOn) parts.push({ id: 'marker-track', x: 0, y: view.rulerHeight, w: width, h: top - view.rulerHeight });
+    else this.#markerShapes = [];
     order.forEach((trackId, index) => parts.push({ id: `lane-${index + 1}`, x: 0, y: tops[index]!, w: width, h: laneHeightOf(trackId, view) }));
     const ghostLanes = ghostLaneRects(order, adds.map((g) => g.key), view);
     ghostLanes.forEach((lane) => parts.push({ id: `lane-${lane.key}`, x: lane.x, y: lane.y, w: lane.width, h: lane.height }));
@@ -2127,6 +2569,7 @@ export class TimelineCanvas {
       ctx.restore();
     }
     this.#drawRuler(ctx, snapshot, palette);
+    if (snapshot && markersOn) this.#drawMarkers(ctx, snapshot, palette, parts);
     if (snapshot) {
       ctx.save();
       ctx.beginPath();
@@ -2766,7 +3209,7 @@ export class TimelineCanvas {
       lead: Math.floor((MAX_LEAD_MS * rate) / 1000),
       playing: this.#playing,
       enabled: this.#autoScroll,
-      dragging: this.#drag !== null || this.#rulerDrag !== null || this.#band !== null,
+      dragging: this.#drag !== null || this.#rulerDrag !== null || this.#band !== null || this.#markerDrag !== null,
     });
     if (page !== null) {
       this.#view = { ...this.#view, scrollFrames: page };

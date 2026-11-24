@@ -933,3 +933,61 @@ test('the Notepad section, its refusal line and its changed-elsewhere line fit i
   }
   expect(failures).toEqual([]);
 });
+
+// m5b-ui-markers (UI redesign 3.2, 6.3): the marker head's label and the
+// in-place rename field fit in every locale at either window size: the label
+// on one line inside the track list, the field inside the marker row of the
+// event display.
+test('the marker head and the marker rename field fit in every locale at either window size', async () => {
+  test.setTimeout(150_000);
+  scratch = fs.mkdtempSync(path.join(os.tmpdir(), 'siann-fit-markers-'));
+  const sessionDir = seedBundle(scratch, TRACKS);
+  app = await launchApp({ sessionDir, userData: path.join(scratch, 'user-data'), languages: ['en-US'], hook: true });
+  page = await app.firstWindow();
+  await expect(page.getByTestId('status')).toHaveAttribute('data-status', 'connected');
+  await resize(SIZES[0]!);
+  const engine = await engineClient(page);
+  await engine.call('command.execute', { commands: [{ op: 'marker.add', markerId: 'mk_fit', position: '48000', name: 'Chorus' }] });
+  engine.close();
+  const head = page.locator('[data-part="marker-head"]');
+  await expect(head).toHaveCount(1);
+  const failures: string[] = [];
+  for (const locale of LOCALES) {
+    await page.evaluate((next) => window.__siannLocale!.setLocale(next as never), locale);
+    await expect(page.locator('html')).toHaveAttribute('data-locale', locale);
+    for (const size of SIZES) {
+      await resize(size);
+      await expect(page.getByTestId('shell')).toHaveAttribute('data-viewport', `${size.width}x${size.height}`);
+      await expect.poll(() => page.evaluate(() => document.getAnimations().filter((a) => a instanceof CSSTransition).length)).toBe(0);
+      for (const entry of await overflowing('[data-part=marker-head]')) failures.push(`${locale} ${size.width}x${size.height} (marker head): ${entry}`);
+      for (const entry of await wrapped('[data-part=marker-head]')) failures.push(`${locale} ${size.width}x${size.height} (marker head): ${entry}`);
+      const inList = await head.evaluate((el) => {
+        const list = el.closest('[data-part=track-list]')!.getBoundingClientRect();
+        const r = el.getBoundingClientRect();
+        return r.left >= list.left - 0.5 && r.right <= list.right + 0.5 && Math.round(r.height) === 20;
+      });
+      if (!inList) failures.push(`${locale} ${size.width}x${size.height}: the marker head leaves the track list or its 20 px row`);
+      // The rename field over the marker's name, inside the marker row.
+      await expect.poll(() => page.evaluate(() => (window as unknown as { __siannTimeline: { markers(): unknown[] } }).__siannTimeline.markers().length)).toBe(1);
+      const shape = (await page.evaluate(() => (window as unknown as { __siannTimeline: { markers(): Array<{ id: string; label: { x: number; y: number; width: number } }> } }).__siannTimeline.markers()))[0]!;
+      const box = (await page.getByTestId('timeline-canvas').boundingBox())!;
+      await page.mouse.dblclick(box.x + shape.label.x + shape.label.width / 2, box.y + shape.label.y);
+      const field = page.getByTestId('marker-rename');
+      await expect(field).toBeFocused();
+      const fits = await field.evaluate((el) => {
+        const display = el.closest('[data-part=event-display]')!.getBoundingClientRect();
+        const r = el.getBoundingClientRect();
+        return {
+          inside: r.top >= display.top + 40 - 0.5 && r.bottom <= display.top + 60 + 0.5 && r.right <= display.right + 0.5,
+          rect: `${r.left - display.left},${r.top - display.top} ${r.width}x${r.height} in ${display.width}`,
+          label: el.getAttribute('aria-label') ?? '',
+        };
+      });
+      if (!fits.inside) failures.push(`${locale} ${size.width}x${size.height}: the rename field leaves the marker row: ${fits.rect}`);
+      if (!fits.label.includes('Chorus')) failures.push(`${locale} ${size.width}x${size.height}: the rename field's label does not name the marker: ${fits.label}`);
+      await field.press('Escape');
+      await expect(field).toHaveCount(0);
+    }
+  }
+  expect(failures).toEqual([]);
+});
