@@ -187,7 +187,7 @@ function items(list: readonly MenuItemModel[], options: MenuOptions): MenuItemCo
   return list.map((item): MenuItemConstructorOptions => {
     if (item.type === 'separator') return { type: 'separator' };
     if (item.type === 'submenu') return { label: item.label, submenu: items(item.items, options), enabled: item.items.length > 0 };
-    if (item.type === 'role') return { role: item.role, label: item.label };
+    if (item.type === 'role') return { ...role(item.role), label: item.label };
     const accelerator = item.chord ? acceleratorOf(item.chord) : undefined;
     return {
       id: item.command,
@@ -208,18 +208,33 @@ function items(list: readonly MenuItemModel[], options: MenuOptions): MenuItemCo
   });
 }
 
-// The menu bar: the app menu on macOS, then the model's menus in its order
-// (an empty one is left out), the View menu after Edit with devtools only.
-// Role items only besides the model's (Quit, Close, Minimize), and none that
-// reloads or opens devtools. Before any model, Electron's own menus.
+// A role item that neither registers nor shows a key. Left alone, a role
+// item takes Electron's default accelerator and registers it (Minimize
+// Ctrl+M, Cubase's Open Markers; Quit and Close theirs), a second key layer
+// beside the dispatcher (UI redesign 3.6); the preset binds no key to these
+// roles, so none is shown either ('' replaces the default one).
+type Role = NonNullable<MenuItemConstructorOptions['role']>;
+function role(name: Role): MenuItemConstructorOptions {
+  return { role: name, accelerator: '', registerAccelerator: false };
+}
+
+// The menu bar: the app menu on macOS (the system's own, Cmd+Q and Cmd+H
+// with it), then the model's menus in its order (an empty one is left out),
+// the View menu after Edit with devtools only. Role items only besides the
+// model's (Quit, Close, Minimize), and none that reloads or opens devtools.
+// Before any model, File, Edit and Window of role items, keyless as above.
 export function menuTemplate(model: MenuModel | null, options: MenuOptions): MenuItemConstructorOptions[] {
   const mac = options.platform === 'darwin';
   const template: MenuItemConstructorOptions[] = [];
   if (mac) template.push({ role: 'appMenu' });
   if (!model) {
-    template.push({ role: 'fileMenu' }, { role: 'editMenu' });
+    const separator: MenuItemConstructorOptions = { type: 'separator' };
+    template.push(
+      { label: 'File', submenu: [role(mac ? 'close' : 'quit')] },
+      { label: 'Edit', submenu: [role('undo'), role('redo'), separator, role('cut'), role('copy'), role('paste'), separator, role('selectAll')] },
+    );
     if (options.devtools) template.push({ role: 'viewMenu' });
-    template.push({ role: 'windowMenu' });
+    template.push({ label: 'Window', submenu: [role('minimize')] });
     return template;
   }
   for (const menu of model.menus) {

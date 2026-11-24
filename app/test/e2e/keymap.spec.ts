@@ -14,6 +14,9 @@
 //     revision, as their commands do.
 // (e) Help > Key Commands opens the list; the search narrows it; Escape
 //     closes it.
+// (f) The menu registers no key (UI redesign 3.6): Ctrl+M, Cubase's Open
+//     Markers, does not minimize the window, and no role item (Quit or
+//     Close, Minimize) has an accelerator.
 //
 // Requests the renderer sent are read from window.__siannClient.sent();
 // revisions and entities from a second protocol client. Waits are condition
@@ -284,4 +287,39 @@ test('(e) Help > Key Commands opens the list, the search narrows it, Escape clos
   await expect(page.getByTestId('transport-play')).toHaveAttribute('aria-pressed', 'false');
   await page.keyboard.press('Escape');
   await expect(dialog).toBeHidden();
+});
+
+test('(f) the menu registers no key: Ctrl+M does not minimize the window and no role item has an accelerator', async () => {
+  await launch();
+  await expect.poll(() => app!.evaluate(({ Menu }) => Menu.getApplicationMenu()?.getMenuItemById('help.keyCommands') !== null)).toBe(true);
+  // The live menu's role items (macOS's app menu is the system's own).
+  const roles = await app!.evaluate(({ Menu }) => {
+    const out: Array<{ role: string; register: boolean; accelerator: string | null }> = [];
+    const walk = (menu: Electron.Menu) => {
+      for (const item of menu.items) {
+        if (item.role === 'appMenu' || (item.role as string) === 'appmenu') continue;
+        if (item.role) out.push({ role: item.role, register: item.registerAccelerator, accelerator: item.accelerator ?? null });
+        if (item.submenu) walk(item.submenu);
+      }
+    };
+    walk(Menu.getApplicationMenu()!);
+    return out;
+  });
+  expect(roles.map((r) => r.role.toLowerCase())).toContain('minimize');
+  for (const item of roles) expect(item, item.role).toEqual({ role: item.role, register: false, accelerator: '' });
+  // Ctrl+M (Cmd+M on macOS), then Ctrl+Alt+L: the left zone toggles, the window stays.
+  await focusProject();
+  const left = page.getByTestId('zone-left');
+  const before = await left.getAttribute('data-visible');
+  // Through the window's input pipeline, as a key from the keyboard reaches it
+  // (unhandled by the page, Electron offers it to the menu's accelerators).
+  await app!.evaluate(({ BrowserWindow }, mac) => {
+    const contents = BrowserWindow.getAllWindows()[0]!.webContents;
+    const modifiers: Array<'control' | 'meta'> = [mac ? 'meta' : 'control'];
+    contents.sendInputEvent({ type: 'keyDown', keyCode: 'M', modifiers });
+    contents.sendInputEvent({ type: 'keyUp', keyCode: 'M', modifiers });
+  }, process.platform === 'darwin');
+  await page.keyboard.press(`${MOD}+Alt+KeyL`);
+  await expect(left).toHaveAttribute('data-visible', before === 'true' ? 'false' : 'true');
+  expect(await app!.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0]!.isMinimized())).toBe(false);
 });

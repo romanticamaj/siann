@@ -320,8 +320,32 @@ test('the template is built from the model: seven menus, accelerators shown and 
   assert.equal(mac[0]!.role, 'appMenu');
   assert.ok(mac.some((item) => item.role === 'viewMenu'));
   assert.equal(mac[1]!.submenu!.at(-1)!.role, 'close');
+  // Before any model: File, Edit and Window, of role items.
   const none = menuTemplate(null, { platform: 'win32', devtools: false, send: () => undefined }) as Item[];
-  assert.ok(none.some((item) => item.role === 'fileMenu') && none.some((item) => item.role === 'editMenu'));
+  assert.deepEqual(none.map((m) => m.submenu!.filter((i) => i.role).map((i) => i.role)), [['quit'], ['undo', 'redo', 'cut', 'copy', 'paste', 'selectAll'], ['minimize']]);
+});
+
+// UI redesign 3.6 and acceptance 5: the menu registers no key, so the
+// dispatcher stays the one key layer. A role item left alone takes
+// Electron's default accelerator and registers it: Minimize would take
+// Ctrl+M, Cubase's Open Markers, and Quit and Close theirs. Every role item
+// registers none and shows none, since the preset binds no key to them. The
+// one exception is macOS's app menu, the system's own (Cmd+Q, Cmd+H).
+test('no role item registers an accelerator or shows the default one, with a model and before one, on every platform', () => {
+  const submenus = new Set(['appMenu', 'fileMenu', 'editMenu', 'viewMenu', 'windowMenu']);
+  for (const platform of ['win32', 'linux', 'darwin'] as const) {
+    for (const built of [model('en', true, platform === 'darwin' ? 'mac' : 'other'), null]) {
+      const top = menuTemplate(built, { platform, devtools: false, send: () => undefined }) as Item[];
+      const roles = walk(platform === 'darwin' ? top.filter((m) => m.role !== 'appMenu') : top).filter((i) => i.role);
+      const at = `${platform} ${built ? 'model' : 'no model'}`;
+      assert.ok(roles.length > 0, at);
+      for (const item of roles) {
+        assert.ok(!submenus.has(item.role!), `${at}: ${item.role} brings Electron's own items and keys`);
+        assert.equal(item.registerAccelerator, false, `${at}: ${item.role} registers its accelerator`);
+        assert.equal(item.accelerator, '', `${at}: ${item.role} shows ${String(item.accelerator)}`);
+      }
+    }
+  }
 });
 
 test('with a text field focused the Edit menu\'s text items act on it through the web contents, by click and by accelerator', () => {
