@@ -288,18 +288,22 @@ test('the lower zone carries the mockup\'s ids of every landed part and none of 
   });
   const landed = ids.filter((id) => gateOf(id) === 'report');
   const pending = ids.filter((id) => gateOf(id) === 'pending');
-  expect(pending).toEqual(expect.arrayContaining(['strip-1-edit', 'strip-master-inserts', 'tab-editor']));
+  expect(pending).toEqual(expect.arrayContaining(['strip-master-inserts', 'strip-master-edit']));
+  // m5b-ui-editor-channel landed the Editor tab and the strips' e.
+  expect(landed).toEqual(expect.arrayContaining(['tab-editor', 'strip-1-edit', 'strip-2-edit']));
   // m5b-ui-inserts-master landed the racks, the master fader and its cap, and the rack switches.
   expect(landed).toEqual(expect.arrayContaining(['strip-1-inserts', 'strip-2-inserts', 'strip-master-fader', 'strip-master-cap', 'mixer-racks']));
   expect(landed.filter((id) => !shown.includes(id))).toEqual([]);
   expect(pending.filter((id) => shown.includes(id))).toEqual([]);
-  // Every strip's button row is M, S and the empty box of e; the box has no role, focus or text.
+  // Every strip's button row is M, S and e (m5b-ui-editor-channel: Edit Channel Settings).
   for (const id of [TRACK, OTHER]) {
     const buttons = page.getByTestId(`mixer-strip-${id}`).locator('.btns').first();
     await expect(buttons.locator('> *')).toHaveCount(3);
-    const box = buttons.locator('> *').nth(2);
-    await expect(box).toHaveAttribute('aria-hidden', 'true');
-    expect(await box.evaluate((el) => [el.getAttribute('role'), el.getAttribute('tabindex'), el.textContent, el.getBoundingClientRect().width > 0])).toEqual([null, null, '', true]);
+    const e = buttons.locator('> *').nth(2);
+    await expect(e).toHaveClass('msr e');
+    await expect(e).toHaveText('e');
+    await expect(e).toHaveAttribute('aria-pressed', 'false');
+    await expect(e).toHaveAttribute('data-part-of', 'edit');
   }
 });
 
@@ -649,7 +653,9 @@ test('volume, pan, mute and solo from the Inspector make one revision each, and 
   const pending = ids.filter((id) => gateOf(id) === 'pending');
   // inspector-inserts landed with m5b-ui-inserts-master (its gate report, its section in the window).
   // inspector-record and inspector-monitor landed with m5b-ui-recording.
-  expect(pending.sort()).toEqual(['inspector-automation', 'inspector-edit', 'inspector-notepad', 'inspector-read', 'inspector-routing', 'inspector-sends', 'inspector-write']);
+  expect(pending.sort()).toEqual(['inspector-automation', 'inspector-notepad', 'inspector-read', 'inspector-routing', 'inspector-sends', 'inspector-write']);
+  // m5b-ui-editor-channel landed the Inspector's e.
+  expect(landed).toContain('inspector-edit');
   expect(landed).toContain('inspector-inserts');
   expect(landed.filter((id) => !shown.includes(id))).toEqual([]);
   expect(pending.filter((id) => shown.includes(id))).toEqual([]);

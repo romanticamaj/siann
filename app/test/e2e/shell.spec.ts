@@ -224,8 +224,9 @@ test('the chrome and the ported lower, left, right and project zones take the mo
     expect(zone.fvn, zone.zone).toBe(styles.body.fvn);
     expect(parseFloat(zone.lh) / zone.fs, zone.zone).toBeCloseTo(parseFloat(styles.body.lh) / styles.body.fs, 2);
   }
-  // The zone buttons: icon buttons with names.
-  for (const zone of ['left', 'lower', 'right']) {
+  // The zone buttons: icon buttons with names, the Channel zone's first (m5b-ui-editor-channel).
+  await expect(page.locator('[data-part="zone-buttons"] > button')).toHaveCount(4);
+  for (const zone of ['channel', 'left', 'lower', 'right']) {
     const button = page.getByTestId(`zone-button-${zone}`);
     await expect(button).toHaveClass(/\biconbtn\b/);
     await expect(button).toHaveAttribute('aria-label', /\S/);

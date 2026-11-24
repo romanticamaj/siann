@@ -98,7 +98,8 @@ test('Shell renders the mockup\'s .app grid with the six regions in its order', 
   assert.match(app, /data-testid="shell"/);
   // The grid's direct children in the flow: the mockup's five (and, out of the
   // flow, the dividers, the banner row and the toasts).
-  const inFlow = children(markup, /<div class="app"/).filter((child) => !/\.(divider|shell-banner|toasts)\b/.test(child));
+  // The Channel zone (m5b-ui-editor-channel) shares the left zone's grid column and is no region of the mockup's.
+  const inFlow = children(markup, /<div class="app"/).filter((child) => !/\.(divider|shell-banner|toasts|zone-channel)\b/.test(child));
   assert.deepEqual(inFlow.map((child) => child.replace(/\.(zone-[a-z]+|zone)(?=[.[]|$)/g, '')), [
     'header.topbar[top-bar]',
     'aside.leftzone[left-zone]',
@@ -114,7 +115,7 @@ test('Shell renders the mockup\'s .app grid with the six regions in its order', 
   );
   // Nothing else takes a grid cell: every other child of .app is out of the flow.
   for (const child of children(markup, /<div class="app"/).filter((c) => !c.includes('[') && c !== 'main.center')) {
-    assert.match(child, /\.(divider|shell-banner|toasts)\b/, child);
+    assert.match(child, /\.(divider|shell-banner|toasts|zone-channel)\b/, child);
   }
   // No panel library's wrappers.
   assert.ok(!/data-panel|data-separator|data-group/.test(markup), 'no react-resizable-panels markup');
@@ -144,6 +145,50 @@ test('the zone sizes reach the grid as custom properties; a hidden zone is 0', (
   assert.match(closed, /--left-zone-w:0px/);
   assert.match(closed, /--lower-zone-h:0px/);
   assert.match(closed, /--right-zone-w:348px/);
+});
+
+// m5b-ui-editor-channel (UI redesign 2.1, 2.3): the Channel zone is a zone of
+// its own in the left zone's grid column, at the window's edge: an aside with
+// .zone.zone-channel and data-zone="channel" but no data-region (the mockup's
+// six regions stay six), hidden by default; --left-zone-w carries the
+// Channel zone's width and the left zone's, and --channel-zone-w its own. Its
+// boundary with the Inspector is a separator, 80 to 160 px.
+test('the Channel zone: its own aside in the first column, no region, its width in --left-zone-w and --channel-zone-w, its separator', () => {
+  const store = createLayoutStore({ storage: null });
+  const off = render(store);
+  const aside = /<aside[^>]*data-zone="channel"[^>]*>/.exec(off)?.[0];
+  assert.ok(aside, 'the frame is in the DOM');
+  assert.match(aside, /class="zone zone-channel"/);
+  assert.match(aside, /data-testid="zone-channel"/);
+  assert.match(aside, /hidden=""/);
+  assert.ok(!/data-region/.test(aside), 'no region');
+  assert.equal((off.match(/data-region="/g) ?? []).length, 6, 'six regions');
+  const style = (markup: string) => /<div class="app"[^>]*style="([^"]*)"/.exec(markup)![1]!;
+  assert.match(style(off), /--left-zone-w:216px/);
+  assert.match(style(off), /--channel-zone-w:0px/);
+  store.dispatch({ type: 'show', zone: 'channel', viewport: { width: 1440, height: 900 } });
+  const on = render(store);
+  const shown = /<aside[^>]*data-zone="channel"[^>]*>/.exec(on)![0];
+  assert.ok(!/hidden/.test(shown));
+  assert.match(shown, /data-visible="true"/);
+  assert.match(style(on), /--left-zone-w:312px/, '96 + 216');
+  assert.match(style(on), /--channel-zone-w:96px/);
+  store.dispatch({ type: 'hide', zone: 'left', viewport: { width: 1440, height: 900 } });
+  assert.match(style(render(store)), /--left-zone-w:96px/);
+  const divider = /<div[^>]*data-testid="separator-channel"[^>]*>/.exec(on)![0];
+  assert.match(divider, /role="separator"/);
+  assert.match(divider, /class="divider divider-channel"/);
+  assert.match(divider, /aria-valuenow="96"/);
+  assert.match(divider, /aria-valuemin="80"/);
+  assert.match(divider, /aria-valuemax="160"/);
+  assert.match(divider, /aria-orientation="vertical"/);
+  // Before the left zone in the document, so the Tab order starts with it.
+  assert.ok(on.indexOf('data-zone="channel"') < on.indexOf('data-zone="left"'));
+  const css = fs.readFileSync(path.resolve(__dirname, '..', '..', '..', 'renderer', 'shell.css'), 'utf8');
+  assert.match(css, /\.app > \.zone-channel \{[^}]*grid-column: 1;/);
+  assert.match(css, /\.zone-channel\[data-focused="true"\]/);
+  const layoutCss = fs.readFileSync(path.resolve(__dirname, '..', '..', '..', 'renderer', 'ui', 'layout.css'), 'utf8');
+  assert.match(layoutCss, /grid-template-columns:var\(--left-zone-w\) minmax\(0,1fr\) var\(--right-zone-w\)/, 'the three-column grid is unchanged');
 });
 
 test('the zones keep their ids, focus attributes and dividers, positioned out of the grid', () => {
@@ -204,11 +249,19 @@ test('the lower zone takes the mockup\'s .lower and .tabs with the MixConsole ta
   assert.match(tab[0], /data-testid="tab-lower-mixconsole"/);
   // The mockup's ic('sliders','s'), the label, then the key in a kbd.
   assert.match(tab[1]!, /^<svg class="i s" viewBox="0 0 16 16"[^>]*>[\s\S]*<\/svg>MixConsole <kbd>Alt\+F3<\/kbd>$/);
-  assert.ok(!markup.includes('data-part="tab-editor"'), 'tab-editor is pending');
   // m5b-ui-inserts-master: the spacer, then the rack switches; with no capabilities known
   // (this render) the switches are not in the DOM and the row ends at its spacer.
   assert.ok(!markup.includes('data-part="mixer-racks"'), 'no rack switch without features.plugins');
   assert.match(tabs[1]!, /<\/button><span class="spacer"><\/span>$/);
+  // m5b-ui-editor-channel: the Editor tab right after MixConsole (mockup.html line 293).
+  const editor = /<button[^>]*data-part="tab-editor"[^>]*>([\s\S]*?)<\/button>/.exec(tabs[1]!)!;
+  assert.ok(editor, 'the Editor tab');
+  assert.match(editor[0], /class="tab"/);
+  assert.match(editor[0], /role="tab"/);
+  assert.match(editor[0], /aria-selected="false"/);
+  assert.match(editor[0], /data-testid="tab-lower-editor"/);
+  assert.equal(editor[1], '<svg class="i s" viewBox="0 0 16 16" aria-hidden="true" focusable="false"><path d="M2.5 8v0M4.7 6v4M6.9 3.5v9M9.1 5.5v5M11.3 4v8M13.5 7v2"></path></svg>Editor');
+  assert.ok(tabs[1]!.indexOf('tab-mixconsole') < tabs[1]!.indexOf('tab-editor'));
   // The right zone's row is the mockup's .p-head since m5-ui-port-plans.
   assert.match(markup, /<div class="p-head" role="tablist" data-part="right-tabs">/);
   assert.ok(!markup.includes('class="zone-tabs"'), 'no .zone-tabs row is left');

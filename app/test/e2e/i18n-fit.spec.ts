@@ -727,3 +727,56 @@ test('the record options panel, Record and the In row fit in every locale at eit
   engine.close();
   expect(failures).toEqual([]);
 });
+
+// m5b-ui-editor-channel: the Editor tab's label, the Channel zone button, e on
+// the strips and in the Inspector, the Editor tab's empty text and the
+// Channel zone's strip, in en, zh-TW, zh-CN and the pseudo-locale at both
+// window sizes.
+test('the Editor tab, the Channel zone button, e, the editor\'s empty text and the Channel zone fit in every locale', async () => {
+  test.setTimeout(120_000);
+  scratch = fs.mkdtempSync(path.join(os.tmpdir(), 'siann-fit-editor-'));
+  const sessionDir = seedBundle(scratch, TRACKS);
+  app = await launchApp({ sessionDir, userData: path.join(scratch, 'user-data'), languages: ['en-US'] });
+  page = await app.firstWindow();
+  await expect(page.getByTestId('status')).toHaveAttribute('data-status', 'connected');
+  await page.getByTestId('track-header-trk_voxlead').click({ position: { x: 4, y: 4 } });
+  await page.getByTestId('zone-button-channel').click();
+  await expect(page.getByTestId('zone-channel')).toBeVisible();
+  const SELECTORS = ['[data-part="tab-editor"]', '[data-part="tab-mixconsole"]', '[data-part="zone-button-channel"]', '[data-part="inspector-edit"]', '.mixer .msr.e', '.zone-channel .msr', '.zone-channel .readout', '.zone-channel .nametag', '[data-testid="editor-empty"]'];
+  const failures: string[] = [];
+  for (const size of SIZES) {
+    await resize(size);
+    for (const locale of LOCALES) {
+      await page.evaluate((next) => {
+        const store = (window as unknown as { __siannLocale?: { setLocale(l: string): void } }).__siannLocale;
+        if (!store) throw new Error('window.__siannLocale is missing (SIANN_SHELL_TEST=1)');
+        store.setLocale(next);
+      }, locale);
+      await expect(page.locator('html')).toHaveAttribute('data-locale', locale);
+      for (const tab of ['tab-lower-editor', 'tab-lower-mixconsole']) {
+        await page.getByTestId(tab).click();
+        const report = await page.evaluate((selectors) => {
+          const out: string[] = [];
+          for (const selector of selectors) {
+            for (const el of document.querySelectorAll<HTMLElement>(selector)) {
+              if (el.getClientRects().length === 0) continue;
+              if (el.scrollWidth > el.clientWidth) out.push(`${selector} "${(el.textContent ?? '').trim()}" ${el.scrollWidth} > ${el.clientWidth}`);
+              for (const node of el.childNodes) {
+                if (node.nodeType !== Node.TEXT_NODE || !node.textContent?.trim()) continue;
+                const range = document.createRange();
+                range.selectNodeContents(node);
+                const tops = new Set([...range.getClientRects()].map((r) => Math.round(r.top)));
+                if (tops.size > 1 && !el.matches('[data-testid="editor-empty"]')) out.push(`${selector} "${node.textContent.trim()}" on ${tops.size} lines`);
+              }
+              const zone = el.closest<HTMLElement>('.zone');
+              if (zone && el.getBoundingClientRect().right > zone.getBoundingClientRect().right + 0.5) out.push(`${selector} past its zone`);
+            }
+          }
+          return out;
+        }, SELECTORS);
+        for (const entry of report) failures.push(`${size.width}x${size.height} ${locale} ${tab}: ${entry}`);
+      }
+    }
+  }
+  expect(failures).toEqual([]);
+});

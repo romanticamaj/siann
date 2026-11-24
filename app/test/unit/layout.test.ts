@@ -26,6 +26,7 @@ import {
   initialShellState,
   rightTab,
   limits,
+  nextTab,
   parseLayout,
   reduce,
   serializeLayout,
@@ -49,10 +50,11 @@ const start = () => initialShellState(DEFAULT_LAYOUT);
 
 test('the defaults are 216, 280 and 348 px, nothing collapsed, under siann.layout.v1', () => {
   assert.equal(LAYOUT_KEY, 'siann.layout.v1');
-  assert.deepEqual(DEFAULT_SIZES, { left: 216, lower: 280, right: 348 });
+  assert.deepEqual(DEFAULT_SIZES, { channel: 96, left: 216, lower: 280, right: 348 });
   assert.deepEqual(DEFAULT_LAYOUT.sizes, DEFAULT_SIZES);
-  assert.deepEqual(DEFAULT_LAYOUT.collapsed, { left: false, lower: false, right: false });
-  assert.deepEqual(DEFAULT_LAYOUT.tabs, { left: 'track', lower: 'mixconsole', right: 'plans' });
+  // The Channel zone (m5b-ui-editor-channel) is off by default.
+  assert.deepEqual(DEFAULT_LAYOUT.collapsed, { channel: true, left: false, lower: false, right: false });
+  assert.deepEqual(DEFAULT_LAYOUT.tabs, { channel: 'channel', left: 'track', lower: 'mixconsole', right: 'plans' });
   assert.equal(DEFAULT_LAYOUT.stripWidth, 'normal');
   assert.deepEqual(DEFAULT_LAYOUT.trackHeights, {});
   const shown = effectiveLayout(start(), WIDE);
@@ -306,8 +308,8 @@ test('serialize and parse one object; unknown or corrupt JSON falls back to the 
   const partial = parseLayout(
     JSON.stringify({ sizes: { left: 'wide', lower: 200, right: -5 }, collapsed: { left: 'yes', right: true }, tabs: { lower: 'nope' }, stripWidth: 3, trackHeights: { s: { t: 'x' } } }),
   );
-  assert.deepEqual(partial.sizes, { left: 216, lower: 200, right: 348 });
-  assert.deepEqual(partial.collapsed, { left: false, lower: false, right: true });
+  assert.deepEqual(partial.sizes, { channel: 96, left: 216, lower: 200, right: 348 });
+  assert.deepEqual(partial.collapsed, { channel: true, left: false, lower: false, right: true });
   assert.deepEqual(partial.tabs, DEFAULT_LAYOUT.tabs);
   assert.equal(partial.stripWidth, 'normal');
   assert.deepEqual(partial.trackHeights, { s: {} });
@@ -570,4 +572,134 @@ test('tabs: a stored Media tab falls back to Plans when the engine has no Media 
   assert.equal(rightTab(media, { media: false }), 'plans');
   assert.equal(rightTab(DEFAULT_LAYOUT, { media: true }), 'plans');
   assert.equal(rightTab(DEFAULT_LAYOUT, { media: false }), 'plans');
+});
+
+// m5b-ui-editor-channel (UI redesign 2.1, 2.3, 2.4): the Channel zone is a
+// zone of its own at the window's left edge, 96 px by default, 80 to 160 px,
+// off by default, kept in siann.layout.v1, and the lower zone has the Editor
+// tab beside MixConsole.
+test('the Channel zone: 96 px, 80-160, collapsed by default; a drag below 80 collapses; steps, edges and reset', () => {
+  assert.deepEqual(limits('channel', WIDE), { min: 80, max: 160 });
+  assert.equal(effectiveLayout(start(), WIDE).zones.channel.visible, false, 'off by default');
+  const shown = reduce(start(), { type: 'toggle', zone: 'channel', viewport: WIDE });
+  assert.equal(effectiveLayout(shown, WIDE).zones.channel.visible, true);
+  assert.equal(effectiveLayout(shown, WIDE).zones.channel.size, 96);
+  assert.equal(reduce(shown, { type: 'resize', zone: 'channel', size: 400, viewport: WIDE }).layout.sizes.channel, 160);
+  assert.equal(reduce(shown, { type: 'resize', zone: 'channel', size: 120, viewport: WIDE }).layout.sizes.channel, 120);
+  const collapsed = reduce(shown, { type: 'resize', zone: 'channel', size: 79, viewport: WIDE });
+  assert.equal(collapsed.layout.collapsed.channel, true);
+  assert.equal(collapsed.layout.sizes.channel, 96, 'the last size is kept');
+  assert.equal(reduce(shown, { type: 'step', zone: 'channel', direction: 1, viewport: WIDE }).layout.sizes.channel, 104);
+  assert.equal(reduce(shown, { type: 'step', zone: 'channel', direction: -1, large: true, viewport: WIDE }).layout.sizes.channel, 80);
+  assert.equal(reduce(shown, { type: 'edge', zone: 'channel', edge: 'max', viewport: WIDE }).layout.sizes.channel, 160);
+  assert.equal(reduce(shown, { type: 'edge', zone: 'channel', edge: 'min', viewport: WIDE }).layout.sizes.channel, 80);
+  const reset = reduce(reduce(shown, { type: 'resize', zone: 'channel', size: 150, viewport: WIDE }), { type: 'reset', zone: 'channel', viewport: WIDE });
+  assert.equal(reset.layout.sizes.channel, 96);
+  // Shown and hidden independently of the left zone.
+  const leftHidden = reduce(shown, { type: 'hide', zone: 'left', viewport: WIDE });
+  assert.equal(effectiveLayout(leftHidden, WIDE).zones.channel.visible, true);
+  assert.equal(effectiveLayout(leftHidden, WIDE).zones.left.visible, false);
+  assert.equal(reduce(shown, { type: 'toggle', zone: 'channel', viewport: WIDE }).layout.collapsed.channel, true);
+});
+
+test('the Channel zone round-trips through siann.layout.v1; a stored layout without it loads it off at 96 px', () => {
+  const layout = run(start(), { type: 'show', zone: 'channel', viewport: WIDE }, { type: 'resize', zone: 'channel', size: 130, viewport: WIDE }).layout;
+  const object = JSON.parse(serializeLayout(layout)) as { sizes: Record<string, unknown>; collapsed: Record<string, unknown> };
+  assert.equal(object.sizes.channel, 130);
+  assert.equal(object.collapsed.channel, false);
+  assert.deepEqual(parseLayout(serializeLayout(layout)), layout);
+  // A layout stored before this feature.
+  const old = parseLayout(JSON.stringify({ sizes: { left: 300, lower: 200, right: 400 }, collapsed: { left: false, lower: false, right: false } }));
+  assert.equal(old.collapsed.channel, true);
+  assert.equal(old.sizes.channel, 96);
+  assert.equal(old.sizes.left, 300);
+  // Out of range: below the minimum falls back, above the maximum clamps.
+  assert.equal(parseLayout(JSON.stringify({ sizes: { channel: 50 } })).sizes.channel, 96);
+  assert.equal(parseLayout(JSON.stringify({ sizes: { channel: 500 } })).sizes.channel, 160);
+  assert.equal(parseLayout(JSON.stringify({ collapsed: { channel: 'no' } })).collapsed.channel, true);
+});
+
+test('the event display keeps its width: the lower, the right, the left, then the Channel zone give way, the stored layout untouched', () => {
+  const big = run(
+    start(),
+    { type: 'show', zone: 'channel', viewport: WIDE },
+    { type: 'resize', zone: 'channel', size: 160, viewport: WIDE },
+    { type: 'resize', zone: 'left', size: 420, viewport: WIDE },
+    { type: 'resize', zone: 'right', size: 560, viewport: WIDE },
+  );
+  const width = (shown: ReturnType<typeof effectiveLayout>, viewport: Viewport) =>
+    viewport.width -
+    (shown.zones.channel.visible ? shown.zones.channel.size + 1 : 0) -
+    (shown.zones.left.visible ? shown.zones.left.size + 1 : 0) -
+    (shown.zones.right.visible && !shown.zones.right.drawer ? shown.zones.right.size + 1 : 0);
+  const floor = TRACK_LIST_DEFAULT + 1 + EVENT_MIN_WIDTH;
+  for (const w of [1440, 1400, 1300]) {
+    const viewport = { width: w, height: 900 };
+    const shown = effectiveLayout(big, viewport);
+    assert.ok(width(shown, viewport) >= floor, `${w}: project zone ${width(shown, viewport)} px`);
+    assert.equal(shown.zones.channel.size, 160, `${w}: the Channel zone gives way last`);
+  }
+  // At 1300 the right zone has given way (to its minimum, then hidden); the left and the Channel zone keep theirs.
+  const at1300 = effectiveLayout(big, { width: 1300, height: 900 });
+  assert.equal(at1300.zones.right.visible, false);
+  assert.equal(at1300.zones.left.size, 420);
+  assert.equal(at1300.zones.left.visible, true);
+  // A narrow browser tab: the left zone hides before the Channel zone shrinks.
+  const tab: Viewport = { width: 900, height: 900 };
+  const opened = run(big, { type: 'show', zone: 'left', viewport: tab }, { type: 'show', zone: 'channel', viewport: tab });
+  const narrow = effectiveLayout(opened, tab);
+  assert.equal(narrow.zones.left.visible, false, 'the left zone hides first');
+  assert.equal(narrow.zones.channel.visible, true);
+  assert.ok(width(narrow, tab) >= floor);
+  // Narrower still: the Channel zone shrinks to 80, then hides.
+  const tight: Viewport = { width: 660, height: 900 };
+  const tighter = effectiveLayout(run(opened, { type: 'show', zone: 'channel', viewport: tight }), tight);
+  assert.equal(tighter.zones.channel.visible, true);
+  assert.equal(tighter.zones.channel.size, 660 - floor - 1);
+  const tiny: Viewport = { width: 600, height: 900 };
+  assert.equal(effectiveLayout(run(opened, { type: 'show', zone: 'channel', viewport: tiny }), tiny).zones.channel.visible, false);
+  assert.equal(big.layout.sizes.channel, 160, 'the stored layout is not rewritten');
+  assert.equal(big.layout.collapsed.channel, false);
+});
+
+test('under 1100 px the Channel zone starts collapsed with the left zone; shown, it is remembered for the window only', () => {
+  const shown = reduce(start(), { type: 'show', zone: 'channel', viewport: WIDE });
+  const small: Viewport = { width: 1080, height: 900 };
+  const at = effectiveLayout(shown, small);
+  assert.equal(at.zones.channel.visible, false);
+  assert.equal(at.zones.left.visible, false);
+  assert.equal(effectiveLayout(shown, { width: 1100, height: 900 }).zones.channel.visible, true);
+  const opened = reduce(shown, { type: 'toggle', zone: 'channel', viewport: small });
+  assert.equal(effectiveLayout(opened, small).zones.channel.visible, true);
+  assert.deepEqual(opened.opened, ['channel']);
+  assert.deepEqual(opened.layout, shown.layout, 'the stored layout is untouched');
+  const closed = reduce(opened, { type: 'toggle', zone: 'channel', viewport: small });
+  assert.equal(effectiveLayout(closed, small).zones.channel.visible, false);
+  assert.deepEqual(closed.layout, shown.layout);
+});
+
+test('the lower zone\'s tabs are MixConsole and Editor; an unknown one falls back', () => {
+  const editor = reduce(start(), { type: 'tab', zone: 'lower', tab: 'editor' });
+  assert.equal(editor.layout.tabs.lower, 'editor');
+  assert.equal(parseLayout(serializeLayout(editor.layout)).tabs.lower, 'editor');
+  assert.equal(parseLayout(JSON.stringify({ tabs: { lower: 'sampler' } })).tabs.lower, 'mixconsole');
+  const hidden = reduce(start(), { type: 'hide', zone: 'lower', viewport: WIDE });
+  const opened = reduce(hidden, { type: 'openTab', zone: 'lower', tab: 'editor', viewport: WIDE });
+  assert.equal(effectiveLayout(opened, WIDE).zones.lower.visible, true);
+  assert.equal(opened.layout.tabs.lower, 'editor');
+  assert.equal(reduce(start(), { type: 'tab', zone: 'lower', tab: 'meter' }).layout.tabs.lower, 'mixconsole');
+});
+
+test('nextTab steps through a zone\'s tabs and wraps; a one-tab zone stays', () => {
+  assert.equal(nextTab('lower', 'mixconsole', 1), 'editor');
+  assert.equal(nextTab('lower', 'editor', 1), 'mixconsole');
+  assert.equal(nextTab('lower', 'mixconsole', -1), 'editor');
+  assert.equal(nextTab('right', 'plans', 1, { media: true, meter: true }), 'media');
+  assert.equal(nextTab('right', 'meter', 1, { media: true, meter: true }), 'plans');
+  assert.equal(nextTab('right', 'plans', -1, { media: true, meter: true }), 'meter');
+  // The right zone's tabs as the engine has them.
+  assert.equal(nextTab('right', 'plans', 1, { media: false, meter: true }), 'meter');
+  assert.equal(nextTab('right', 'plans', 1, {}), 'plans');
+  assert.equal(nextTab('left', 'track', 1), 'track');
+  assert.equal(nextTab('channel', 'channel', -1), 'channel');
 });

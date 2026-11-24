@@ -48,6 +48,31 @@ test('Enter on a zone enters it; Escape from a control returns to its zone', () 
   for (const place of [ROOT, BODY, OUTSIDE]) assert.equal(focusMove('focus.zoneRoot', place), null);
 });
 
+// m5b-ui-editor-channel (UI redesign 2.1, 3.6): while the project zone itself
+// has the focus and a clip is selected, Return is editor.open and does not
+// enter the zone; with no clip it enters the zone as everywhere else.
+test('Return on the project zone with a clip selected opens the editor; without one it enters the zone', () => {
+  const project: FocusPlace = { kind: 'zone', zone: 'project' };
+  assert.deepEqual(focusMove('focus.enterZone', project, { clipSelected: true }), { type: 'editor' });
+  assert.deepEqual(focusMove('focus.enterZone', project, { clipSelected: false }), { type: 'enter', zone: 'project' });
+  assert.deepEqual(focusMove('focus.enterZone', project), { type: 'enter', zone: 'project' });
+  // Other zones never open the editor; a control, the page and a dialog are as before.
+  for (const zone of ['channel', 'left', 'lower', 'right'] as const) {
+    assert.deepEqual(focusMove('focus.enterZone', { kind: 'zone', zone }, { clipSelected: true }), { type: 'enter', zone });
+  }
+  for (const place of [{ kind: 'control', zone: 'project' } as FocusPlace, BODY, OUTSIDE, { kind: 'dialog' } as FocusPlace]) {
+    assert.equal(focusMove('focus.enterZone', place, { clipSelected: true }), null);
+  }
+  // The other focus keys ignore the selection.
+  assert.deepEqual(focusMove('focus.next', project, { clipSelected: true }), { type: 'zone', step: 1 });
+});
+
+test('the Channel zone is a zone like the others: Tab cycles from it, Escape returns to it', () => {
+  assert.deepEqual(focusMove('focus.next', { kind: 'zone', zone: 'channel' }), { type: 'zone', step: 1 });
+  assert.deepEqual(focusMove('focus.next', { kind: 'control', zone: 'channel' }), { type: 'control', zone: 'channel', step: 1 });
+  assert.deepEqual(focusMove('focus.zoneRoot', { kind: 'control', zone: 'channel' }), { type: 'root', zone: 'channel' });
+});
+
 test('the ring wraps at both ends and starts at an end when nothing in it has the focus', () => {
   const ring = ['divider', 'tab', 'mute', 'fader'];
   assert.equal(ringStep(ring, 'tab', 1), 'mute');

@@ -27,6 +27,7 @@ import { renderToStaticMarkup } from 'react-dom/server';
 import type { Locale, LocaleStore } from '../../src/renderer/i18n/locale';
 import { installLocaleStore, localeStore } from '../../src/renderer/i18n/t';
 import { Mixer } from '../../src/renderer/mixer/Mixer';
+import { Strip } from '../../src/renderer/mixer/Strip';
 import { milliDbToPosition } from '../../src/renderer/mixer/taper';
 import type { Capabilities } from '../../src/renderer/model/capabilities';
 import type { PluginSlotEntity, TrackEntity } from '../../src/renderer/model/document';
@@ -79,6 +80,8 @@ interface RenderOptions {
   // m5b-ui-inserts-master: the plugin slots in the session, and the Inserts rack switch.
   slots?: PluginSlotEntity[];
   racks?: { inserts: boolean };
+  // m5b-ui-editor-channel: the track the Channel zone shows (its e lit).
+  channelTrackId?: string | null;
 }
 
 function withSlots(snap: Snapshot, slots: readonly PluginSlotEntity[]): Snapshot {
@@ -93,7 +96,7 @@ function render(tracks: TrackEntity[], options: RenderOptions = {}): Element {
   const node: ReactNode = (
     <CapabilitiesContext.Provider value={caps}>
       <RecordContext.Provider value={recordHost(snap, caps)}>
-        <Mixer client={fakeClient(snap)} gestures={gestures} realtime={realtime} selectedTrackId={options.selected ?? null} racks={options.racks} />
+        <Mixer client={fakeClient(snap)} gestures={gestures} realtime={realtime} selectedTrackId={options.selected ?? null} racks={options.racks} channelTrackId={options.channelTrackId ?? null} onEditChannel={() => undefined} />
       </RecordContext.Provider>
     </CapabilitiesContext.Provider>
   );
@@ -167,7 +170,7 @@ test('the pan row: the PAN label as the mockup styles it, the knob, the value', 
   }
 });
 
-test('the buttons row: M and S as .msr.m and .msr.s, .on from the track, and the empty box of e', () => {
+test('the buttons row: M and S as .msr.m and .msr.s, .on from the track, then e as strip()\'s .msr.e', () => {
   const muted: TrackEntity = { ...kick(), mute: true };
   const soloed: TrackEntity = { ...snare(), solo: true };
   const [a, b] = strips(render([muted, soloed]));
@@ -181,11 +184,61 @@ test('the buttons row: M and S as .msr.m and .msr.s, .on from the track, and the
     assert.deepEqual(classes(s!).sort(), ['msr', 's', ...(solo ? ['on'] : [])].sort());
     assert.equal(s!.attrs['aria-pressed'], String(solo));
     assert.equal(text(s!), 'S');
-    assertEmptyBox(e!, 'the e box');
-    assert.ok(!classes(e!).includes('msr'), 'the e box is not drawn as a button');
+    // m5b-ui-editor-channel: e, Edit Channel Settings, is on every track strip.
+    assert.equal(e!.tag, 'button');
+    assert.deepEqual(classes(e!).sort(), ['e', 'msr']);
+    assert.equal(e!.attrs['data-part-of'], 'edit');
+    assert.equal(e!.attrs['aria-pressed'], 'false');
+    assert.equal(text(e!), 'e');
+    // strip()'s row: span.msr.m, span.msr.s, span.msr.e.
+    const mockupRow = find(mockupStrip(0), byClass('btns'));
+    assert.deepEqual(elements(btns).map((el) => classes(el).filter((c) => c !== 'on').sort().join('.')), elements(mockupRow).filter((el) => classes(el).includes('msr')).map((el) => classes(el).filter((c) => c !== 'on' && c !== 'ghost').sort().join('.')));
   }
   assert.ok(classes(a!).includes('muted'));
   assert.ok(!classes(b!).includes('muted'));
+});
+
+// m5b-ui-editor-channel (UI redesign 3.4, 10.11): e is lit while the Channel
+// zone shows its track (.on and aria-pressed="true", the app-only rule of
+// shell.css), and a press reports the strip's track. The master's e is
+// M6c's and a proposed track has none.
+test('e is lit while the Channel zone shows its track; the master and a proposed track have no e', () => {
+  const lit = render([kick(), snare()], { channelTrackId: 'trk_b' });
+  const [a, b] = strips(lit);
+  const e = (strip: Element) => find(find(strip, byClass('btns')), (el) => classes(el).includes('e'));
+  assert.deepEqual(classes(e(b!)).sort(), ['e', 'msr', 'on']);
+  assert.equal(e(b!).attrs['aria-pressed'], 'true');
+  assert.deepEqual(classes(e(a!)).sort(), ['e', 'msr']);
+  assert.equal(e(a!).attrs['aria-pressed'], 'false');
+  assert.ok(e(a!).attrs['aria-label']!.includes('Kick'), 'named for its track');
+  const master = find(lit, (el) => classes(el).includes('master'));
+  assert.equal(findAll(master, (el) => classes(el).includes('e')).length, 0, 'the master has no e');
+  assert.equal(findAll(master, byAttr('data-part-of')).filter((el) => el.attrs['data-part-of'] === 'edit').length, 0);
+});
+
+// The Channel zone's strip (m5b-ui-editor-channel): the MixConsole's strip
+// component, without data-part-item (the MixConsole's strip-N numbering stays)
+// and with its test ids prefixed, so no id is the MixConsole strip's twin.
+test('the Channel zone\'s strip is the same component without data-part-item and with prefixed test ids', () => {
+  const tracks = [kick()];
+  const snap = snapshotOf(['trk_a'], tracks, [], []);
+  const node: ReactNode = (
+    <CapabilitiesContext.Provider value={FULL}>
+      <RecordContext.Provider value={recordHost(snap, FULL)}>
+        <Strip trackId="trk_a" client={fakeClient(snap)} gestures={gestures} variant="channel" edit={{ lit: true, onEdit: () => undefined }} />
+      </RecordContext.Provider>
+    </CapabilitiesContext.Provider>
+  );
+  const root = parse(renderToStaticMarkup(node));
+  const strip = find(root, byClass('strip'));
+  assert.ok(!('data-part-item' in strip.attrs), 'no data-part-item');
+  assert.deepEqual(elements(strip).map(sig), ['div.ins', 'div.panrow', 'div.btns', 'div.fad', 'div.readout', 'div.btns', 'div.nametag']);
+  const ids = findAll(root, byAttr('data-testid')).map((el) => el.attrs['data-testid']!);
+  assert.ok(ids.length > 5);
+  for (const id of ids) assert.ok(id.startsWith('channel-'), id);
+  for (const id of ['channel-mixer-strip-trk_a', 'channel-mute-trk_a', 'channel-solo-trk_a', 'channel-edit-trk_a', 'channel-fader-trk_a', 'channel-pan-trk_a', 'channel-meter-trk_a', 'channel-fader-value-trk_a']) assert.ok(ids.includes(id), id);
+  for (const el of findAll(root, (x) => 'id' in x.attrs)) assert.ok(el.attrs.id!.startsWith('channel-'), el.attrs.id!);
+  assert.ok(classes(find(strip, (el) => classes(el).includes('e'))).includes('on'));
 });
 
 test('the fader area: the scale at the taper\'s positions, the fader with its unity line and cap, two meter channels', () => {
@@ -652,9 +705,10 @@ test('reduced capabilities still remove the controls, and the boxes stay', () =>
   const noMuteSolo: Capabilities = { ...FULL, commands: (FULL.commands ?? []).filter((c) => c !== 'track.set_mute' && c !== 'track.set_solo') };
   const strip = strips(render([kick()], { caps: noMuteSolo }))[0]!;
   const btns = find(strip, byClass('btns'));
-  assert.equal(findAll(btns, (el) => el.tag === 'button').length, 0);
+  // e needs no engine method (m5b-ui-editor-channel): it stays.
+  assert.deepEqual(findAll(btns, (el) => el.tag === 'button').map((el) => text(el)), ['e']);
   assert.equal(elements(btns).length, 3, 'M, S and e keep their boxes');
-  for (const box of elements(btns)) assertEmptyBox(box, 'an unlisted button');
+  for (const box of elements(btns).slice(0, 2)) assertEmptyBox(box, 'an unlisted button');
   const bare = strips(render([kick()], { caps: null }))[0]!;
   assert.equal(findAll(bare, (el) => el.attrs.role === 'slider').length, 0);
   assert.deepEqual(elements(bare).map(sig), ['div.ins', 'div.panrow', 'div.btns', 'div.fad', 'div.readout', 'div.btns', 'div.nametag']);
