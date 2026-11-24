@@ -89,7 +89,7 @@ import { PendingTakes } from './shell/Recording';
 import type { TimelineTestHooks } from './timeline/TimelineCanvas';
 import type { MeterTestHooks } from './mixer/MixerMeters';
 import { BusSelection } from './mixer/bus-selection';
-import { addBusCommand, needsConfirmation, nextBusName, removalSummary, removeBusCommand, type RemovalSummary } from './mixer/bus-commands';
+import { addBusCommand, busRemoval, needsConfirmation, nextBusName, recheckBusRemoval, removeBusCommand, type BusRemoval, type RemovalSummary } from './mixer/bus-commands';
 import { busesListed } from './mixer/routing';
 import { ConfirmDialog } from './shell/ConfirmDialog';
 import { useT } from './i18n/t';
@@ -232,8 +232,23 @@ export function App({
   );
   // Add Bus and Remove Bus (m5b-ui-sends-buses; UI redesign 3.6; 10.11, 25):
   // one bus.add named "Bus N"; one bus.remove of the selected bus, after a
-  // confirmation naming what goes with it when anything does.
-  const [removing, setRemoving] = useState<{ readonly busId: string; readonly message: string } | null>(null);
+  // confirmation naming what goes with it when anything does. Confirm rechecks
+  // the capability, the edit guard and the summary (model/recheck.ts): a
+  // changed summary is shown and asked again; a reconnect or an epoch closes it.
+  const [removing, setRemoving] = useState<BusRemoval | null>(null);
+  const busRemoveAllowed = useCallback(() => {
+    const can = capabilitySelector(client.getState().capabilities);
+    return busesListed(can) && can.command('bus.remove') && !structuralBlocked(plans.getSnapshot().heard);
+  }, [client, plans]);
+  const confirmBusRemoval = useCallback(
+    (shown: BusRemoval) => {
+      const result = recheckBusRemoval(shown, client.model.getSnapshot(), busRemoveAllowed());
+      if (result.kind === 'ask') return setRemoving(result.pending);
+      setRemoving(null);
+      if (result.kind === 'send') sendCommand(client, result.command);
+    },
+    [client, busRemoveAllowed],
+  );
   useEffect(() => {
     const can = () => capabilitySelector(client.getState().capabilities);
     const offAdd = commands.register('window', 'mixer.bus.add', () => {
@@ -244,12 +259,11 @@ export function App({
     const offRemove = commands.register('window', 'mixer.bus.remove', () => {
       const snapshot = client.model.getSnapshot();
       const busId = buses.getSnapshot();
-      if (!snapshot || busId === null || !busesListed(can()) || !can().command('bus.remove') || structuralBlocked(plans.getSnapshot().heard)) return false;
-      const bus = snapshot.entities[`bus:${busId}`] as { name?: string } | undefined;
-      if (!bus) return false;
-      const summary = removalSummary(busId, snapshot);
-      if (needsConfirmation(summary)) {
-        setRemoving({ busId, message: removalMessage(t, bus.name ?? '', summary) });
+      if (!snapshot || busId === null || !busRemoveAllowed()) return false;
+      const removal = busRemoval(snapshot, busId);
+      if (!removal) return false;
+      if (needsConfirmation(removal.summary)) {
+        setRemoving(removal);
         return true;
       }
       return sendCommand(client, removeBusCommand(snapshot, busId));
@@ -265,14 +279,20 @@ export function App({
       offRemove();
       offCancel();
     };
-  }, [commands, client, buses, plans, t]);
+  }, [commands, client, buses, plans, t, busRemoveAllowed]);
   const epoch = useSyncExternalStore(
     (listener) => client.subscribe(listener),
     () => client.getState().epoch,
   );
+  const insertsRef = useRef(inserts);
+  insertsRef.current = inserts;
+  // A reconnect or a session epoch also closes a confirmation: what it showed
+  // was read from the session before.
   useEffect(() => {
     setTracks(NO_TRACKS);
     buses.set(null);
+    setRemoving(null);
+    insertsRef.current?.picker.cancelApprove();
   }, [reconnects, epoch, buses]);
   // Projects: the key commands and menu items, and the start view.
   useEffect(() => project.bind(commands, () => capabilitySelector(client.getState().capabilities)), [project, commands, client]);
@@ -403,14 +423,10 @@ export function App({
         {removing ? (
           <ConfirmDialog
             open
-            message={removing.message}
+            message={removalMessage(t, removing.name, removing.summary)}
             confirmLabel={t('confirm.remove')}
             cancelLabel={t('confirm.cancel')}
-            onConfirm={() => {
-              const snapshot = client.model.getSnapshot();
-              if (snapshot) sendCommand(client, removeBusCommand(snapshot, removing.busId));
-              setRemoving(null);
-            }}
+            onConfirm={() => confirmBusRemoval(removing)}
             onCancel={() => setRemoving(null)}
           />
         ) : null}

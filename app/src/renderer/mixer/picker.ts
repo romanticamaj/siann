@@ -91,6 +91,7 @@ export class PickerController {
   }
 
   cancelApprove(): void {
+    if (this.#state.confirm === null) return;
     this.#set({ ...this.#state, confirm: null });
   }
 
