@@ -3,6 +3,7 @@
 #include <algorithm>
 #include <atomic>
 #include <optional>
+#include <set>
 #include <utility>
 
 #include "siann/command/display_text.hpp"
@@ -201,13 +202,20 @@ std::vector<EntitySnapshot> writeSetOf(const model::Document& base, const Declar
     return snapshot(base, std::vector<EntityRef>(effects.begin(), effects.end()));
 }
 
-// The written entities whose outcome on `head` differs from the outcome on the
-// plan's base, though `head` holds them as the plan recorded them: a step whose
-// result depends on more than its declared set (marker.add without a number
-// takes the lowest free number of its kind) would otherwise apply an entity
-// other than the one previewed and approved. Reported as modified. A replay on
-// `head` that fails reports nothing here; apply's commit refuses it with the
-// command's own error.
+// The entities whose outcome on `head` differs from the outcome on the plan's
+// base, though `head` holds the recorded sets as the plan recorded them:
+// - a written entity a step whose result depends on more than its declared set
+//   (marker.add without a number takes the lowest free number of its kind)
+//   would apply other than previewed and approved, reported as modified;
+// - an entity outside the write set that the steps change on `head`: a
+//   cascading step reaches what `head` holds (a track.remove also removes a
+//   clip placed on the track since the base, a bus.remove also reroutes a
+//   track routed to the bus since), which the reviewer never saw. Reported with
+//   its change from the base to `head` (added for a clip placed since),
+//   modified when it is as at the base. History::merge refuses a proposal
+//   branch on the same rule.
+// A replay on `head` that fails reports nothing here; apply's commit refuses it
+// with the command's own error.
 std::vector<StaleEntity> changedOutcomes(const model::Document& base, const model::Document& head, const Plan& plan) {
     std::vector<StaleEntity> out;
     if (plan.steps.empty() || base.documentHash() == head.documentHash()) {
@@ -221,11 +229,27 @@ std::vector<StaleEntity> changedOutcomes(const model::Document& base, const mode
     } catch (const CommandError&) {
         return out;
     }
+    std::set<EntityRef> written;
     for (const EntitySnapshot& entry : plan.writeSet) {
+        written.insert(entry.ref);
         if (onHead->result.findEntityHash(entry.ref) != onBase->result.findEntityHash(entry.ref)) {
             out.push_back(StaleEntity{entry.ref, DiffEntry::Change::modified});
         }
     }
+    for (const DiffEntry& entry : model::diff(head, onHead->result)) {
+        if (written.count(entry.entity) != 0) {
+            continue;
+        }
+        const auto atBase = base.findEntityHash(entry.entity);
+        const auto onHeadNow = head.findEntityHash(entry.entity);
+        const auto change = atBase == onHeadNow ? DiffEntry::Change::modified
+                            : !atBase           ? DiffEntry::Change::added
+                            : !onHeadNow        ? DiffEntry::Change::removed
+                                                : DiffEntry::Change::modified;
+        out.push_back(StaleEntity{entry.entity, change});
+    }
+    std::sort(out.begin(), out.end(),
+              [](const StaleEntity& a, const StaleEntity& b) { return setLess(a.entity, b.entity); });
     return out;
 }
 

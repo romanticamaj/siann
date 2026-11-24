@@ -115,7 +115,11 @@ set entries), `invalid_plan` (anything else malformed, including unknown fields)
 `plan_stale` (with `changedEntities`: `"<type>:<id>"` and `added`, `removed` or
 `modified`; a `writeSet` entity is also `modified` when every recorded hash
 matches but replaying the steps on the head gives it another result than on
-`baseRevision`, as for a `marker.add` without a number whose number main took),
+`baseRevision`, as for a `marker.add` without a number whose number main took;
+and an entity outside `writeSet` that the steps change on the head is stale with
+its change from `baseRevision` to the head, `modified` when it is as at the base,
+as for a clip placed since on the track a `track.remove` removes, or a track
+routed since to the bus a `bus.remove` removes),
 `invalid_state`, `not_found`, `invalid_params`, and at submission
 `invalid_plan_metadata`. Plans live in engine
 memory in M3 and are not stored in the session bundle.
