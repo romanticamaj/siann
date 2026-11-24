@@ -918,9 +918,13 @@ test('the marker head and the marker rename field fit in every locale at either 
       const fits = await field.evaluate((el) => {
         const display = el.closest('[data-part=event-display]')!.getBoundingClientRect();
         const r = el.getBoundingClientRect();
-        return { inside: r.top >= display.top + 40 - 0.5 && r.bottom <= display.top + 60 + 0.5 && r.right <= display.right + 0.5, label: el.getAttribute('aria-label') ?? '' };
+        return {
+          inside: r.top >= display.top + 40 - 0.5 && r.bottom <= display.top + 60 + 0.5 && r.right <= display.right + 0.5,
+          rect: `${r.left - display.left},${r.top - display.top} ${r.width}x${r.height} in ${display.width}`,
+          label: el.getAttribute('aria-label') ?? '',
+        };
       });
-      if (!fits.inside) failures.push(`${locale} ${size.width}x${size.height}: the rename field leaves the marker row`);
+      if (!fits.inside) failures.push(`${locale} ${size.width}x${size.height}: the rename field leaves the marker row: ${fits.rect}`);
       if (!fits.label.includes('Chorus')) failures.push(`${locale} ${size.width}x${size.height}: the rename field's label does not name the marker: ${fits.label}`);
       await field.press('Escape');
       await expect(field).toHaveCount(0);

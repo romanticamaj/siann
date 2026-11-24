@@ -452,11 +452,12 @@ button.media-remove { min-height: 0; padding: 0 var(--space-1h); font-size: var(
 /* The marker rename field (m5b-ui-markers; UI redesign 3.2): an input over a
    marker's label in the marker track row, which the mockup does not draw.
    TimelineCanvas sets its left and width; it fills the row. */
-.marker-rename {
+input.marker-rename {
   position: absolute;
   top: var(--ruler-h);
   z-index: 3;
   height: var(--marker-h);
+  min-height: 0;
   padding: 0 var(--space);
   border: var(--hairline) solid var(--focus-ring);
   border-radius: var(--radius-s);
