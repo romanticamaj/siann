@@ -492,6 +492,26 @@ export function Timeline({
     ];
     return () => offs.forEach((off) => off());
   }, [timeline, commands, markerGate]);
+  // Rewind, forward and nudge cursor (m5b-ui-keymap; UI redesign 3.1, 3.6):
+  // window commands through transport.locate, which the canvas sends where
+  // the engine lists it. The key is taken whenever it does, so Ctrl+- and
+  // Ctrl+= never zoom a browser tab (5.8); without a device the engine
+  // refuses the locate and nothing moves.
+  useEffect(() => {
+    if (!timeline) return undefined;
+    const take = (move: () => boolean) => (): boolean => {
+      if (!canRef.current.has('transport.locate')) return false;
+      move();
+      return true;
+    };
+    const offs = [
+      commands.register('window', 'transport.rewind', take(() => timeline.wind(-1))),
+      commands.register('window', 'transport.forward', take(() => timeline.wind(1))),
+      commands.register('window', 'transport.nudgeCursorLeft', take(() => timeline.nudgeCursor(-1))),
+      commands.register('window', 'transport.nudgeCursorRight', take(() => timeline.nudgeCursor(1))),
+    ];
+    return () => offs.forEach((off) => off());
+  }, [timeline, commands]);
   useEffect(() => (timeline && loopClick ? loopClick.useSelection(() => timeline.selectionSpan()) : undefined), [timeline, loopClick]);
 
   const state = useSyncExternalStore(

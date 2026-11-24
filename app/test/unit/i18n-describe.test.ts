@@ -411,6 +411,8 @@ const CODES = [
   'invalid_notes',
   // A bus routed into a loop (m5b-ui-sends-buses; protocol-engine-v0, "Buses and sends").
   'routing_cycle',
+  // A typed tempo the tempo map refuses (m5b-ui-keymap; session.set_tempo).
+  'invalid_tempo',
 ];
 
 test('engine error codes: catalog text in Chinese, the engine\'s own message in English', () => {

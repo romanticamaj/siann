@@ -14,8 +14,8 @@
 //   than the display), and once after a frame changed while stopped. React
 //   hears of the transport only when the playing flag flips (the start
 //   button's pressed state), the formats are exchanged or the field opens.
-//   Beside it, the tempo in force at the cursor (root.tempo; editing it is
-//   phase 3), written the same way, and last the Sig cell (m5b-ui-signature;
+//   Beside it, the tempo in force at the cursor (root.tempo), written the
+//   same way, and last the Sig cell (m5b-ui-signature;
 //   spec UR-15, 3.1): the metre bars are counted in, read from
 //   timeline/musical-time as the ruler, the grid and snap read it, so it cannot
 //   disagree with them. It is a readout, not a control (no role, no focus, no
@@ -25,6 +25,15 @@
 //   text-field rule keeps every key in it; Enter locates to the typed
 //   position (read in the primary format), Escape or leaving it cancels, and
 //   text that is no position sends nothing.
+// - Shift+T (m5b-ui-keymap; spec 3.1) opens the same kind of field over the
+//   tempo cell, starting with the tempo shown: Enter sends one
+//   command.execute with one session.set_tempo of the whole map, the point in
+//   force at the cursor set to the typed BPM (timeline/tempo-edit.ts; one
+//   revision, undoable), Escape or leaving it cancels, text that is no tempo
+//   marks the field invalid and sends nothing. The key exists only where the
+//   engine lists session.set_tempo, and stays while a proposal is heard (4.5 C5).
+// - Every button's tooltip names its key from the preset (tipWithKey;
+//   m5b-ui-keymap), while it is enabled; a disabled one gives its reason.
 // - With no audio device (engine.status device null) or no engine the buttons
 //   work in this build but not now: they are disabled and their tooltip says
 //   why (spec 3.0), the device error's code in front. An engine whose
@@ -66,7 +75,8 @@ import { useCallback, useEffect, useRef, useState, useSyncExternalStore, type Ke
 
 import type { MessageKey } from '../i18n/en';
 import { useT, type T } from '../i18n/t';
-import type { CommandRegistry } from '../keys/commands';
+import { tipWithKey } from '../keys/chord-label';
+import type { CommandId, CommandRegistry } from '../keys/commands';
 import type { EngineStatus, EngineStatusSource } from '../model/engine-status';
 import { MAX_CLICK_GAIN, MIN_CLICK_GAIN, type LoopClickController } from '../model/loop-click';
 import type { MeterFrame } from '../model/meter-frames';
@@ -77,6 +87,7 @@ import { frameMarks } from '../perf/frame-marks';
 import { formatLocators, rangeOf } from '../timeline/locators';
 import { formatSignature } from '../timeline/musical-time';
 import { formatPosition, formatTempo, otherFormat, parsePosition, tempoAt, type TimeFormat } from '../timeline/transport-time';
+import { parseTempo, tempoCommand, tempoEntryAllowed } from '../timeline/tempo-edit';
 import { PlayheadClock } from '../transport/playhead-clock';
 import { useCapabilities } from './Capable';
 import { Counted } from './Counted';
@@ -122,8 +133,10 @@ export function transportButton(
   action: () => void,
   onStudioSetup: (() => void) | undefined,
   t: T,
+  // The enabled button's tooltip (the label and its key), when it has a key.
+  tip: string = label,
 ): TransportButtonProps {
-  if (availability.enabled) return { disabled: false, title: label, onClick: action };
+  if (availability.enabled) return { disabled: false, title: tip, onClick: action };
   const reason = availability.reason ?? label;
   if (availability.noDevice && onStudioSetup) {
     return { disabled: false, 'aria-disabled': 'true', title: `${reason}\n${t('transport.studioSetupHint')}`, onClick: onStudioSetup };
@@ -339,6 +352,48 @@ function TransportBar({ client, realtime, engineStatus, layout, commands, transp
     };
   }, [client, realtime, primary]);
 
+  // Shift+T (m5b-ui-keymap): the tempo field, where the engine lists session.set_tempo.
+  const [editingTempo, setEditingTempo] = useState(false);
+  const [tempoInvalid, setTempoInvalid] = useState(false);
+  const tempoAllowed = tempoEntryAllowed(useCapabilities());
+  const tempoAllowedRef = useRef(tempoAllowed);
+  tempoAllowedRef.current = tempoAllowed;
+  useEffect(
+    () =>
+      commands.register('window', 'transport.enterTempo', () => {
+        if (!tempoAllowedRef.current || !client.model.getSnapshot()?.root) return false;
+        setTempoInvalid(false);
+        setEditingTempo(true);
+        return true;
+      }),
+    [commands, client],
+  );
+  const closeTempo = () => {
+    setEditingTempo(false);
+    setTempoInvalid(false);
+  };
+  const onTempoKey = (event: KeyboardEvent<HTMLInputElement>) => {
+    if (event.key === 'Escape') {
+      event.preventDefault();
+      event.stopPropagation();
+      closeTempo();
+      return;
+    }
+    if (event.key !== 'Enter') return;
+    event.preventDefault();
+    event.stopPropagation();
+    const milliBpm = parseTempo(event.currentTarget.value);
+    const snapshot = client.model.getSnapshot();
+    if (milliBpm === null || !snapshot) {
+      setTempoInvalid(true);
+      return;
+    }
+    const at = realtime?.playhead()?.playheadSamples ?? '0';
+    const command = tempoCommand(snapshot, /^\d+$/.test(at) ? BigInt(at) : 0n, milliBpm);
+    closeTempo();
+    if (command) void transport.execute(command);
+  };
+
   // Shift+P: the position field.
   useEffect(
     () =>
@@ -377,8 +432,8 @@ function TransportBar({ client, realtime, engineStatus, layout, commands, transp
   };
 
   const availability: TransportAvailability = { enabled, reason, noDevice: noDeviceNow };
-  const button = (label: string, action: () => void, which: TransportAvailability = availability) =>
-    transportButton(which, label, action, onStudioSetup, t);
+  const button = (label: string, action: () => void, which: TransportAvailability = availability, command?: CommandId) =>
+    transportButton(which, label, action, onStudioSetup, t, command ? tipWithKey(t, label, command) : label);
   const label = (format: TimeFormat) => t(format === 'bars' ? 'transport.labelBars' : 'transport.labelTime');
   return (
     <div className="transport" data-testid="transport" data-part="transport" role="group" aria-label={t('transport.label')}>
@@ -389,7 +444,7 @@ function TransportBar({ client, realtime, engineStatus, layout, commands, transp
           className="tbtn"
           data-testid="transport-to-start"
           data-part="transport-start"
-          {...button(t('transport.toStart'), () => void transport.toStart())}
+          {...button(t('transport.toStart'), () => void transport.toStart(), availability, 'transport.toStart')}
           aria-label={t('transport.toStart')}
         >
           <Icon name="rtz" />
@@ -401,7 +456,7 @@ function TransportBar({ client, realtime, engineStatus, layout, commands, transp
             data-testid="transport-cycle"
             data-part="transport-cycle"
             aria-pressed={cycle}
-            {...button(t('transport.cycle'), () => void loopClick.toggleCycle(), { ...cycleAvailability, enabled })}
+            {...button(t('transport.cycle'), () => void loopClick.toggleCycle(), { ...cycleAvailability, enabled }, 'transport.cycleToggle')}
             aria-label={t('transport.cycle')}
           >
             <Icon name="loop" />
@@ -414,7 +469,7 @@ function TransportBar({ client, realtime, engineStatus, layout, commands, transp
           className="tbtn"
           data-testid="transport-stop"
           data-part="transport-stop"
-          {...button(t('transport.stop'), () => void transport.stop())}
+          {...button(t('transport.stop'), () => void transport.stop(), availability, 'transport.stop')}
           aria-label={t('transport.stop')}
         >
           <Icon name="stop" />
@@ -425,7 +480,7 @@ function TransportBar({ client, realtime, engineStatus, layout, commands, transp
           data-testid="transport-play"
           data-part="transport-play"
           aria-pressed={playing}
-          {...button(t('transport.startStop'), () => void transport.toggle())}
+          {...button(t('transport.startStop'), () => void transport.toggle(), availability, 'transport.toggle')}
           aria-label={t('transport.startStop')}
         >
           <Icon name="play" />
@@ -490,11 +545,32 @@ function TransportBar({ client, realtime, engineStatus, layout, commands, transp
         ) : (
           <Hold className="cell display-locators-empty" />
         )}
-        <div className="cell" data-part="display-tempo" title={t('transport.tempo')}>
+        <div
+          className="cell"
+          data-part="display-tempo"
+          data-editing={editingTempo ? 'true' : undefined}
+          title={tempoAllowed ? tipWithKey(t, t('transport.tempo'), 'transport.enterTempo') : t('transport.tempo')}
+        >
           <span className="lbl" aria-hidden="true">
             {t('transport.labelTempo')}
           </span>
           <span className="val sm" data-testid="transport-tempo" ref={tempoRef} />
+          {editingTempo ? (
+            <input
+              className="position-field tempo-field"
+              data-testid="tempo-field"
+              aria-label={t('transport.tempoField')}
+              aria-invalid={tempoInvalid ? 'true' : undefined}
+              inputMode="decimal"
+              defaultValue={tempoRef.current?.textContent ?? ''}
+              autoFocus
+              spellCheck={false}
+              onFocus={(event) => event.currentTarget.select()}
+              onChange={() => setTempoInvalid(false)}
+              onKeyDown={onTempoKey}
+              onBlur={closeTempo}
+            />
+          ) : null}
         </div>
         <div
           className="cell"
@@ -531,7 +607,7 @@ function TransportBar({ client, realtime, engineStatus, layout, commands, transp
             data-testid="transport-metronome"
             data-part="transport-metronome"
             aria-pressed={click}
-            {...button(t('transport.metronome'), () => void loopClick.toggleClick(), { ...clickAvailability, enabled })}
+            {...button(t('transport.metronome'), () => void loopClick.toggleClick(), { ...clickAvailability, enabled }, 'transport.metronomeToggle')}
             aria-label={t('transport.metronome')}
             onContextMenu={(event: MouseEvent<HTMLButtonElement>) => {
               event.preventDefault();
@@ -710,7 +786,7 @@ export function UndoRedo({ transport, history }: { transport: TransportControlle
         className={undo === 'no' ? 'iconbtn dim' : 'iconbtn'}
         data-testid="undo"
         data-part="undo"
-        title={t('transport.undo')}
+        title={tipWithKey(t, t('transport.undo'), 'edit.undo')}
         aria-label={t('transport.undo')}
         onClick={() => void transport.undo()}
       >
@@ -721,7 +797,7 @@ export function UndoRedo({ transport, history }: { transport: TransportControlle
         className={redo === 'no' ? 'iconbtn dim' : 'iconbtn'}
         data-testid="redo"
         data-part="redo"
-        title={t('transport.redo')}
+        title={tipWithKey(t, t('transport.redo'), 'edit.redo')}
         aria-label={t('transport.redo')}
         onClick={() => void transport.redo()}
       >

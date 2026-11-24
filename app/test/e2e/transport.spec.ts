@@ -629,7 +629,8 @@ test('a device that opens after a few failed attempts enables the transport once
   // Two failed opens under the engine's default backoff (250 ms, then 500 ms)
   // and the status bar's next 1 s poll: a few seconds on a loaded runner.
   await deviceRunning(30_000);
-  await expect(playButton()).toHaveAttribute('title', en['transport.startStop']);
+  // Enabled, its tooltip is its label and its key (m5b-ui-keymap: tipWithKey).
+  await expect(playButton()).toHaveAttribute('title', `${en['transport.startStop']} (Space)`);
   await focusProject();
   await page.keyboard.press('Space');
   await expectPlaying(true);

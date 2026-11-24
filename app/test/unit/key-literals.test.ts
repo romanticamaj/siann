@@ -8,7 +8,7 @@
 // macOS glyph), a numpad key (Num 0, Num -), a function key; and, as the
 // child of a kbd or the value of title or aria-keyshortcuts, any single key.
 // Then the same over the values of the three catalogs. The key table's own
-// files are the allowed sources: the preset, the audit's reference, the tool
+// files are the allowed sources: the preset, the tool
 // modifiers and the formatter's name table; and the shell's accelerator map
 // (app/src/main/menu.ts acceleratorOf), whose names are Electron's.
 
@@ -25,7 +25,7 @@ import { zhHant } from '../../src/renderer/i18n/zh-Hant';
 // dist/test/unit -> app/src
 const SRC = path.resolve(__dirname, '..', '..', '..', 'src');
 const ALLOWED_FILES = new Set(
-  ['renderer/keys/preset-cubase.ts', 'renderer/keys/cubase-reference.ts', 'renderer/keys/tool-modifiers.ts', 'renderer/keys/chord-label.ts'].map((file) => path.join(SRC, ...file.split('/'))),
+  ['renderer/keys/preset-cubase.ts', 'renderer/keys/tool-modifiers.ts', 'renderer/keys/chord-label.ts'].map((file) => path.join(SRC, ...file.split('/'))),
 );
 // The catalogs are checked by value below.
 const CATALOG_DIR = path.join(SRC, 'renderer', 'i18n');

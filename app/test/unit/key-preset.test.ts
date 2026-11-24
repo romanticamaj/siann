@@ -10,7 +10,7 @@ import * as path from 'node:path';
 
 import { formatChord } from '../../src/renderer/keys/chord-label';
 import { COMMAND_IDS, SCOPES } from '../../src/renderer/keys/commands';
-import { CUBASE_REFERENCE } from '../../src/renderer/keys/cubase-reference';
+import { CUBASE_REFERENCE } from './support/cubase-reference';
 import { CUBASE_PRESET } from '../../src/renderer/keys/preset-cubase';
 
 test('the preset is one table of chord, command id and scope', () => {

@@ -133,6 +133,7 @@
 // sentence the canvas words itself, the empty session's guidance, comes from
 // the catalogs through the `t` it is given and is redrawn on a locale change.
 
+import { nudgeCursorTarget, windTarget } from './wind';
 import { formatDb } from '../format';
 import type { Ghost } from '../plans/ghosts';
 import { TOKENS } from '../tokens';
@@ -1047,6 +1048,20 @@ export class TimelineCanvas {
     const snapshot = this.#options.model.getSnapshot();
     if (!snapshot || !this.#markersOn()) return false;
     return this.#locate(previousMarkerFrame(snapshot, this.#cursorFrame()));
+  }
+
+  // Num - and Num + (- and =; m5b-ui-keymap): the cursor a bar back or on,
+  // from where it is now (playing too), never before the start.
+  wind(direction: 1 | -1): boolean {
+    const root = this.#options.model.getSnapshot()?.root;
+    return this.#locate(windTarget(this.#cursorFrame(), direction, root?.tempo ?? [], root?.sampleRate ?? 48000));
+  }
+
+  // Ctrl+Num - and Ctrl+Num + (Ctrl+- and Ctrl+=): the cursor a step of the
+  // grid the event display shows at its zoom, snap on or not.
+  nudgeCursor(direction: 1 | -1): boolean {
+    const root = this.#options.model.getSnapshot()?.root;
+    return this.#locate(nudgeCursorTarget(this.#cursorFrame(), direction, this.#snap, this.#view.framesPerPixel, root?.tempo ?? [], root?.sampleRate ?? 48000));
   }
 
   // 1, 3, 4 and 5: the Object Selection, Split, Glue and Erase tools.

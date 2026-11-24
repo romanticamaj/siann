@@ -10,7 +10,7 @@ import assert from 'node:assert/strict';
 
 import type { Binding } from '../../src/renderer/keys/commands';
 import { chordOf, composingKey, isTextField, resolveKey, type KeyInput } from '../../src/renderer/keys/dispatcher';
-import { CUBASE_REFERENCE } from '../../src/renderer/keys/cubase-reference';
+import { CUBASE_REFERENCE } from './support/cubase-reference';
 import { CUBASE_PRESET } from '../../src/renderer/keys/preset-cubase';
 
 const NONE = { ctrl: false, alt: false, shift: false, meta: false };

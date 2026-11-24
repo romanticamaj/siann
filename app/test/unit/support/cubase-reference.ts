@@ -21,7 +21,7 @@
 // holds the preset to this table, and parses section 7 of the research file
 // so that no key of it is missing here.
 
-import type { CommandId, Scope } from './commands';
+import type { CommandId, Scope } from '../../../src/renderer/keys/commands';
 
 export type ReferenceSection = '7.1' | '7.2' | '7.3' | '7.4' | '7.5' | '7.6' | '7.7' | '7.8' | '7.9';
 

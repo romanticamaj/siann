@@ -15,6 +15,7 @@
 import { refusalLine } from '../i18n/errors';
 import type { Locale } from '../i18n/locale';
 import type { CommandRegistry } from '../keys/commands';
+import type { TimelineCommand } from '../timeline/commands';
 import type { SessionClient } from './session-client';
 
 export interface TransportToasts {
@@ -73,9 +74,16 @@ export class TransportController {
     return this.#send('session.redo', {});
   }
 
-  async #send(method: string, params: Record<string, unknown>): Promise<void> {
+  // The tempo field's Enter (m5b-ui-keymap; timeline/tempo-edit.ts): one
+  // command.execute at the snapshot's revision; a refusal (invalid_tempo,
+  // revision_mismatch) is a toast as the transport's are.
+  execute(command: TimelineCommand): Promise<void> {
+    return this.#send('command.execute', { commands: command.commands }, command.expectedRevision);
+  }
+
+  async #send(method: string, params: Record<string, unknown>, expectedRevision?: string): Promise<void> {
     try {
-      await this.#options.client.request(method, params);
+      await (expectedRevision === undefined ? this.#options.client.request(method, params) : this.#options.client.request(method, params, expectedRevision));
     } catch (error) {
       const code = (error as { code?: unknown }).code;
       const message = error instanceof Error ? error.message : String(error);

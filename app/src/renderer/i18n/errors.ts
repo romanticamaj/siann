@@ -45,6 +45,8 @@ const ERROR_KEYS = {
   invalid_notes: 'error.invalid_notes',
   // A bus routed into a loop (m5b-ui-sends-buses).
   routing_cycle: 'error.routing_cycle',
+  // A typed tempo the engine's tempo map refuses (m5b-ui-keymap).
+  invalid_tempo: 'error.invalid_tempo',
 } as const satisfies Record<string, MessageKey>;
 
 type KnownCode = keyof typeof ERROR_KEYS;

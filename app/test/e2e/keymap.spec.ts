@@ -152,7 +152,7 @@ test('(a) the wind and nudge keys move the cursor through transport.locate, on t
     await expect.poll(playhead, { message: key }).toBe(at + delta);
   }
   // Ctrl+- and Ctrl+= did not zoom the page.
-  expect(await page.evaluate(() => window.devicePixelRatio)).toBe(1);
+  expect(await app!.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0]!.webContents.getZoomFactor())).toBe(1);
   expect(await revisions()).toBe(before);
   expect((await sentOf('transport.locate')).length).toBeGreaterThanOrEqual(8);
   // Wind works while playing.
@@ -172,12 +172,13 @@ test('(b) Shift+Enter starts, Shift+0 stops, Ctrl+1 and Ctrl+2 set the locators'
   await expect(page.getByTestId('transport-play')).toHaveAttribute('aria-pressed', 'false');
   expect((await sentOf('transport.play')).length).toBe(1);
   expect((await sentOf('transport.stop')).length).toBe(1);
-  await locateTo(BAR);
-  await page.keyboard.press(`${MOD}+Digit1`);
-  await expect.poll(async () => (await entity('locators:locators'))?.left ?? null).toBe(String(BAR));
+  // A new session has no locators: the right one first (the range from 0 to it), then the left.
   await locateTo(3 * BAR);
   await page.keyboard.press(`${MOD}+Digit2`);
   await expect.poll(async () => (await entity('locators:locators'))?.right ?? null).toBe(String(3 * BAR));
+  await locateTo(BAR);
+  await page.keyboard.press(`${MOD}+Digit1`);
+  await expect.poll(async () => (await entity('locators:locators'))?.left ?? null).toBe(String(BAR));
   // Shift+Enter in a text field stays the field's (the position field takes it).
   await page.keyboard.press('Shift+KeyP');
   await expect(page.getByTestId('position-field')).toBeFocused();

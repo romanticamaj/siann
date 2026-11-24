@@ -91,6 +91,7 @@ const IPC_PROJECT_CHANGED = 'siann:project:changed';
 const IPC_MEDIA_CHOOSE = 'siann:media:choose';
 const IPC_MENU_SET = 'siann:menu:set';
 const IPC_MENU_COMMAND = 'siann:menu:command';
+const IPC_MENU_TEXT_FOCUS = 'siann:menu:text-focus';
 const BUNDLE_EXTENSION = 'siann';
 // Under SIANN_SHELL_TEST=1 only: when the first ready line was read (epoch ms),
 // the start of the perf scenario's cold start (UI redesign spec 5.6).
@@ -344,6 +345,8 @@ ipcMain.on(IPC_PROJECT_OPENED, (event, bundle: unknown) => {
 });
 
 let menuModel: MenuModel | null = null;
+// A text field has the focus in the window (m5b-ui-keymap): the Edit menu's text items act on it.
+let textFocused = false;
 
 function applyMenu(): void {
   const template = menuTemplate(menuModel, {
@@ -352,9 +355,18 @@ function applyMenu(): void {
     send: (command) => {
       if (mainWindow && !mainWindow.isDestroyed()) mainWindow.webContents.send(IPC_MENU_COMMAND, command);
     },
+    textFocused: () => textFocused,
+    textEdit: (action) => {
+      if (mainWindow && !mainWindow.isDestroyed()) mainWindow.webContents[action]();
+    },
   });
   Menu.setApplicationMenu(Menu.buildFromTemplate(template));
 }
+
+ipcMain.on(IPC_MENU_TEXT_FOCUS, (event, value: unknown) => {
+  if (!fromApp(event) || typeof value !== 'boolean') return;
+  textFocused = value;
+});
 
 ipcMain.on(IPC_MENU_SET, (event, value: unknown) => {
   if (!fromApp(event)) return;

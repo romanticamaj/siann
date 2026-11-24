@@ -13,7 +13,7 @@ import * as fs from 'node:fs';
 import * as path from 'node:path';
 
 import { COMMAND_IDS } from '../../src/renderer/keys/commands';
-import { CUBASE_REFERENCE, DIFFERENCES, type ReferenceRow } from '../../src/renderer/keys/cubase-reference';
+import { CUBASE_REFERENCE, DIFFERENCES, type ReferenceRow } from './support/cubase-reference';
 import { CUBASE_PRESET } from '../../src/renderer/keys/preset-cubase';
 
 // dist/test/unit -> the repository root

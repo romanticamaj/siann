@@ -1008,10 +1008,12 @@ test('the Key Commands list fits in every locale at either window size', async (
   for (const locale of LOCALES) {
     await page.evaluate((next) => window.__siannLocale!.setLocale(next as never), locale);
     await expect(page.locator('html')).toHaveAttribute('data-locale', locale);
-    await expect.poll(() => app!.evaluate(({ Menu }) => Menu.getApplicationMenu()?.getMenuItemById('help.keyCommands') !== null)).toBe(true);
-    await app!.evaluate(({ Menu }) => Menu.getApplicationMenu()!.getMenuItemById('help.keyCommands')!.click());
+    // The menu is the renderer's from its first model; Help > Key Commands runs once the app has mounted.
     const dialog = page.getByTestId('key-commands');
-    await expect(dialog).toBeVisible();
+    await expect(async () => {
+      await app!.evaluate(({ Menu }) => Menu.getApplicationMenu()?.getMenuItemById('help.keyCommands')?.click());
+      await expect(dialog).toBeVisible({ timeout: 1_000 });
+    }).toPass();
     for (const size of SIZES) {
       await resize(size);
       for (const entry of await overflowing(KEYS)) failures.push(`${locale} ${size.width}x${size.height} (key commands): ${entry}`);
@@ -1038,7 +1040,7 @@ test('the pending takes dialog fits in every locale at either window size', asyn
   app = await launchApp({ sessionDir, userData: path.join(scratch, 'user-data'), languages: ['en-US'], hook: true });
   page = await app.firstWindow();
   await expect(page.getByTestId('status')).toHaveAttribute('data-status', 'connected');
-  const engine = await engineClient(page);
+  const engine = await engineClient(page, { events: true });
   await engine.call('engine.select_device', { id: 'fake', inputId: 'fake' });
   await expect.poll(async () => ((await engine.call('engine.status')).device as { input: unknown } | null)?.input ?? null).not.toBeNull();
   await page.getByTestId('track-header-trk_vox').locator('.name').click();

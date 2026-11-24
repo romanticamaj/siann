@@ -1272,8 +1272,10 @@ test('UX screenshot tour', async () => {
   // ---- 39 (m5b-ui-keymap; UI redesign 3.6, UR-11; numbered explicitly):
   // Help > Key Commands, the read-only list of every command with its keys
   // by category. The mockup draws no such dialog: the review reads it alone.
-  await app!.evaluate(({ Menu }) => Menu.getApplicationMenu()!.getMenuItemById('help.keyCommands')!.click());
-  await expect(page.getByTestId('key-commands')).toBeVisible();
+  await expect(async () => {
+    await app!.evaluate(({ Menu }) => Menu.getApplicationMenu()?.getMenuItemById('help.keyCommands')?.click());
+    await expect(page.getByTestId('key-commands')).toBeVisible({ timeout: 1_000 });
+  }).toPass();
   await expect(page.getByTestId('key-commands-search')).toBeFocused();
   await shoot(
     page,

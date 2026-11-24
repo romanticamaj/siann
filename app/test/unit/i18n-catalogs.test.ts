@@ -241,7 +241,7 @@ test('the toolbar and info line words are in every catalog, the mockup\'s in en 
 // a quoted literal (a t('key') call, or a key table such as GRID_LABELS), or
 // through one of the dynamic prefixes below, each of which a renderer source
 // builds with a template (`zone.${zone}`).
-const DYNAMIC_PREFIXES = ['zone.', 'badge.', 'diff.kind.', 'actionReason.', 'agent.tool.'] as const;
+const DYNAMIC_PREFIXES = ['zone.', 'badge.', 'diff.kind.', 'actionReason.', 'agent.tool.', 'command.'] as const;
 
 test('every key of en.ts is used by the renderer', () => {
   const renderer = path.resolve(__dirname, '..', '..', '..', 'src', 'renderer');

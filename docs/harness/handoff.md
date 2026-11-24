@@ -19,7 +19,7 @@ GitHub #83: a SIANN that opens, works, and is operated like Cubase. Criteria A t
 | E | MixConsole: faders to +6 dB, pan, M/S, meters with peak hold and clip, inserts, sends, master fader | **Missing: sends and buses UI (`m5b-ui-sends-buses`).** Inserts and master merged (#153). |
 | F | Recording: input, arm, monitor, record to a clip | Code done (#147, #152, #162). **Not tried on real hardware** (human gate `audio-hardware`). |
 | G | AI plans: ghost changes on the event display and MixConsole, A/B audition, approve, partial approve, reject, merge | Done (#150 ghosts, #151 plan metadata, #155 audition, #160 "ask the agent" box). |
-| H | Default Cubase key commands; en, zh-Hant, zh-Hans | Locales done. **Key command audit not started (`m5b-ui-keymap`).** |
+| H | Default Cubase key commands; en, zh-Hant, zh-Hans | Locales done. **Key command audit not started (`m5b-ui-keymap`).** Since then `m5b-ui-keymap` added the audit against research section 7, the off-keypad fallbacks, the seven menus and the Key Commands list. |
 | I | Cubase user walkthrough e2e passes; screenshot tour in three locales | **Not started (`m5b-cubase-walkthrough`).** |
 
 The maintainer's stop conditions still hold. Stop and wait for the maintainer on:

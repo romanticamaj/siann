@@ -118,7 +118,8 @@ async function expectLocale(locale: Locale): Promise<void> {
   // The project zone toolbar's words (m5-ui-port-toolbar): Snap and its type, the grid type, the tools' names.
   await expect(page.getByTestId('snap-toggle')).toHaveText(`${catalog['snap.toggle']}${catalog['snap.typeGrid']}`);
   await expect(page.getByTestId('tool-select')).toHaveAttribute('aria-label', catalog['tool.select']);
-  await expect(page.getByTestId('auto-scroll')).toHaveAttribute('title', catalog['toolbar.autoScrollTitle']);
+  // Its tooltip names its key from the preset (m5b-ui-keymap: tipWithKey).
+  await expect(page.getByTestId('auto-scroll')).toHaveAttribute('title', t('keys.tip', { label: catalog['toolbar.autoScrollTitle'], key: 'F' }));
   // Every step ticked reads "Approve N of M" (UI redesign 4.5 C4, P1-13).
   await expect(page.getByTestId('plan-approve-apply')).toHaveText(`${t('plans.approveSome', { count: STEPS.length, total: STEPS.length })} ⏎`);
   await expect(page.getByTestId('fader-trk_a')).toHaveAttribute('aria-label', t('strip.gainLabel', { track: 'trk_a' }));
