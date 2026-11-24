@@ -746,6 +746,12 @@ test('the Editor tab, the Channel zone button, e, the editor\'s empty text and t
   const failures: string[] = [];
   for (const size of SIZES) {
     await resize(size);
+    await expect(page.getByTestId('shell')).toHaveAttribute('data-viewport', `${size.width}x${size.height}`);
+    // A small window starts with the lower and the Channel zone collapsed: show them.
+    for (const zone of ['lower', 'channel']) {
+      if ((await page.getByTestId(`zone-${zone}`).getAttribute('data-visible')) !== 'true') await page.getByTestId(`zone-button-${zone}`).click();
+      await expect(page.getByTestId(`zone-${zone}`)).toBeVisible();
+    }
     for (const locale of LOCALES) {
       await page.evaluate((next) => {
         const store = (window as unknown as { __siannLocale?: { setLocale(l: string): void } }).__siannLocale;
