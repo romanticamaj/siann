@@ -66,6 +66,10 @@ bool isValidTrackNotes(std::string_view notes) noexcept {
     return !notes.empty() && notes.size() <= kMaxTrackNotesBytes && textFault(notes, kNotesControls) == TextFault::none;
 }
 
+bool isValidMarkerName(std::string_view name) noexcept {
+    return name.size() <= kMaxMarkerNameBytes && isWellFormedUtf8(name);
+}
+
 std::string_view entityTypeName(EntityType type) noexcept {
     switch (type) {
         case EntityType::root: return "root";
@@ -77,17 +81,20 @@ std::string_view entityTypeName(EntityType type) noexcept {
         case EntityType::master: return "master";
         case EntityType::bus: return "bus";
         case EntityType::send: return "send";
+        case EntityType::marker: return "marker";
     }
     return "unknown";
 }
 
 namespace {
 
-constexpr std::string_view kDocumentSchema = "siann.session_document.v3";
+constexpr std::string_view kDocumentSchema = "siann.session_document.v4";
+constexpr std::string_view kDocumentSchemaV3 = "siann.session_document.v3";
 constexpr std::string_view kDocumentSchemaV2 = "siann.session_document.v2";
 constexpr std::string_view kDocumentSchemaV1 = "siann.session_document.v1";
 constexpr std::string_view kBusSchema = "siann.entity.bus.v1";
 constexpr std::string_view kSendSchema = "siann.entity.send.v1";
+constexpr std::string_view kMarkerSchema = "siann.entity.marker.v1";
 constexpr std::string_view kLocatorsSchema = "siann.entity.locators.v1";
 constexpr std::string_view kMasterSchema = "siann.entity.master.v1";
 constexpr std::string_view kRootSchema = "siann.entity.root.v1";
@@ -110,7 +117,7 @@ Value number(std::int64_t v) {
 }
 
 // The format version a document was read in; later fields are unknown in earlier ones.
-enum class Format { v1 = 1, v2 = 2, v3 = 3 };
+enum class Format { v1 = 1, v2 = 2, v3 = 3, v4 = 4 };
 
 std::vector<std::string> idList(detail::FieldReader& r, const Value& list, std::string_view key) {
     if (list.kind() != Value::Kind::array) {
@@ -392,6 +399,24 @@ Clip clipFromJson(const Value& value) {
     fadeFrom("fadeOut", c.fadeOut);
     r.finish();
     return c;
+}
+
+// A marker (m5b-engine-markers). Only the shape is checked here; the ranges
+// and the per-kind numbering are validate()'s (invalid_marker,
+// marker_number_taken).
+Marker markerFromJson(const Value& value) {
+    detail::FieldReader r(value, "marker");
+    r.expectSchema(kMarkerSchema);
+    Marker m;
+    m.id = r.string("id");
+    m.number = static_cast<std::int32_t>(r.integer("number", INT32_MIN, INT32_MAX));
+    m.name = r.string("name");
+    m.position = r.int64String("position");
+    if (r.optional("length") != nullptr) {
+        m.length = r.int64String("length");
+    }
+    r.finish();
+    return m;
 }
 
 Locators locatorsFromJson(const Value& value) {
@@ -788,6 +813,21 @@ std::optional<std::string> pluginPathRefusal(std::string_view path,
     return std::nullopt;
 }
 
+Value toJson(const Marker& value) {
+    Object out{
+        {"schema", str(kMarkerSchema)},
+        {"id", Value(value.id)},
+        {"number", number(value.number)},
+        {"name", Value(value.name)},
+        {"position", int64String(value.position)},
+    };
+    // Only a cycle marker has a length.
+    if (value.length) {
+        out.emplace_back("length", int64String(*value.length));
+    }
+    return Value(std::move(out));
+}
+
 Value toJson(const Locators& value) {
     return Value(Object{
         {"schema", str(kLocatorsSchema)},
@@ -844,6 +884,7 @@ Document Document::create(std::string name, std::int64_t sampleRate, std::int32_
     doc.slots_ = std::make_shared<const TableVec<PluginSlot>>();
     doc.buses_ = std::make_shared<const TableVec<Bus>>();
     doc.sends_ = std::make_shared<const TableVec<Send>>();
+    doc.markers_ = std::make_shared<const TableVec<Marker>>();
     const auto issues = doc.validate();
     if (!issues.empty()) {
         throw ModelError("invalid_document", issues.front().message);
@@ -864,8 +905,13 @@ namespace {
 // tables, root.busOrder, Track.sends, Track.output and a slot's busId, all
 // omitted when empty, so a v2 document reads unchanged with no buses. A v2
 // document that carries any of them fails the field checks as unknown_field.
+//
+// v3 to v4 (m5b-engine-markers): v4 only adds the optional markers table,
+// omitted when empty, so a v3 document reads unchanged with no markers. An
+// earlier document that carries markers fails the field check as unknown_field.
 std::optional<Format> formatOf(std::string_view version) {
-    if (version == kDocumentSchema) return Format::v3;
+    if (version == kDocumentSchema) return Format::v4;
+    if (version == kDocumentSchemaV3) return Format::v3;
     if (version == kDocumentSchemaV2) return Format::v2;
     if (version == kDocumentSchemaV1) return Format::v1;
     return std::nullopt;
@@ -894,6 +940,9 @@ Document Document::fromJson(const Value& value) {
         (void)r.optional("buses");
         (void)r.optional("sends");
     }
+    if (format >= Format::v4) {
+        (void)r.optional("markers");
+    }
     r.finish();
 
     Document doc;
@@ -906,6 +955,7 @@ Document Document::fromJson(const Value& value) {
         value, "pluginSlots", [format](const Value& item) { return pluginSlotFromJson(item, format); }, true);
     doc.buses_ = tableFromJson<Bus>(value, "buses", &busFromJson, true);
     doc.sends_ = tableFromJson<Send>(value, "sends", &sendFromJson, true);
+    doc.markers_ = tableFromJson<Marker>(value, "markers", &markerFromJson, true);
     if (locatorsJson != nullptr) {
         doc.locators_ = makeStored(locatorsFromJson(*locatorsJson));
     }
@@ -945,6 +995,11 @@ Value Document::toJson() const {
     }
     if (!sends_->empty()) {
         out.emplace_back("sends", tableToJson(*sends_));
+    }
+    // Omitted when empty (m5b-engine-markers), so a document without markers
+    // keeps its hash and reads as before.
+    if (!markers_->empty()) {
+        out.emplace_back("markers", tableToJson(*markers_));
     }
     return Value(std::move(out));
 }
@@ -1024,6 +1079,31 @@ std::vector<const Send*> Document::allSends() const {
         out.push_back(&item->value);
     }
     return out;
+}
+
+const Marker* Document::marker(std::string_view id) const noexcept {
+    const auto* s = findStored(*markers_, id);
+    return s ? &s->value : nullptr;
+}
+
+std::vector<const Marker*> Document::allMarkers() const {
+    std::vector<const Marker*> out;
+    for (const auto& item : *markers_) {
+        out.push_back(&item->value);
+    }
+    return out;
+}
+
+Document Document::withMarker(Marker value) const {
+    Document doc = *this;
+    doc.markers_ = upsert(*markers_, std::move(value));
+    return doc;
+}
+
+Document Document::withoutMarker(std::string_view id) const {
+    Document doc = *this;
+    doc.markers_ = remove(*markers_, id);
+    return doc;
 }
 
 Document Document::withBus(Bus value) const {
@@ -1386,6 +1466,7 @@ std::vector<ValidationIssue> Document::validate() const {
         }
     }
     validateRouting(out);
+    validateMarkers(out);
     if (master_) {
         const Gain& gain = master_->value.gain;
         if (!gain.isValid()) {
@@ -1474,6 +1555,36 @@ void Document::validateRouting(std::vector<ValidationIssue>& out) const {
     }
 }
 
+// Markers (m5b-engine-markers): ranges, a display-safe name (invalid_name, the
+// rule of every stored name), and numbers unique per kind. A taken
+// number is reported on the later marker in id order.
+void Document::validateMarkers(std::vector<ValidationIssue>& out) const {
+    std::set<std::pair<bool, std::int32_t>> numbers;
+    for (const auto& item : *markers_) {
+        const Marker& m = item->value;
+        if (!hash::isValidEntityId(m.id)) {
+            issue(out, "invalid_id", EntityType::marker, m.id, "invalid marker id");
+        }
+        const bool inRange =
+            m.number >= kMinMarkerNumber && m.number <= kMaxMarkerNumber && isValidMarkerName(m.name) &&
+            m.position >= 0 && m.position <= time::kMaxPositionMagnitude &&
+            (!m.length || (*m.length >= 1 && m.position <= time::kMaxPositionMagnitude - *m.length));
+        if (!inRange) {
+            issue(out, "invalid_marker", EntityType::marker, m.id,
+                  "a marker has number 1 to 9999, a name of 0 to 255 UTF-8 bytes, 0 <= position and, on a cycle "
+                  "marker, length >= 1 with position + length <= 2^42");
+        }
+        if (!isDisplaySafeName(m.name)) {
+            issue(out, "invalid_name", EntityType::marker, m.id, kUnsafeNameMessage);
+        }
+        if (!numbers.insert({m.isCycle(), m.number}).second) {
+            issue(out, "marker_number_taken", EntityType::marker, m.id,
+                  std::string(m.isCycle() ? "cycle" : "position") + " marker number " + std::to_string(m.number) +
+                      " is taken");
+        }
+    }
+}
+
 hash::Digest Document::entityHash(const EntityRef& ref) const {
     const std::optional<hash::Digest> found = findEntityHash(ref);
     if (!found) {
@@ -1515,6 +1626,9 @@ std::optional<hash::Digest> Document::findEntityHash(const EntityRef& ref) const
         case EntityType::send:
             if (const auto* s = findStored(*sends_, ref.id)) found = &s->hash;
             break;
+        case EntityType::marker:
+            if (const auto* s = findStored(*markers_, ref.id)) found = &s->hash;
+            break;
     }
     if (found == nullptr) {
         return std::nullopt;
@@ -1538,6 +1652,7 @@ hash::Digest Document::documentHash() const {
     }
     collectLeaves(EntityType::bus, *buses_, leaves);
     collectLeaves(EntityType::send, *sends_, leaves);
+    collectLeaves(EntityType::marker, *markers_, leaves);
     try {
         return hash::documentHash(std::move(leaves));
     } catch (const hash::DocumentHashError& error) {
@@ -1577,6 +1692,10 @@ bool Document::sharesEntity(const Document& other, const EntityRef& ref) const n
             const auto* a = findStored(*sends_, ref.id);
             return a != nullptr && a == findStored(*other.sends_, ref.id);
         }
+        case EntityType::marker: {
+            const auto* a = findStored(*markers_, ref.id);
+            return a != nullptr && a == findStored(*other.markers_, ref.id);
+        }
     }
     return false;
 }
@@ -1612,6 +1731,7 @@ std::vector<DiffEntry> diff(const Document& before, const Document& after) {
     }
     diffTables(EntityType::bus, *before.buses_, *after.buses_, out);
     diffTables(EntityType::send, *before.sends_, *after.sends_, out);
+    diffTables(EntityType::marker, *before.markers_, *after.markers_, out);
     return out;
 }
 

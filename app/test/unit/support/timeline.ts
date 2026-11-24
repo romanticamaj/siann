@@ -56,6 +56,7 @@ export function snapshotOf(
     buses: [],
     sends: [],
     busOrder: [],
+    markers: [],
     trackOrder,
   });
 }

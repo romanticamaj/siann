@@ -4,10 +4,20 @@
 // 64-bit fields (ticks, frames, sample positions, seq) stay decimal strings,
 // because JSON numbers lose precision above 2^53. Framework-free.
 
-export type EntityType = 'root' | 'media' | 'track' | 'clip' | 'plugin_slot' | 'locators' | 'master' | 'bus' | 'send';
+export type EntityType =
+  | 'root'
+  | 'media'
+  | 'track'
+  | 'clip'
+  | 'plugin_slot'
+  | 'locators'
+  | 'master'
+  | 'bus'
+  | 'send'
+  | 'marker';
 
 export const ENTITY_TYPES: readonly EntityType[] = [
-  'root', 'media', 'track', 'clip', 'plugin_slot', 'locators', 'master', 'bus', 'send',
+  'root', 'media', 'track', 'clip', 'plugin_slot', 'locators', 'master', 'bus', 'send', 'marker',
 ];
 
 export interface TempoPoint {
@@ -152,7 +162,21 @@ export interface SendEntity {
   readonly enabled: boolean;
 }
 
+// A position marker or, with a length, a cycle marker (m5b-engine-markers, UI
+// redesign E-8). number is 1..9999, unique among the markers of its kind; name
+// is 0 to 255 UTF-8 bytes (may be empty); position and length are audio-domain
+// frames as decimal strings.
+export interface MarkerEntity {
+  readonly schema: 'siann.entity.marker.v1';
+  readonly id: string;
+  readonly number: number;
+  readonly name: string;
+  readonly position: string;
+  readonly length?: string;
+}
+
 export type Entity =
+  | MarkerEntity
   | BusEntity
   | SendEntity
   | RootEntity
@@ -168,7 +192,7 @@ export interface EntityRef {
   readonly id: string;
 }
 
-const REF_RE = /^(root|media|track|clip|plugin_slot|locators|master|bus|send):([A-Za-z0-9_-]{1,64})$/;
+const REF_RE = /^(root|media|track|clip|plugin_slot|locators|master|bus|send|marker):([A-Za-z0-9_-]{1,64})$/;
 
 // "<type>:<id>" as session.fetch and changedIds name an entity; null for
 // anything else.
@@ -187,6 +211,8 @@ export const TABLES = [
   // After the master (m5b-engine-buses-sends); each only in a chunk that holds rows.
   ['buses', 'bus'],
   ['sends', 'send'],
+  // After the sends (m5b-engine-markers); only in a chunk that holds markers.
+  ['markers', 'marker'],
 ] as const;
 
 export interface SyncChunk {
@@ -208,6 +234,7 @@ export interface SyncChunk {
     readonly master?: MasterEntity;
     readonly buses?: readonly BusEntity[];
     readonly sends?: readonly SendEntity[];
+    readonly markers?: readonly MarkerEntity[];
   };
   readonly next: string | null;
 }

@@ -1867,6 +1867,7 @@ struct ProtocolServer::Impl {
                                       {"buses", Value(true)},
                                       {"sends", Value(true)},
                                       {"clipFades", Value(true)},
+                                      {"markers", Value(true)},
                                       {"mediaImport", Value(Object{{"formats", Value(Array{Value("wav"), Value("flac")})}})},
                                       {"planMetadata", Value(true)},
                                       {"agents", Value(options.transportPort != nullptr)},
