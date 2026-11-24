@@ -1197,7 +1197,7 @@ Every region and key component has a stable id, the same in the mockup and in th
 | `m5b-ui-recording` | report | Record buttons, the monitor button |
 | `m5b-ui-inserts-master` | report | Insert slots of the track strips and of the Inspector, the master fader, the rack switches |
 | `m5b-ui-sends-buses` | report | Routing and Sends sections |
-| `m5b-ui-markers` | pending | Marker track and its head |
+| `m5b-ui-markers` | report | Marker track and its head |
 | `m5b-ui-fades` | report | Fade fields of the info line |
 | `m5b-ui-media` | report | Media tab; the titles of the plan steps that name a clip (`plan-step-N-title`) |
 | `m5b-ui-edit-more` | pending | Tools 4 and 5 |
