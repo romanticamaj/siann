@@ -230,6 +230,10 @@ test('no labelled control overflows or wraps its label in any locale at either w
     // The Sig cell (m5b-ui-signature): hidden under 1100 px, which fits.
     'display-signature',
     'display-signature-value',
+    // The info line's fade fields (m5b-ui-fades), .f like the other fields,
+    // so the locale loop below checks them in en, zh-Hant, zh-Hans and the pseudo-locale.
+    'info-fade-in',
+    'info-fade-out',
     // The MixConsole strip (m5-ui-port-mixer-strip) and its tab.
     'pan-trk_keys',
     'pan-value-trk_keys',

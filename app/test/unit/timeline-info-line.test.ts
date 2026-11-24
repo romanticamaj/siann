@@ -68,6 +68,9 @@ test('the mockup\'s selected clip: 9.1.1.0, 12.4.1.0, 3.3.0.0, 1.0.2.0, 0.00 dB'
     length: '3.3.0.0',
     offset: '1.0.2.0',
     volume: '0.00 dB',
+    // m5b-ui-fades: no fade reads 0 ms.
+    fadeIn: '0 ms',
+    fadeOut: '0 ms',
   });
 });
 
@@ -82,6 +85,8 @@ test('a clip at bar 2 one bar long with a two-beat offset, its media id for a na
     length: '1.0.0.0',
     offset: '0.2.0.0',
     volume: '-3.50 dB',
+    fadeIn: '0 ms',
+    fadeOut: '0 ms',
   });
 });
 

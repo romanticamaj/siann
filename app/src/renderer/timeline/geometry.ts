@@ -11,9 +11,10 @@
 // decimal strings, as the document carries them; arithmetic on them is
 // BigInt, so a position beyond 2^53 keeps every frame. Framework-free.
 
-import type { ClipEntity } from '../model/document';
+import type { ClipEntity, ClipFade } from '../model/document';
 import type { Snapshot } from '../model/read-model';
 import { TOKENS } from '../tokens';
+import { fadeAreaAt, fadeHandleAt } from './fades';
 
 export interface Viewport {
   // Whole sample frames per CSS pixel (the zoom), at least 1.
@@ -98,6 +99,9 @@ export interface ClipRect {
   readonly y: number;
   readonly width: number;
   readonly height: number;
+  // The clip's fades (m5b-ui-fades), present only while the clip has them.
+  readonly fadeIn?: ClipFade;
+  readonly fadeOut?: ClipFade;
 }
 
 export interface Box {
@@ -145,8 +149,11 @@ export function cornerHandles(box: Box): [Box, Box] {
 // A clip's parts (UI redesign spec 3.2, "Clip handles"), over its box: the
 // lower corners resize, the rest of each edge is a narrower resize target as
 // well, the volume control is draw()'s box right of the lower-left corner,
-// and the body moves.
-export type HitPart = 'body' | 'left' | 'right' | 'cornerLeft' | 'cornerRight' | 'gain' | 'repeat';
+// and the body moves. With fades enabled (m5b-ui-fades; 10.11, 23): the fade
+// handles ('fadeIn', 'fadeOut': draw()'s triangles at the fades' ends, with
+// the 4 px margin) and the shaded areas ('fadeInArea', 'fadeOutArea': a
+// double-click there switches the curve; a drag moves as the body does).
+export type HitPart = 'body' | 'left' | 'right' | 'cornerLeft' | 'cornerRight' | 'gain' | 'repeat' | 'fadeIn' | 'fadeOut' | 'fadeInArea' | 'fadeOutArea';
 export type TrimEdge = 'left' | 'right';
 
 // The width of the resize target along each edge, in pixels.
@@ -252,21 +259,41 @@ export function clipRects(snapshot: Snapshot, view: Viewport): ClipRect[] {
       y: tops[lane]!,
       width: pixelsOf(big(clip.length), view),
       height: laneHeightOf(clip.trackId, view),
+      ...(clip.fadeIn ? { fadeIn: clip.fadeIn } : {}),
+      ...(clip.fadeOut ? { fadeOut: clip.fadeOut } : {}),
     });
   }
   rects.sort((a, b) => (lanes.get(a.trackId)! - lanes.get(b.trackId)!) || (a.x - b.x));
   return rects;
 }
 
+// Frames per pixel of a clip's rectangle (its length over its width).
+export function rectFramesPerPixel(rect: Pick<ClipRect, 'length' | 'width'>): number {
+  const length = Number(rect.length);
+  return rect.width > 0 && length > 0 ? length / rect.width : 1;
+}
+
+export interface HitOptions {
+  // The fade handles and shaded areas are hit (m5b-ui-fades: the engine lists
+  // features.clipFades and clip.set_fade). Off when absent.
+  readonly fades?: boolean;
+}
+
 // The clip under a point, topmost (last drawn) first, and which part of it,
-// over the box draw() draws (clipBox): the lower corners (cornerSize), then
-// the repeat handle, then the edges (HANDLE_PX, or a third of a clip narrower than three handles),
-// then the volume control, then the body.
-export function hitTest(rects: readonly ClipRect[], x: number, y: number): { rect: ClipRect; part: HitPart } | null {
+// over the box draw() draws (clipBox): with fades enabled the fade handles
+// first (fades.ts: the nearer one where both take the point), then the lower
+// corners (cornerSize), then the repeat handle, then the edges (HANDLE_PX, or
+// a third of a clip narrower than three handles), then the volume control,
+// then, with fades enabled, a fade's shaded area, then the body.
+export function hitTest(rects: readonly ClipRect[], x: number, y: number, options: HitOptions = {}): { rect: ClipRect; part: HitPart } | null {
   for (let i = rects.length - 1; i >= 0; i -= 1) {
     const rect = rects[i]!;
     const box = clipBox(rect);
     if (x < box.x || x >= box.x + box.width || y < box.y || y >= box.y + box.height) continue;
+    if (options.fades) {
+      const side = fadeHandleAt(box, rect, rectFramesPerPixel(rect), x, y);
+      if (side) return { rect, part: side };
+    }
     const corner = cornerSize(box);
     if (y >= box.y + box.height - corner) {
       if (x < box.x + corner) return { rect, part: 'cornerLeft' };
@@ -279,6 +306,10 @@ export function hitTest(rects: readonly ClipRect[], x: number, y: number): { rec
     if (x >= box.x + box.width - handle) return { rect, part: 'right' };
     const gain = gainBox(rect);
     if (gain && x >= gain.x && x < gain.x + gain.width && y >= gain.y && y < gain.y + gain.height) return { rect, part: 'gain' };
+    if (options.fades) {
+      const area = fadeAreaAt(box, rect, rectFramesPerPixel(rect), x, y);
+      if (area) return { rect, part: area === 'fadeIn' ? 'fadeInArea' : 'fadeOutArea' };
+    }
     return { rect, part: 'body' };
   }
   return null;

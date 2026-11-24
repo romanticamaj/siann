@@ -130,7 +130,7 @@ test('each component of M5 has the port feature that owns its parts', () => {
   for (const [id, gate] of Object.entries(owner)) assert.equal(ruleOf(id).gate, gate, id);
   for (const gate of PORTS) assert.ok(Object.values(owner).includes(gate), gate);
   // Parts of a later feature inside a ported component stay that feature's, pending.
-  for (const [id, gate] of Object.entries({ 'tool-2': 'm6a-ui-tools', 'info-fade-in': 'm5b-ui-fades', 'marker-head': 'm5b-ui-markers', 'inspector-notepad': 'm5b-ui-notepad' })) {
+  for (const [id, gate] of Object.entries({ 'tool-2': 'm6a-ui-tools', 'strip-3-edit': 'm5b-ui-editor-channel', 'marker-head': 'm5b-ui-markers', 'inspector-notepad': 'm5b-ui-notepad' })) {
     assert.equal(ruleOf(id).gate, gate, id);
     assert.equal(MANIFEST.gates[gate], 'pending', gate);
   }
@@ -141,6 +141,9 @@ test('each component of M5 has the port feature that owns its parts', () => {
   assert.equal(MANIFEST.gates['m5b-ui-inserts-master'], 'report');
   for (const id of ['tool-4', 'tool-5']) assert.equal(ruleOf(id).gate, 'm5b-ui-edit-more', id);
   assert.equal(MANIFEST.gates['m5b-ui-edit-more'], 'report');
+  // The fade fields of the info line stay m5b-ui-fades', which landed them (report).
+  for (const id of ['info-fade-in', 'info-fade-out']) assert.equal(ruleOf(id).gate, 'm5b-ui-fades', id);
+  assert.equal(MANIFEST.gates['m5b-ui-fades'], 'report');
   // The proposal pill stays m5b-ui-ghosts', which landed it (report).
   assert.equal(ruleOf('proposal-pill').gate, 'm5b-ui-ghosts');
   assert.equal(MANIFEST.gates['m5b-ui-ghosts'], 'report');
@@ -892,10 +895,10 @@ test('the Inspector port links ui/left-zone.css in the mockup\'s order, its gate
 test('the toolbar port: its gate is report, its holds name pending parts and shell.css applies them, the old toolbar rules are gone', () => {
   assert.equal(MANIFEST.gates['m5-ui-port-toolbar'], 'report');
   const tokens = read('app', 'renderer', 'tokens.css');
-  // The en values, and the Chinese ones of the pill and the fades.
   const holds = [...new Set([...tokens.matchAll(/--hold-((?:tool|proposal|info)-[a-z0-9-]+)-w\s*:/g)].map((m) => m[1]))].sort();
-  // m5b-ui-edit-more deleted the holds of tools 4 and 5 when it landed them.
-  assert.deepEqual(holds, ['info-fade-in', 'info-fade-out', 'tool-2', 'tool-6', 'tool-7', 'tool-8', 'tool-9']);
+  // m5b-ui-edit-more deleted the holds of tools 4 and 5 when it landed them,
+  // m5b-ui-fades those of the fade fields.
+  assert.deepEqual(holds, ['tool-2', 'tool-6', 'tool-7', 'tool-8', 'tool-9']);
   for (const id of holds) {
     assert.equal(MANIFEST.gates[ruleOf(id).gate], 'pending', id);
     assert.match(tokens, new RegExp(`--hold-${id}-w:\\s*calc\\([\\d.]+px \\* var\\(--scale\\)\\);`), `--hold-${id}-w`);
@@ -1279,7 +1282,8 @@ test('every gate of an M5 feature is report, none is enforce, every rule has an 
   assert.deepEqual(Object.entries(MANIFEST.gates).filter(([, mode]) => mode === 'enforce'), [], 'no gate is enforce');
   for (const rule of MANIFEST.rules) assert.ok(rule.feature && rule.gate && FEATURES.has(rule.gate), `${rule.match.join(', ')} has an owner`);
   const holds = [...read('app', 'renderer', 'tokens.css').matchAll(/--hold-([a-z0-9-]+)-[wh]\s*:/g)].map((m) => m[1]);
-  assert.ok(holds.length > 10, `${holds.length} hold tokens`);
+  // The scanner finds them (they shrink as parts land: 8 after m5b-ui-fades).
+  assert.ok(holds.length > 0, `${holds.length} hold tokens`);
   for (const id of holds) assert.equal(MANIFEST.gates[ruleOf(id).gate], 'pending', `--hold-${id}: its part's gate is pending`);
 });
 
@@ -1405,6 +1409,27 @@ test('m5b-ui-edit-more: its gate is report, its parts are tools 4 and 5 and thei
     assert.equal(MANIFEST.gates[ruleOf(id).gate], 'pending', id);
   }
   assert.ok(!Object.values(MANIFEST.gates).includes('enforce'));
+});
+
+// ---- m5b-ui-fades (UI redesign 3.0, 3.2, 10.4): the fade fields of the info
+// line landed, so their gate is report and their holds are gone; they end the
+// info line and nothing follows them, so on an engine without the feature no
+// box replaces them and no empty-width token exists for them (3.0).
+test('m5b-ui-fades: the gate is report, the fade fields\' holds are gone and no empty-width token replaces them', () => {
+  assert.equal(MANIFEST.gates['m5b-ui-fades'], 'report');
+  assert.deepEqual(MANIFEST.rules.find((r) => r.gate === 'm5b-ui-fades').match, ['info-fade-in', 'info-fade-out']);
+  const tokens = read('app', 'renderer', 'tokens.css');
+  const shell = read('app', 'renderer', 'shell.css');
+  const generated = read('app', 'src', 'renderer', 'tokens.ts');
+  for (const name of ['hold-info-fade-in', 'hold-info-fade-out', 'info-fade-in-empty', 'info-fade-out-empty']) {
+    assert.ok(!tokens.includes(name), `${name} is not in tokens.css`);
+    assert.ok(!shell.includes(name), `${name} is not in shell.css`);
+    assert.ok(!generated.includes(name), `tokens.ts regenerated: ${name}`);
+  }
+  // The spec's 10.4 table and 3.0 row say so.
+  const spec = read('docs', 'superpowers', 'specs', '2026-11-13-siann-ui-redesign.md');
+  assert.match(spec, /\n\| `m5b-ui-fades` \| report \| Fade fields of the info line \|/);
+  assert.match(spec, /\n\| Fade handles, fade fields in the info line \| Landed with `m5b-ui-fades`/);
 });
 
 // ---- m5b-ui-audition (UI redesign 4.3, 2.4, 10.4): the branch chip landed, so
