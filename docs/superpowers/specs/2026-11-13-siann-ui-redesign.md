@@ -1200,7 +1200,7 @@ Every region and key component has a stable id, the same in the mockup and in th
 | `m5b-ui-plan-metadata` | report | Agent row, plan title and intent |
 | `m5b-ui-composer` | report | "Ask the agent" box |
 | `m5b-ui-notepad` | pending | Notepad section |
-| `m5b-ui-editor-channel` | pending | Editor tab, Channel zone button, the `e` of a track strip and of the Inspector |
+| `m5b-ui-editor-channel` | report | Editor tab, Channel zone button, the `e` of a track strip and of the Inspector |
 | `m6a-ui-automation` | pending | R and W automation buttons and their row on a strip, the Automation section; tool 8 (Draw) |
 | `m6a-ui-tools` | pending | Tools 2, 6, 7 and 9 |
 | `m6c-ui-master-channel` | pending | The master's M, insert rack, `e` and the row of its buttons |
