@@ -30,6 +30,14 @@
 //   walk's, a ticked clip.trim shortening them by the engine's rule (the fade
 //   in keeps its length first); a clip neither the snapshot nor a ticked
 //   clip.place holds gives none.
+// - the bus and send ghosts (m5b-ui-sends-buses; 10.11, 24): the first
+//   bus.add keeps the key "bus-ghost" (strip-bus-ghost), later ones take
+//   "bus-ghost-2", "bus-ghost-3" in step order of the ticked ones; a
+//   bus.remove dims the bus's strip and the send slots that go with it (the
+//   bus's sends as the ticked steps before it leave them, in send id order);
+//   a send ghost needs its track in the session (a proposed track has no
+//   rack) and its bus in the session or in a ticked bus.add. The other bus
+//   and send steps get no ghost in M5b.
 // One descriptor per (step, kind, target): two steps on one field give two.
 
 import type { ClipFade } from '../model/document';
@@ -90,6 +98,11 @@ export type Ghost = (
   | { readonly kind: 'insert-add'; readonly step: number; readonly trackId: string; readonly slotId: string | null; readonly name: string; readonly index: number }
   | { readonly kind: 'insert-remove'; readonly step: number; readonly trackId: string; readonly slotId: string }
   | { readonly kind: 'insert-bypass'; readonly step: number; readonly trackId: string; readonly slotId: string; readonly before: boolean | null; readonly after: boolean }
+  // m5b-ui-sends-buses: a proposed or removed bus, a proposed or removed send.
+  | { readonly kind: 'bus-add'; readonly step: number; readonly busId: string; readonly name: string; readonly key: string }
+  | { readonly kind: 'bus-remove'; readonly step: number; readonly busId: string }
+  | { readonly kind: 'send-add'; readonly step: number; readonly sendId: string; readonly trackId: string; readonly busId: string; readonly busName: string }
+  | { readonly kind: 'send-remove'; readonly step: number; readonly sendId: string; readonly trackId: string; readonly busId: string; readonly cascade: boolean }
   // m5b-ui-fades: a clip's fades, on the clip's box as the ticked steps before it leave it.
   | {
       readonly kind: 'fade';
@@ -197,6 +210,12 @@ export function ghostsOf(
   const out: Ghost[] = [];
   const removedTracks = new Set<string>();
   let proposed = 0;
+  let proposedBuses = 0;
+  // The sends the session and the ticked steps hold, by id (a bus.remove takes its own).
+  const sendIds = new Set<string>([
+    ...Object.keys(snapshot?.entities ?? {}).filter((ref) => ref.startsWith('send:')).map((ref) => ref.slice('send:'.length)),
+    ...preview.entities.filter((e) => e.ref.startsWith('send:') && e.before).map((e) => e.ref.slice('send:'.length)),
+  ]);
   steps.forEach((step, index) => {
     if (!isTicked(index)) return;
     const n = index + 1;
@@ -375,6 +394,48 @@ export function ghostsOf(
         state.set(ref, { ...slot, bypass: after });
         return;
       }
+      case 'bus.add': {
+        const busId = str(step.busId);
+        if (busId === undefined) return;
+        proposedBuses += 1;
+        out.push({ kind: 'bus-add', step: n, busId, name: str(step.name) ?? '', key: proposedBuses === 1 ? 'bus-ghost' : `bus-ghost-${proposedBuses}` });
+        state.set(`bus:${busId}`, { id: busId, name: step.name, proposed: true });
+        return;
+      }
+      case 'bus.remove': {
+        const busId = str(step.busId);
+        if (busId === undefined || read(`bus:${busId}`) === null) return;
+        out.push({ kind: 'bus-remove', step: n, busId });
+        for (const sendId of [...sendIds].sort()) {
+          const send = read(`send:${sendId}`);
+          const owner = str(send?.trackId);
+          if (!send || str(send.busId) !== busId || !rackTrack(owner)) continue;
+          out.push({ kind: 'send-remove', step: n, sendId, trackId: owner, busId, cascade: true });
+          state.set(`send:${sendId}`, null);
+        }
+        state.set(`bus:${busId}`, null);
+        return;
+      }
+      case 'send.add': {
+        const sendId = str(step.sendId);
+        const busId = str(step.busId);
+        const bus = busId !== undefined ? read(`bus:${busId}`) : null;
+        if (sendId === undefined || busId === undefined || !bus || !rackTrack(trackId)) return;
+        out.push({ kind: 'send-add', step: n, sendId, trackId, busId, busName: str(bus.name) ?? '' });
+        sendIds.add(sendId);
+        state.set(`send:${sendId}`, { id: sendId, trackId, busId });
+        return;
+      }
+      case 'send.remove': {
+        const sendId = str(step.sendId);
+        const send = sendId !== undefined ? read(`send:${sendId}`) : null;
+        const owner = str(send?.trackId);
+        const busId = str(send?.busId);
+        if (!send || sendId === undefined || busId === undefined || !rackTrack(owner)) return;
+        out.push({ kind: 'send-remove', step: n, sendId, trackId: owner, busId, cascade: false });
+        state.set(`send:${sendId}`, null);
+        return;
+      }
       case 'session.set_locators': {
         const left = str(step.left);
         const right = str(step.right);
@@ -481,12 +542,28 @@ export function slotGhosts(ghosts: readonly Ghost[], trackId: string): SlotGhost
   return { add: on('insert-add'), remove: on('insert-remove'), bypass: on('insert-bypass') };
 }
 
+// The send slot ghosts of one track's sends rack and Inspector section (m5b-ui-sends-buses).
+export interface SendGhosts {
+  readonly add: ReadonlyArray<Extract<Ghost, { kind: 'send-add' }>>;
+  readonly remove: ReadonlyArray<Extract<Ghost, { kind: 'send-remove' }>>;
+}
+
+export function sendGhosts(ghosts: readonly Ghost[], trackId: string): SendGhosts {
+  const on = <K extends 'send-add' | 'send-remove'>(kind: K) => ghosts.filter((g): g is Extract<Ghost, { kind: K }> => g.kind === kind && (g as { trackId?: string }).trackId === trackId);
+  return { add: on('send-add'), remove: on('send-remove') };
+}
+
+// A bus strip's ghost: its removal, or null.
+export function busGhosts(ghosts: readonly Ghost[], busId: string): { readonly remove: Extract<Ghost, { kind: 'bus-remove' }> | null } {
+  return { remove: ghosts.find((g): g is Extract<Ghost, { kind: 'bus-remove' }> => g.kind === 'bus-remove' && g.busId === busId) ?? null };
+}
+
 // The master fader's ghosts, in step order.
 export function masterGhosts(ghosts: readonly Ghost[]): ReadonlyArray<Extract<Ghost, { kind: 'master-gain' }>> {
   return ghosts.filter((g): g is Extract<Ghost, { kind: 'master-gain' }> => g.kind === 'master-gain');
 }
 
-const STRIP_KINDS: ReadonlySet<GhostKind> = new Set<GhostKind>(['track-add', 'track-remove', 'gain', 'pan', 'mute', 'solo', 'rename', 'master-gain', 'insert-add', 'insert-remove', 'insert-bypass']);
+const STRIP_KINDS: ReadonlySet<GhostKind> = new Set<GhostKind>(['track-add', 'track-remove', 'gain', 'pan', 'mute', 'solo', 'rename', 'master-gain', 'insert-add', 'insert-remove', 'insert-bypass', 'bus-add', 'bus-remove', 'send-add', 'send-remove']);
 
 // Whether a step has a ghost on a MixConsole strip (the target button shows the MixConsole for it).
 export function hasStripGhost(ghosts: readonly Ghost[], step: number): boolean {

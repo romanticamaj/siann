@@ -83,6 +83,7 @@ import { setCommitSink } from './shell/Counted';
 import { displayWrites, transportEnabled } from './shell/Transport';
 import type { MeterTestHooks } from './mixer/MixerMeters';
 import { PickerController } from './mixer/picker';
+import { BusSelection } from './mixer/bus-selection';
 import { PluginActions } from './model/plugin-actions';
 import { createFrameRecorder, installFrameMarks, readyLineAt, type FrameTestHooks } from './perf/frame-marks';
 import type { TimelineTestHooks } from './timeline/TimelineCanvas';
@@ -331,6 +332,9 @@ const project = new ProjectController({ client, shell: shellPort, locale: () => 
 void project.start();
 const studioSetup = new StudioSetupController({ client, status: engineStatus, locale: () => locales.getSnapshot() });
 
+// The selected bus (m5b-ui-sends-buses): the strips set it, the menu's Remove Bus follows it.
+const busSelection = new BusSelection();
+
 const menuBridge = bridge?.menu;
 if (menuBridge) {
   let sentMenu = '';
@@ -340,6 +344,7 @@ if (menuBridge) {
       recent: project.getSnapshot().recent,
       shell: shellPort !== null,
       can: capabilitySelector(client.getState().capabilities),
+      busSelected: busSelection.getSnapshot() !== null,
     });
     const text = JSON.stringify(model);
     if (text === sentMenu) return;
@@ -349,6 +354,7 @@ if (menuBridge) {
   locales.subscribe(pushMenu);
   project.subscribe(pushMenu);
   client.subscribe(pushMenu);
+  busSelection.subscribe(pushMenu);
   pushMenu();
   menuBridge.onCommand((command) => {
     if ((COMMAND_IDS as readonly string[]).includes(command)) commands.run('window', command as CommandId);
@@ -453,6 +459,7 @@ const app = (
     inserts={inserts}
     media={media}
     record={record}
+    buses={busSelection}
   />
 );
 createRoot(container).render(

@@ -520,7 +520,11 @@ button.media-remove { min-height: 0; padding: 0 var(--space-1h); font-size: var(
 /* The sections of sec() until their features land (spec 3.0), by name: an
    open one is its hold, a shut one its head and hairline. */
 .inspector-hold { display: block; flex: none; }
-.inspector-hold.routing { height: var(--hold-inspector-routing-h); }
+/* Routing landed (m5b-ui-sends-buses); on an engine that can show neither its
+   In row nor its Out row its box is the section the shared rules draw: its
+   head and hairline, the body's padding, two rows and the gap between them
+   (91 px in the mockup; UI redesign 3.0, 10.11, 24). */
+.inspector-hold.routing { height: calc(var(--section-head-h) + var(--hairline) + var(--space-7q) + var(--space-9q) + 2 * var(--control-h) + var(--space)); }
 /* Inserts landed (m5b-ui-inserts-master); on an engine without plugins its
    box is the section the shared rules draw: its head and hairline, the
    body's padding, three slots and the two gaps between them (117 px in the
@@ -559,12 +563,11 @@ button.media-remove { min-height: 0; padding: 0 var(--space-1h); font-size: var(
 .notepad-refusal, .notepad-changed { font-size: var(--fs-small); line-height: 1.45; overflow-wrap: anywhere; }
 .notepad-refusal { color: var(--err-2); }
 .notepad-changed { color: var(--tx-3); }
-/* The In row (m5b-ui-recording) at its place in the Routing section's box:
-   below the section's head and the body's top padding, inside its sides, as
-   sec('Routing') draws its first .irow (UI redesign 3.4). The native select
-   lies over the .pick, invisible, so the .pick is what shows and a click on
-   it opens the list. */
-.inspector-hold.routing > .irow { margin: calc(var(--section-head-h) + var(--space-7q)) var(--space-2) 0; }
+/* The In and Out rows of sec('Routing') (m5b-ui-recording, m5b-ui-sends-buses):
+   the native select lies over the .pick, invisible, so the .pick is what
+   shows and a click on it opens the list. A row that cannot be keeps the
+   .irow's height empty. */
+.irow[aria-hidden="true"] { min-height: var(--control-h); }
 .irow .pick { position: relative; min-width: 0; }
 .irow .pick-name { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .irow .pick-select { position: absolute; inset: 0; width: 100%; height: 100%; opacity: 0; cursor: pointer; }
@@ -1002,6 +1005,28 @@ button.ghost[data-ghost-mode="solid"] { outline-style: solid; }
 .slot.ghost::before, .islot.ghost::before { display: none; }
 .slot.ghost > .stepn, .islot.ghost > .stepn { flex: none; }
 .slot-btn.ghost, .islot-btn.ghost { outline: var(--hairline-1h) dashed var(--ai); outline-offset: calc(var(--hairline) * -1); }
+/* The output selector of a strip's Routing rack (m5b-ui-sends-buses): the
+   mockup's .slot with the bus's name, the native select over it, invisible;
+   the refusal line of a refused choice (routing_cycle) in the second
+   position, on the error colour. */
+.ins > .slot:has(> .slot-select) { position: relative; cursor: pointer; }
+.slot > .slot-select { position: absolute; inset: 0; width: 100%; height: 100%; opacity: 0; cursor: pointer; }
+.slot > .slot-select:disabled { cursor: default; }
+.ins > .slot:has(> .slot-select:focus-visible) { outline: var(--space-half) solid var(--focus-ring); outline-offset: var(--hairline); }
+.rack-refusal { flex: none; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--err); font-size: var(--fs-9h); }
+/* A send slot (m5b-ui-sends-buses): the insert slot's rules, the level filling
+   the bus name's box from the left at the fader's taper (--send-fill, set
+   inline), a send that is off dimmed as a bypassed insert, PRE / POST a word
+   in the slot's buttons. */
+.send-level { cursor: ew-resize; touch-action: none; user-select: none; background: linear-gradient(to right, var(--bg-5) var(--send-fill), transparent var(--send-fill)); }
+.slot.off, .islot.off { color: var(--tx-4); }
+.slot.off::before, .islot.off::before { background: var(--tx-4); }
+.slot-btn.pre, .islot-btn.pre { font-size: var(--fs-micro); }
+/* The bus picker of a send's empty slot (m5b-ui-sends-buses): the plugin picker's dialog without
+   its search field; its list starts under the head. */
+.bus-picker .picker-list { margin-top: var(--space-half); }
+/* A bus strip's name tag while it is renamed (m5b-ui-sends-buses). */
+.nametag > .bus-rename { width: 100%; min-width: 0; height: 100%; padding: 0; font: inherit; }
 /* The rack switches at the end of the lower zone's tab row: the mockup's
    inline layout, the lit switch in --tx-1 as the mockup draws Inserts. */
 .mixer-racks { display: flex; gap: var(--space-2h); align-items: center; padding-right: var(--space-1h); }

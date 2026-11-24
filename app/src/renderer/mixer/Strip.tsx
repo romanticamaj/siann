@@ -52,6 +52,14 @@
 // A proposed track is a GhostStrip: strip() for the mockup's ghost track, its
 // insert row an empty box and nothing to operate. A click on a ghost pins its
 // step (plans/ghost-context.ts).
+//
+// The rack row (m5b-ui-sends-buses; UI redesign 3.4; 10.11, 24) shows the
+// rack of the lit switch, one at a time: Inserts (the insert rack), Routing
+// (mixer/OutputSelector.tsx: one .slot, the output selector) or Sends
+// (mixer/SendSlot.tsx: a .slot per send by the two-slot rule); with none
+// lit, or a rack the engine cannot show, it is the empty box. A bus strip
+// (mixer/BusStrip.tsx) shares the pan row, the fader, the scale, the meter
+// and the readout of this file.
 
 import { memo, useContext, useEffect, useRef, useState, useSyncExternalStore, type CSSProperties } from 'react';
 
@@ -60,6 +68,7 @@ import { useLocale, useT } from '../i18n/t';
 import type { MasterEntity, TrackEntity } from '../model/document';
 import type { GestureController } from '../model/gesture-controller';
 import type { LoudnessField } from '../model/loudness-store';
+import type { Rack } from '../shell/layout';
 import type { SessionClient } from '../model/session-client';
 import { ghostAttrs, useGhostView, type GhostView } from '../plans/ghost-context';
 import { masterGhosts, trackGhosts, type Ghost } from '../plans/ghosts';
@@ -74,12 +83,15 @@ import { RecordEnable } from '../shell/Recording';
 import { trackColourVar } from '../timeline/track-colour';
 import { InsertRack } from './InsertSlot';
 import { pluginsListed } from './inserts';
+import { RoutingRack } from './OutputSelector';
+import { routingListed, sendsListed } from './routing';
+import { SendRack } from './SendSlot';
 import { Knob } from './Knob';
 import { knobPaths } from './knob-paths';
 import { MetersContext } from './meters-context';
 import { isAboveCap, MINUS_INFINITY_MILLI_DB, milliDbToPosition } from './taper';
 import { TypedValue, ValueReadout } from './ValueControl';
-import { commitValue, formatValue, showTooltip, useValueGesture } from './value-gesture';
+import { commitValue, formatValue, showTooltip, useValueGesture, type ValueGestures } from './value-gesture';
 
 export interface StripProps {
   readonly trackId: string;
@@ -87,8 +99,9 @@ export interface StripProps {
   readonly gestures: GestureController;
   // The track list's selected track (the mockup's .sel).
   readonly selected?: boolean;
-  // The Inserts rack switch (m5b-ui-inserts-master): the rack row shows the insert rack.
-  readonly inserts?: boolean;
+  // The rack the rack row shows (the lit rack switch; m5b-ui-inserts-master,
+  // m5b-ui-sends-buses), or none: the empty box.
+  readonly rack?: Rack | null;
 }
 
 // The track as the UI shows it (committed, or with the gesture's overlay).
@@ -124,7 +137,7 @@ const SCALE: ReadonlyArray<readonly [number, string]> = [
 export const percent = (position: number) => `${(position * 100).toFixed(1)}%`;
 
 // The fader's dB scale: the labels sit at the taper's positions (spec 4.5 C7).
-function Scale() {
+export function Scale() {
   return (
     <div className="scale" data-part-of="scale" aria-hidden="true">
       {SCALE.map(([db, label]) => (
@@ -184,11 +197,6 @@ export function LoudnessValue({ field, testId, style }: { field: LoudnessField; 
   return <span ref={value} data-testid={testId} style={style} />;
 }
 
-interface ControlProps {
-  readonly track: TrackEntity;
-  readonly gestures: GestureController;
-}
-
 // A gain ghost of a fader: the step, the old value (null when unknown) and the new one.
 interface GainGhost {
   readonly step: number;
@@ -212,7 +220,7 @@ interface FaderProps {
 
 // The fader: the mockup's .ftrack with its unity line and cap; the slider. A
 // track's and the master's alike (the master's has the track fader's taper).
-function Fader({ entityRef, value, id, label, gestures, ghosts, view }: FaderProps) {
+export function Fader({ entityRef, value, id, label, gestures, ghosts, view }: FaderProps) {
   const ftrack = useRef<HTMLDivElement | null>(null);
   const cap = useRef<HTMLDivElement | null>(null);
   const tooltip = useRef<HTMLSpanElement | null>(null);
@@ -274,16 +282,29 @@ function Fader({ entityRef, value, id, label, gestures, ghosts, view }: FaderPro
   );
 }
 
-// The pan row: the PAN label as the mockup styles it, the knob, the value.
-function PanRow({ track, gestures, listed, ghost, view }: ControlProps & { listed: boolean; ghost?: Extract<Ghost, { kind: 'pan' }>; view: GhostView }) {
+export interface PanRowProps {
+  // The test ids' stem (pan-<id>) and the name in the labels.
+  readonly id: string;
+  readonly name: string;
+  readonly value: number;
+  readonly entityRef: string;
+  // The gesture controller, or a bus's releaseCommit() (one bus.set_pan at release).
+  readonly gestures: ValueGestures;
+  readonly listed: boolean;
+  readonly ghost?: Extract<Ghost, { kind: 'pan' }>;
+  readonly view: GhostView;
+}
+
+// The pan row: the PAN label as the mockup styles it, the knob, the value. A
+// track's and a bus's alike.
+export function PanRow({ id, name, value, entityRef, gestures, listed, ghost, view }: PanRowProps) {
   const t = useT();
   const locale = useLocale();
   const row = useRef<HTMLDivElement | null>(null);
   const knob = useRef<SVGSVGElement | null>(null);
   const tooltip = useRef<HTMLSpanElement | null>(null);
   const [editing, setEditing] = useState(false);
-  const value = track.pan;
-  const entityRef = `track:${track.id}`;
+  const track = { id, name };
   const handlers = useValueGesture<SVGSVGElement>({
     kind: 'pan',
     orientation: 'horizontal',
@@ -362,7 +383,16 @@ function PanRow({ track, gestures, listed, ghost, view }: ControlProps & { liste
   );
 }
 
-export const Strip = memo(function Strip({ trackId, client, gestures, selected = false, inserts = true }: StripProps) {
+// A track strip's rack row: the rack of the lit switch, when the engine can show it.
+function TrackRack({ client, gestures, track, rack, view }: { client: SessionClient; gestures: GestureController; track: TrackEntity; rack: Rack | null; view: GhostView }) {
+  const can = useCapabilities();
+  if (rack === 'inserts' && pluginsListed(can)) return <InsertRack client={client} owner={{ kind: 'track', id: track.id, name: track.name, inserts: track.inserts }} view={view} />;
+  if (rack === 'routing' && routingListed(can)) return <RoutingRack client={client} owner={{ kind: 'track', id: track.id }} name={track.name} />;
+  if (rack === 'sends' && sendsListed(can)) return <SendRack client={client} gestures={gestures} track={track} view={view} />;
+  return <div className="ins" aria-hidden="true" />;
+}
+
+export const Strip = memo(function Strip({ trackId, client, gestures, selected = false, rack = 'inserts' }: StripProps) {
   const t = useT();
   const can = useCapabilities();
   const record = useRecordHost();
@@ -397,8 +427,8 @@ export const Strip = memo(function Strip({ trackId, client, gestures, selected =
           {String(gain.step)}
         </span>
       ) : null}
-      {inserts && pluginsListed(can) ? <InsertRack client={client} track={track} view={view} /> : <div className="ins" aria-hidden="true" />}
-      <PanRow track={track} gestures={gestures} listed={panListed} ghost={ghosts.pan.at(-1)} view={view} />
+      <TrackRack client={client} gestures={gestures} track={track} rack={rack} view={view} />
+      <PanRow id={track.id} name={track.name} value={track.pan} entityRef={ref} gestures={gestures} listed={panListed} ghost={ghosts.pan.at(-1)} view={view} />
       <div className="btns" data-part-of="buttons">
         {mute && mute.step > 0 ? (
           <span className="stepn" data-part-of="mute-step-ghost" {...ghostAttrs(view, [mute.step])} style={{ position: 'absolute', zIndex: 2, left: 0 }} onClick={() => view.pin(mute.step)}>
@@ -474,7 +504,8 @@ export const Strip = memo(function Strip({ trackId, client, gestures, selected =
 // STEP n in its buttons row, the fader at 0 dB and C, its insert row an empty
 // box (a proposed track has no slots) and nothing to operate. A click pins
 // its step.
-export function GhostStrip({ ghost, view }: { ghost: Extract<Ghost, { kind: 'track-add' }>; view: GhostView }) {
+// A proposed bus (m5b-ui-sends-buses) is the same dashed strip, after the bus strips.
+export function GhostStrip({ ghost, view }: { ghost: Extract<Ghost, { kind: 'track-add' | 'bus-add' }>; view: GhostView }) {
   const t = useT();
   const locale = useLocale();
   const label: CSSProperties = { textAlign: 'right', color: 'var(--tx-4)', fontSize: locale.startsWith('zh') ? 'var(--fs-10h)' : 'var(--fs-micro)' };
@@ -487,7 +518,7 @@ export function GhostStrip({ ghost, view }: { ghost: Extract<Ghost, { kind: 'tra
       data-part-item="strip"
       data-part-key={ghost.key}
       role="group"
-      aria-label={t('ghost.proposedTrack', { name: ghost.name })}
+      aria-label={t(ghost.kind === 'bus-add' ? 'ghost.proposedBus' : 'ghost.proposedTrack', { name: ghost.name })}
       style={{ '--c': 'var(--ai)' } as CSSProperties}
       {...ghostAttrs(view, [ghost.step], ghost.mode)}
       onClick={() => view.pin(ghost.step)}

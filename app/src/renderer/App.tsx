@@ -47,6 +47,7 @@ import type { PeaksCache } from './model/peaks-cache';
 import type { AgentStore } from './model/agents';
 import type { RequestStore } from './model/request-store';
 import { capabilitySelector } from './model/capabilities';
+import { structuralBlocked } from './model/edit-guard';
 import type { PlanStore } from './model/plan-store';
 import type { ReviewStore } from './model/review-store';
 import type { RealtimeClient } from './model/realtime-client';
@@ -88,6 +89,12 @@ import { RecordContext, type RecordHost } from './shell/record-context';
 import { PendingTakes } from './shell/Recording';
 import type { TimelineTestHooks } from './timeline/TimelineCanvas';
 import type { MeterTestHooks } from './mixer/MixerMeters';
+import { BusSelection } from './mixer/bus-selection';
+import { addBusCommand, needsConfirmation, nextBusName, removalSummary, removeBusCommand, type RemovalSummary } from './mixer/bus-commands';
+import { busesListed } from './mixer/routing';
+import { ConfirmDialog } from './shell/ConfirmDialog';
+import { useT } from './i18n/t';
+import type { TimelineCommand } from './timeline/commands';
 
 export interface AppProps {
   readonly client: SessionClient;
@@ -124,6 +131,23 @@ export interface AppProps {
   readonly media?: MediaHost | null;
   // Recording (m5b-ui-recording): the record state and its actions.
   readonly record?: RecordHost | null;
+  // The selected bus (m5b-ui-sends-buses), shared with the application menu.
+  readonly buses?: BusSelection;
+}
+
+// The confirmation of a bus removal (m5b-ui-sends-buses): the bus, what goes with it, by name.
+function removalMessage(t: ReturnType<typeof useT>, bus: string, summary: RemovalSummary): string {
+  const parts = [t('bus.confirmRemove', { bus })];
+  if (summary.sends.length > 0) parts.push(t('bus.confirmSends', { names: summary.sends.join(', ') }));
+  const routed = [...summary.tracks, ...summary.buses];
+  if (routed.length > 0) parts.push(t('bus.confirmRouted', { names: routed.join(', ') }));
+  return parts.join(' ');
+}
+
+function sendCommand(client: SessionClient, command: TimelineCommand | null): boolean {
+  if (!command) return false;
+  void client.execute(command.commands, command.expectedRevision).catch(() => undefined);
+  return true;
 }
 
 export function App({
@@ -152,7 +176,11 @@ export function App({
   inserts,
   media = null,
   record = null,
+  buses: givenBuses,
 }: AppProps) {
+  const t = useT();
+  const [ownBuses] = useState(() => new BusSelection());
+  const buses = givenBuses ?? ownBuses;
   const capabilities = useSyncExternalStore(
     (listener) => client.subscribe(listener),
     () => client.getState().capabilities,
@@ -186,17 +214,60 @@ export function App({
     },
     [client],
   );
+  // Selecting a track clears the bus selection (m5b-ui-sends-buses).
   const onSelectTrack = useCallback(
-    (trackId: string, mode: TrackSelectMode) => setTracks((current) => selectTrack(current, trackId, mode, client.model.getSnapshot()?.trackOrder ?? [])),
-    [client],
+    (trackId: string, mode: TrackSelectMode) => {
+      buses.set(null);
+      setTracks((current) => selectTrack(current, trackId, mode, client.model.getSnapshot()?.trackOrder ?? []));
+    },
+    [client, buses],
   );
-  // Removed tracks leave the selection.
-  useEffect(() => client.model.subscribe(() => setTracks((current) => pruneTracks(current, order()))), [client]);
+  // Removed tracks leave the selection, and a removed bus the bus selection.
+  useEffect(
+    () =>
+      client.model.subscribe(() => {
+        setTracks((current) => pruneTracks(current, order()));
+        buses.prune(client.model.getSnapshot()?.busOrder ?? []);
+      }),
+    [client, buses],
+  );
+  // Add Bus and Remove Bus (m5b-ui-sends-buses; UI redesign 3.6; 10.11, 24):
+  // one bus.add named "Bus N"; one bus.remove of the selected bus, after a
+  // confirmation naming what goes with it when anything does.
+  const [removing, setRemoving] = useState<{ readonly busId: string; readonly message: string } | null>(null);
+  useEffect(() => {
+    const can = () => capabilitySelector(client.getState().capabilities);
+    const offAdd = commands.register('window', 'mixer.bus.add', () => {
+      const snapshot = client.model.getSnapshot();
+      if (!snapshot || !busesListed(can()) || !can().command('bus.add') || structuralBlocked(plans.getSnapshot().heard)) return false;
+      return sendCommand(client, addBusCommand(snapshot, nextBusName(snapshot, (n) => t('bus.default', { n }))));
+    });
+    const offRemove = commands.register('window', 'mixer.bus.remove', () => {
+      const snapshot = client.model.getSnapshot();
+      const busId = buses.getSnapshot();
+      if (!snapshot || busId === null || !busesListed(can()) || !can().command('bus.remove') || structuralBlocked(plans.getSnapshot().heard)) return false;
+      const bus = snapshot.entities[`bus:${busId}`] as { name?: string } | undefined;
+      if (!bus) return false;
+      const summary = removalSummary(busId, snapshot);
+      if (needsConfirmation(summary)) {
+        setRemoving({ busId, message: removalMessage(t, bus.name ?? '', summary) });
+        return true;
+      }
+      return sendCommand(client, removeBusCommand(snapshot, busId));
+    });
+    return () => {
+      offAdd();
+      offRemove();
+    };
+  }, [commands, client, buses, plans, t]);
   const epoch = useSyncExternalStore(
     (listener) => client.subscribe(listener),
     () => client.getState().epoch,
   );
-  useEffect(() => setTracks(NO_TRACKS), [reconnects, epoch]);
+  useEffect(() => {
+    setTracks(NO_TRACKS);
+    buses.set(null);
+  }, [reconnects, epoch, buses]);
   // Projects: the key commands and menu items, and the start view.
   useEffect(() => project.bind(commands, () => capabilitySelector(client.getState().capabilities)), [project, commands, client]);
   const startView = useSyncExternalStore(project.subscribe, () => project.getSnapshot().shell && project.getSnapshot().startView);
@@ -251,6 +322,7 @@ export function App({
   useEffect(() => () => notepad.dispose(), [notepad]);
   const openMedia = useCallback(() => void commands.run('window', 'media.open'), [commands]);
   const trackName = useCallback((id: string) => (client.model.select(`track:${id}`) as { name?: string } | undefined)?.name ?? id, [client]);
+  const busName = useCallback((id: string) => (client.model.select(`bus:${id}`) as { name?: string } | undefined)?.name ?? id, [client]);
   // R arms the selected track; Num * and Ctrl+Shift+R record (m5b-ui-recording).
   const selectedRef = useRef(tracks.primary);
   selectedRef.current = tracks.primary;
@@ -309,7 +381,7 @@ export function App({
           }
           lower={
             <Counted id="mixer">
-              <Mixer client={client} gestures={gestures} realtime={realtime} selectedTrackId={tracks.primary} onMeterHooks={onMeterHooks} racks={racks} meterStore={meterStore} />
+              <Mixer client={client} gestures={gestures} realtime={realtime} selectedTrackId={tracks.primary} onMeterHooks={onMeterHooks} racks={racks} meterStore={meterStore} busSelection={buses} />
             </Counted>
           }
           right={<PlanPanel key={epoch} client={client} plans={plans} agents={agents} requests={requests} selection={selection} review={review} reconnects={reconnects} commands={commands} />}
@@ -321,7 +393,21 @@ export function App({
           saved={saved}
           onStudioSetup={setupAvailable ? openSetup : undefined}
         />
-        {inserts && pluginsListed(capabilitySelector(capabilities)) ? <PluginPicker picker={inserts.picker} trackName={trackName} /> : null}
+        {inserts && pluginsListed(capabilitySelector(capabilities)) ? <PluginPicker picker={inserts.picker} trackName={trackName} busName={busName} /> : null}
+        {removing ? (
+          <ConfirmDialog
+            open
+            message={removing.message}
+            confirmLabel={t('confirm.remove')}
+            cancelLabel={t('confirm.cancel')}
+            onConfirm={() => {
+              const snapshot = client.model.getSnapshot();
+              if (snapshot) sendCommand(client, removeBusCommand(snapshot, removing.busId));
+              setRemoving(null);
+            }}
+            onCancel={() => setRemoving(null)}
+          />
+        ) : null}
         {recoverable ? <PendingTakes controller={record.controller} client={client} /> : null}
         </HeardContext.Provider>
         </GhostContext.Provider>

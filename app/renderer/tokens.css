@@ -309,7 +309,7 @@
      only; the feature that lands the part deletes its hold. The branch chip
      (m5b-ui-audition) and the Record button (m5b-ui-recording) landed; the
      Channel zone button (m5b-ui-editor-channel). The Inspector's three open sections
-     (m5-ui-port-inspector): Routing (m5b-ui-sends-buses), Inserts
+     (m5-ui-port-inspector), all landed: Routing (m5b-ui-sends-buses), Inserts
      (m5b-ui-inserts-master) and Agent changes (m5b-ui-ghosts), their whole
      box with its hairline; Agent changes in en (its text wraps to one line
      less in zh-TW, 78.891 px). The project zone toolbar's and info line's
@@ -325,7 +325,6 @@
      plan's title and its intent landed with m5b-ui-plan-metadata, and the
      composer with m5b-ui-composer: shell.css sizes their empty boxes by a
      calc() of the tokens the shared rules size them with. */
-  --hold-inspector-routing-h: calc(91px * var(--scale));
   --hold-tool-2-w: calc(27.172px * var(--scale));
   --hold-tool-6-w: calc(27.172px * var(--scale));
   --hold-tool-7-w: calc(27.172px * var(--scale));

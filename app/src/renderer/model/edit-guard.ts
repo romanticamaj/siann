@@ -25,7 +25,9 @@ const TRACK_OPS = new Set(['track.add', 'track.remove', 'track.rename', 'track.s
 // track.rename does.
 const OTHER_OPS = new Set(['media.import', 'media.rename', 'media.remove', 'transport.record', 'plugin.instantiate', 'plugin.insert', 'plugin.remove', 'plugin.set_bypass']);
 
+// Every bus and send command (m5b-ui-sends-buses; 4.5 C5; 10.11, 24) commits onto main
+// too; the bus fader and the send level are gestures (gesture.*) and stay.
 export function isStructural(op: string): boolean {
-  if (op.startsWith('clip.') || op.startsWith('marker.')) return true;
+  if (op.startsWith('clip.') || op.startsWith('marker.') || op.startsWith('bus.') || op.startsWith('send.')) return true;
   return TRACK_OPS.has(op) || OTHER_OPS.has(op);
 }

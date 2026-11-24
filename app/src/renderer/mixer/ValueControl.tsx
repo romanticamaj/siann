@@ -6,10 +6,10 @@
 
 import { useRef, useState, type ReactNode } from 'react';
 
-import type { GestureController } from '../model/gesture-controller';
+import type { GestureField } from '../model/read-model';
 import { isAboveCap } from './taper';
 import { parseTyped, type ValueKind } from './value-control';
-import { commitValue, formatValue } from './value-gesture';
+import { commitValue, formatValue, type ValueGestures } from './value-gesture';
 
 export { commitValue, formatValue, toPosition } from './value-gesture';
 
@@ -18,7 +18,9 @@ export interface ValueReadoutProps {
   readonly kind: ValueKind;
   readonly entityRef: string;
   readonly value: number;
-  readonly gestures: GestureController;
+  readonly gestures: ValueGestures;
+  // The gesture's field when it is not the kind's own (a send's levelMilliDb).
+  readonly field?: GestureField;
   readonly testId: string;
   readonly label: string;
   // Absent: the value is shown and cannot be typed (the command is not listed).
@@ -32,13 +34,13 @@ export interface ValueReadoutProps {
   readonly suffix?: ReactNode;
 }
 
-export function ValueReadout({ kind, entityRef, value, gestures, testId, label, typing, tag: Tag = 'span', className, suffix }: ValueReadoutProps) {
+export function ValueReadout({ kind, entityRef, value, gestures, field, testId, label, typing, tag: Tag = 'span', className, suffix }: ValueReadoutProps) {
   const [editing, setEditing] = useState(false);
   const text = formatValue(kind, value);
   if (editing && typing) {
     return <TypedValue kind={kind} initial={text} testId={typing.testId} label={typing.label} onDone={(typed) => {
       setEditing(false);
-      if (typed !== null) commitValue(gestures, entityRef, kind, typed);
+      if (typed !== null) commitValue(gestures, entityRef, kind, typed, field);
     }} />;
   }
   const warn = kind === 'gain' && isAboveCap(value);
