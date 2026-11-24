@@ -100,9 +100,11 @@ test.beforeAll(async () => {
       { id: 'trk_a', name: 'Keys' },
       { id: 'trk_b', name: 'Bass' },
     ],
+    // Both in view between the track list's divider and the right zone at
+    // the default zoom (100 frames per pixel: a clip is 480 px).
     [
-      { id: 'clp_1', trackId: 'trk_a', at: 1 },
-      { id: 'clp_2', trackId: 'trk_b', at: 2 },
+      { id: 'clp_1', trackId: 'trk_a', at: 0.05 },
+      { id: 'clp_2', trackId: 'trk_b', at: 0.15 },
     ],
   );
   await start();
@@ -150,12 +152,14 @@ async function at(x: number, y: number): Promise<{ x: number; y: number }> {
   return { x: box.x + x, y: box.y + y };
 }
 
-// The handle's grab point: its tip column, a pixel below the triangle's top edge.
+// The handle's grab point: its tip column (a pixel left of it for the fade
+// out, whose tip without a fade is the box's right edge, outside the box), a
+// pixel below the triangle's top edge.
 async function handle(clipId: string, side: 'fadeIn' | 'fadeOut'): Promise<{ x: number; y: number }> {
   const drawn = await fades(clipId);
   if (!drawn.handles) throw new Error(`${clipId} has no fade handles`);
   const box = drawn.handles[side];
-  return at(box.x + box.width / 2, box.y + 1);
+  return at(box.x + box.width / 2 - (side === 'fadeOut' ? 1 : 0), box.y + 1);
 }
 
 async function drag(from: { x: number; y: number }, dx: number, modifier?: 'ControlOrMeta'): Promise<void> {
@@ -244,12 +248,20 @@ test('hover and selection show both handles; a handle drag is one clip.set_fade 
   expect(handles.fadeIn.width).toBe(8);
   expect(handles.fadeIn.height).toBe(6);
 
-  // A drag of the fade in handle 60 px right, snap on (the default grid): its end on the nearest grid line.
+  // A drag of the fade in handle right, snap on (the default grid): its end on
+  // the nearest grid line. The distance is the least whose grid line lies
+  // inside the clip, so the drag gives the fade a length.
   const v = await view();
   const grid = snapperFor({ on: true, grid: 'adapt' }, v.framesPerPixel, [], RATE);
   const position = BigInt(r.position);
-  const commands = await oneFadeEdit('fade in drag', async () => drag(await handle('clp_1', 'fadeIn'), 60));
-  const end = grid(position + BigInt(Math.round(60 * v.framesPerPixel)));
+  const inside = (dx: number) => {
+    const at = grid(position + BigInt(Math.round(dx * v.framesPerPixel)));
+    return at > position && at < position + BigInt(r.length) / 2n;
+  };
+  const dx = [...Array(40).keys()].map((i) => 20 + 10 * i).find(inside);
+  expect(dx, 'a grid line inside the clip').toBeDefined();
+  const commands = await oneFadeEdit('fade in drag', async () => drag(await handle('clp_1', 'fadeIn'), dx!));
+  const end = grid(position + BigInt(Math.round(dx! * v.framesPerPixel)));
   expect(commands).toEqual([{ op: 'clip.set_fade', clipId: 'clp_1', fadeIn: { length: String(end - position), curve: 'linear' } }]);
   expect((await fetchClip('clp_1')).fadeIn).toEqual({ length: String(end - position), curve: 'linear' });
   // The handle followed: its tip at the fade's real length.
@@ -446,13 +458,18 @@ for (const [name, change] of [
     for (const id of ['info-fade-in', 'info-fade-out']) await expect(page.locator(`[data-part="${id}"]`)).toHaveCount(0);
     await expect(page.locator('.infoline [class*="hold-"]')).toHaveCount(0);
     await expect(page.locator('.infoline > *').last()).toHaveAttribute('data-part', 'info-volume');
-    // A drag at the upper left corner resizes the clip, one clip.trim and clip.move.
-    const before = await head();
+    // A drag at the upper left corner resizes the clip as before: one command.execute of clip.trim and clip.move.
     const length = (await fetchClip('clp_1')).length;
     const v = await view();
+    const sent = await executes();
     await drag(await at(corner.x, corner.y), 48, 'ControlOrMeta');
-    await expect(page.getByTestId('revision')).toHaveText(next(before.revision));
-    expect((await fetchClip('clp_1')).length).toBe(String(Number(length) - Math.round(48 * v.framesPerPixel)));
+    await expect.poll(async () => (await fetchClip('clp_1')).length).toBe(String(Number(length) - Math.round(48 * v.framesPerPixel)));
+    expect(await executes()).toBe(sent + 1);
+    const ops = await page.evaluate(() => {
+      const last = (window as unknown as { __siannClient: { sent(): Array<{ method: string; params: { commands?: Array<{ op: string }> } }> } }).__siannClient.sent().filter((r) => r.method === 'command.execute').at(-1);
+      return (last?.params.commands ?? []).map((c) => c.op);
+    });
+    expect(ops).toEqual(['clip.trim', 'clip.move']);
     expect((await fadeExecutes()).length).toBe(0);
   });
 }
