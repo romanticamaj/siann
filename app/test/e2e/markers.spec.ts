@@ -494,6 +494,9 @@ for (const [name, file] of [
   test(`${name}: no marker head, track or marker part; the 20 px row stays; a press and the keys send nothing`, async () => {
     test.setTimeout(150_000);
     await relaunch({ SIANN_TEST_CAPABILITIES: path.join(FIXTURES, file) });
+    // Wait for the canvas to paint the session's lanes: the track headers are
+    // in the DOM before the first paint reports its parts (seen on macOS CI).
+    await expect.poll(async () => (await hook<Part[]>('parts')).some((p) => p.id === 'lane-1')).toBe(true);
     await expect(page.locator('[data-part="marker-head"]')).toHaveCount(0);
     expect((await hook<Part[]>('parts')).filter((p) => p.id.startsWith('marker'))).toEqual([]);
     expect(await shapes()).toEqual([]);
