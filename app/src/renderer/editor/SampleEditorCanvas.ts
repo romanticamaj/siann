@@ -54,6 +54,7 @@ import {
   rangeDragCommand,
   rangeDragTarget,
   rangePixels,
+  sourceOrigin,
   sourcePixels,
   zoomEditor,
   type EditorPart,
@@ -118,6 +119,8 @@ export class SampleEditorCanvas {
   #view: Viewport = { framesPerPixel: 1, scrollFrames: '0', rulerHeight: RULER_HEIGHT, laneHeight: 1, width: 1, height: 1 };
   // The view was fitted to this clip's source; another clip fits again.
   #fitted: string | null = null;
+  // The source's session frame (sourceOrigin) the view was last placed for.
+  #fittedOrigin = 0n;
   #ratio = 1;
   #drag: Drag | null = null;
   #hover: EditorPart | null = null;
@@ -230,10 +233,21 @@ export class SampleEditorCanvas {
     return found && snapshot ? { ...found, snapshot } : null;
   }
 
-  // The first view of a clip shows its whole source.
+  // The first view of a clip shows its whole source. The x axis is the
+  // session frame, so when the shown clip moves (a drag, a nudge, a typed
+  // Start, an undo of a move) the view follows its source by the same frames
+  // and keeps its zoom: the source and the range stay where they were drawn.
   #fit(clip: ClipEntity, media: MediaEntity): void {
-    if (this.#fitted === clip.id) return;
+    const origin = sourceOrigin(clip);
+    if (this.#fitted === clip.id) {
+      if (origin === this.#fittedOrigin) return;
+      const scroll = BigInt(this.#view.scrollFrames) + (origin - this.#fittedOrigin);
+      this.#fittedOrigin = origin;
+      this.#view = { ...this.#view, scrollFrames: scroll.toString() };
+      return;
+    }
     this.#fitted = clip.id;
+    this.#fittedOrigin = origin;
     this.#view = editorView(clip, media, this.#view.width, this.#view.height ?? 1);
   }
 
