@@ -10,6 +10,12 @@ export interface AutoScrollInput {
   readonly view: { readonly scrollFrames: string; readonly framesPerPixel: number; readonly width: number };
   // The project cursor's frame, or null without a playhead.
   readonly cursor: string | null;
+  // How far (frames) the cursor may fall behind the left edge without a page
+  // back: the extrapolated cursor's lead (PlayheadClock, MAX_LEAD_MS). A page
+  // turned on the extrapolation can be ahead of where the engine is; the next
+  // realtime frame then lands that little behind the edge, and the cursor
+  // reaches the page again within the lead (0 when omitted).
+  readonly lead?: number;
   readonly playing: boolean;
   readonly enabled: boolean;
   readonly dragging: boolean;
@@ -23,8 +29,9 @@ export function nextScroll(input: AutoScrollInput): string | null {
   const left = BigInt(input.view.scrollFrames);
   const width = BigInt(Math.max(1, Math.round(input.view.width * input.view.framesPerPixel)));
   if (cursor >= left && cursor < left + width) return null;
-  // Forward past the right edge, or back before the left (a locate, a
-  // cycle's wrap): the page that starts at the cursor.
+  if (cursor < left && left - cursor <= BigInt(Math.max(0, Math.floor(input.lead ?? 0)))) return null;
+  // Forward past the right edge, or back before the left by more than the
+  // lead (a locate, a cycle's wrap): the page that starts at the cursor.
   const next = cursor < 0n ? 0n : cursor;
   return next === left ? null : next.toString();
 }
