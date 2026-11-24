@@ -13,10 +13,12 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 
 import { SampleEditorCanvas } from '../../src/renderer/editor/SampleEditorCanvas';
+import type { MeterFrame } from '../../src/renderer/model/meter-frames';
 import { chooseLevel, type PeakPyramid } from '../../src/renderer/model/peaks';
 import type { PeaksCache } from '../../src/renderer/model/peaks-cache';
 import type { ReadModel, Snapshot } from '../../src/renderer/model/read-model';
-import { DEFAULT_SNAP } from '../../src/renderer/timeline/snap';
+import { frameToX } from '../../src/renderer/timeline/geometry';
+import { DEFAULT_SNAP, SNAP_MAGNET_PX, type SnapSettings } from '../../src/renderer/timeline/snap';
 import { clearFrames, fakeSurface, flushFrames, installSurfaceGlobals, setDevicePixelRatio } from './support/surface';
 import { sampleSnapshot } from './support/timeline';
 
@@ -76,13 +78,15 @@ function peaksOf(initial: PeakPyramid | null) {
   };
 }
 
-function make(options: { ratio?: number; pyramid?: PeakPyramid | null; clipId?: string | null } = {}) {
+function make(options: { ratio?: number; pyramid?: PeakPyramid | null; clipId?: string | null; snap?: SnapSettings; playhead?: string | null } = {}) {
   clearFrames();
   setDevicePixelRatio(options.ratio ?? 1);
   const surface = fakeSurface(800, 200);
   const model = modelOf(sampleSnapshot());
   const peaks = peaksOf(options.pyramid === undefined ? pyramid() : options.pyramid);
   const sent: Array<{ commands: ReadonlyArray<Record<string, unknown>>; expectedRevision: string }> = [];
+  // The realtime frame, stopped at the project cursor (none: no cursor).
+  const frame: MeterFrame | null = options.playhead == null ? null : { epoch: '1', engineTimestampMicros: '0', playheadSamples: options.playhead, playing: false, entries: [] };
   const editor = new SampleEditorCanvas({
     content: surface.content,
     overlay: surface.overlay,
@@ -90,7 +94,8 @@ function make(options: { ratio?: number; pyramid?: PeakPyramid | null; clipId?: 
     model: model.model,
     peaks: peaks.cache,
     execute: async (commands, expectedRevision) => void sent.push({ commands, expectedRevision }),
-    snap: () => ({ ...DEFAULT_SNAP, on: false }),
+    snap: () => options.snap ?? { ...DEFAULT_SNAP, on: false },
+    playhead: { playhead: () => frame },
   });
   editor.setClip(options.clipId === undefined ? 'clp_1' : options.clipId);
   flushFrames();
@@ -177,6 +182,28 @@ test('a drag of the range\'s end sends one command.execute on release, none on a
   assert.equal(sent.length, 1);
   assert.equal(sent[0]!.expectedRevision, 'r7');
   assert.deepEqual(sent[0]!.commands, [{ op: 'clip.trim', clipId: 'clp_1', sourceStart: '0', length: String(24000 - 40 * view.framesPerPixel) }]);
+});
+
+test('with Magnetic Cursor the range\'s end snaps to the project cursor, in the preview and the command, as the event display\'s trim does', async () => {
+  // clp_1 sits at 4800 and is 24000 long: its end is at 28800. The drag of
+  // -40 px ends 3 px from the cursor, inside the magnet.
+  const fpp = make().hooks.view().framesPerPixel;
+  const cursor = 28800 - 37 * fpp;
+  assert.ok(3 < SNAP_MAGNET_PX);
+  const { surface, sent, hooks } = make({ snap: { on: true, grid: 'adapt', type: 'cursor' }, playhead: String(cursor) });
+  const view = hooks.view();
+  const end = hooks.range()!.end;
+  surface.fire('pointerdown', { clientX: end, clientY: 120 });
+  surface.fire('pointermove', { clientX: end - 40, clientY: 120 });
+  surface.overlayCalls.clear();
+  flushFrames();
+  const x = Math.round(frameToX(BigInt(cursor), view));
+  assert.ok(surface.overlayCalls.fills.some((f) => f.rect[0] === x - 1 && f.rect[2] === 1), 'the preview shows the end on the cursor');
+  assert.ok(surface.overlayCalls.fills.some((f) => f.rect[0] === x && f.rect[1] === 0), 'the snap guide is on the cursor');
+  surface.fire('pointerup', { clientX: end - 40, clientY: 120 });
+  await Promise.resolve();
+  assert.equal(sent.length, 1);
+  assert.deepEqual(sent[0]!.commands, [{ op: 'clip.trim', clipId: 'clp_1', sourceStart: '0', length: String(cursor - 4800) }]);
 });
 
 test('H and G change the editor\'s zoom about the range\'s centre', () => {

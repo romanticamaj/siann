@@ -13,7 +13,7 @@
 // - No clip: the tab says so; several selected: the primary, the info line's.
 // - Dragging an end of the range resizes the clip in one revision, one undo
 //   restores it; Ctrl leaves the grid; the volume control is one revision and
-//   one undo.
+//   one undo. With Magnetic Cursor the end snaps to the project cursor.
 // - H and G with the lower zone focused zoom the editor, not the event display.
 // - Opening the editor makes no request but /v0/peaks/<hash>, and no new
 //   protocol method.
@@ -26,6 +26,7 @@ import * as path from 'node:path';
 import { clipBox, cornerHandles, gainBox, repeatHandle } from '../../src/renderer/timeline/geometry';
 import { snapperFor } from '../../src/renderer/timeline/snap';
 import { engineClient, type EngineClient } from './support/engine-client';
+import { chooseSnapType } from './support/toolbar';
 import { launchApp, seedBundle } from './support/seed';
 
 const RATE = 48000;
@@ -299,12 +300,45 @@ test('the volume control sets the clip\'s gain in one revision; one undo restore
   const { gain } = await editor();
   expect(gain).not.toBeNull();
   const at = await onEditor(gain!.x + gain!.width / 2, gain!.y + gain!.height / 2);
+  // The window has the engine's head (the last test ended on an undo), so the
+  // revision read here is the one the drag starts from, not one an undo still
+  // in flight moves past.
+  const { revision: head } = (await engine!.call('session.inspect')) as { revision: string };
+  await expect(page.getByTestId('revision')).toHaveText(head);
   const before = await revision();
   await drag(at, 0, -20);
+  await expect.poll(async () => (await fetchClip('clp_2')).gainMilliDb).toBe(2000);
   await expect.poll(revision).toBe(before + 1);
-  expect((await fetchClip('clp_2')).gainMilliDb).toBe(2000);
   await page.keyboard.press(`${MOD}+KeyZ`);
   await expect.poll(async () => (await fetchClip('clp_2')).gainMilliDb).toBe(0);
+});
+
+test('with Magnetic Cursor dragging the range\'s end snaps it to the project cursor, as the event display\'s trim does', async () => {
+  await expect(page.getByTestId('editor')).toHaveAttribute('data-clip', 'clp_2');
+  await expect.poll(async () => (await editor()).range !== null).toBe(true);
+  await chooseSnapType(page, 'cursor');
+  try {
+    const original = await fetchClip('clp_2');
+    const position = Number((await rect('clp_2')).position);
+    const { range, view } = await editor();
+    // The drag of -60 px ends 3 px from the cursor, inside the 8 px magnet.
+    const cursor = position + Number(original.length) - Math.round(57 * view.framesPerPixel);
+    await engine!.call('transport.locate', { frames: String(cursor) });
+    const display = await timeline<{ framesPerPixel: number; scrollFrames: string }>('view');
+    await expect.poll(() => timeline<number | null>('cursorX')).toBe((cursor - Number(display.scrollFrames)) / display.framesPerPixel);
+    const { revision: head } = (await engine!.call('session.inspect')) as { revision: string };
+    await expect(page.getByTestId('revision')).toHaveText(head);
+    const before = await revision();
+    await drag(await onEditor(range!.end - 1, 120), -60);
+    await expect.poll(async () => (await fetchClip('clp_2')).length).toBe(String(cursor - position));
+    await expect.poll(revision).toBe(before + 1);
+    await page.keyboard.press(`${MOD}+KeyZ`);
+    await expect.poll(async () => (await fetchClip('clp_2')).length).toBe(original.length);
+    const { revision: undone } = (await engine!.call('session.inspect')) as { revision: string };
+    await expect(page.getByTestId('revision')).toHaveText(undone);
+  } finally {
+    await chooseSnapType(page, 'grid');
+  }
 });
 
 test('H and G with the lower zone focused zoom the editor, not the event display', async () => {
