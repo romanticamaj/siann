@@ -221,8 +221,6 @@ export const TOKENS = {
   "hold-tool-7-w": "27.172px",
   "hold-tool-8-w": "27.172px",
   "hold-tool-9-w": "27.172px",
-  "hold-info-fade-in-w": "94.047px",
-  "hold-info-fade-out-w": "109.422px",
   "locator-band-top": "2px",
   "locator-band-gap": "1px",
   "locator-band-line": "2px",

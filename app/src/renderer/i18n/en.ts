@@ -120,6 +120,8 @@ export const en = {
   'info.length': 'Length',
   'info.offset': 'Offset',
   'info.volume': 'Volume',
+  'info.fadeIn': 'Fade In',
+  'info.fadeOut': 'Fade Out',
   'info.editHint': 'Click to type a value: Enter changes every selected clip by the difference, Ctrl+Enter sets each to it, Escape cancels',
 
   // The Media tab (m5b-ui-media; UR-5), which replaced the Pool.
@@ -452,6 +454,14 @@ export const en = {
   'step.trimClip': 'Trim {clip} to {length}',
   'step.removeClip': 'Remove {clip}',
   'step.setClipGain': 'Set the volume of {clip} to {gain}',
+  'step.setFadeIn': 'Set the fade in of {clip} to {length}',
+  'step.setFadeOut': 'Set the fade out of {clip} to {length}',
+  'step.setFades': 'Set the fades of {clip} to {fadeIn} in and {fadeOut} out',
+  'step.removeFadeIn': 'Remove the fade in of {clip}',
+  'step.removeFadeOut': 'Remove the fade out of {clip}',
+  'step.removeFades': 'Remove the fades of {clip}',
+  'step.setFadeInRemoveOut': 'Set the fade in of {clip} to {length} and remove its fade out',
+  'step.removeFadeInSetOut': 'Remove the fade in of {clip} and set its fade out to {length}',
   'step.addMedia': 'Add an audio file to the pool',
   'step.removeMedia': 'Remove an audio file from the pool',
   'step.renameMedia': 'Rename an audio file in the pool to {name}',

@@ -154,7 +154,15 @@ const GLUE_REFUSED: Readonly<Record<GlueRefusal | 'selection', MessageKey>> = {
 };
 
 // The info line's fields and the commands each edit sends.
-const INFO_EDIT_OPS: Readonly<Record<InfoField, string>> = { start: 'clip.move', length: 'clip.trim', offset: 'clip.trim', volume: 'clip.set_gain' };
+const INFO_EDIT_OPS: Readonly<Record<InfoField, string>> = {
+  start: 'clip.move',
+  length: 'clip.trim',
+  offset: 'clip.trim',
+  volume: 'clip.set_gain',
+  // m5b-ui-fades: the fade fields, while the engine lists features.clipFades too.
+  fadeIn: 'clip.set_fade',
+  fadeOut: 'clip.set_fade',
+};
 
 // Which editing commands (keys, buttons) exist with these capabilities (UI
 // redesign spec 3.0): each needs the commands it ends in (or, for L, N and
@@ -381,6 +389,8 @@ export function Timeline({
         subscribe: (listener) => localeStore().subscribe(listener),
       },
       allows: allowed,
+      // m5b-ui-fades: the handles while the engine lists the feature and the command.
+      fadesEnabled: () => canRef.current.feature('clipFades') && canRef.current.command('clip.set_fade'),
       playhead: realtime ?? undefined,
       laneHeights: {
         get: heights,
@@ -666,11 +676,12 @@ export function Timeline({
         clipId={state.selectedClipId}
         selection={state.selectedClipIds}
         onEdit={
-          timeline && (can.command('clip.move') || can.command('clip.trim') || can.command('clip.set_gain'))
+          timeline && (can.command('clip.move') || can.command('clip.trim') || can.command('clip.set_gain') || can.command('clip.set_fade'))
             ? (field, text, absolute) => {
                 const current = client.model.getSnapshot();
                 const primary = state.selectedClipId;
                 if (!current || !primary || !can.command(INFO_EDIT_OPS[field])) return;
+                if ((field === 'fadeIn' || field === 'fadeOut') && !can.feature('clipFades')) return;
                 void timeline.sendCommand(infoLineEditCommand(current, state.selectedClipIds, primary, field, text, absolute));
               }
             : undefined

@@ -201,7 +201,7 @@ In this table "hidden" means absent with its space empty. Where a later decision
 | Record button, record-enable and monitor buttons | Landed with `m5b-ui-recording` (UR-8; 3.1, 3.3, 3.5): Record on the transport bar, record enable on the header, the strip and the Inspector, monitor in the Inspector (the one place the mockup draws it). Rendered when the engine lists `features.recording` and the record methods (monitor: `features.monitoring` and the command `track.set_monitor`); absent otherwise, each box empty (a `.tbtn`'s, an `.msr`'s) |
 | R / W automation buttons, Automation section | Hidden (M6a: `m6a-ui-automation`) |
 | Marker track | Hidden until `m5b-ui-markers` (E-8, `m5b-engine-markers`). From then on rendered when the engine lists `features.markers` and the marker commands; absent with its 20 px row empty otherwise |
-| Fade handles, fade fields in the info line | Hidden until `m5b-ui-fades` (the fade half of E-9, `m5b-engine-clip-fades`). From then on shown when the engine lists `features.clipFades` and `clip.set_fade`; absent otherwise, with no box for the two fields, which end the info line |
+| Fade handles, fade fields in the info line | Landed with `m5b-ui-fades` (the fade half of E-9, `m5b-engine-clip-fades`): shown when the engine lists `features.clipFades` and `clip.set_fade`; absent otherwise, no handle hit-testable and no box for the two fields, which end the info line |
 | Time signature display | Hidden in phase 1, when the position display's tooltip said bars are computed as 4/4. Since `m5b-ui-signature` the display's Sig cell shows a read-only 4/4, read from the constant the bar maths uses, and the sentence (this version counts every project in 4/4) is its tooltip, no longer the position display's; editing it waits for E-10 |
 | DSP load, LUFS | Hidden in phase 1 (E-13, in M5b: `m5b-engine-load-loudness`, `m5b-ui-meter`); the status bar shows xruns, which `engine.status` has. Since `m5b-ui-meter`: the DSP load shows when the engine lists `features.load`, the master's LUFS-S and the Meter tab when it lists `features.loudness`, each box empty otherwise (`--dsp-load-empty-w`, `--tab-meter-empty-w`, the master's empty `.panrow`) |
 | Master fader and its buttons | The fader landed with `m5b-ui-inserts-master` (E-11): the mockup's `.ftrack` with its unity line and cap (`strip-master-fader`, `strip-master-cap`), the track fader's taper and modifiers, one `master.set_gain` per gesture on the `master:master` target, and the level beside the peak value in the readout. An engine without `features.masterGain`, the command `master.set_gain` or the gesture methods keeps the M5 master: a meter with a peak value, the fader column an empty box (P1-12). The master's M, its insert rack and its `e` stay hidden until M6c's `m6c-ui-master-channel` (3.4; 10.11) |
@@ -1191,7 +1191,7 @@ Every region and key component has a stable id, the same in the mockup and in th
 | `m5b-ui-inserts-master` | report | Insert slots of the track strips and of the Inspector, the master fader, the rack switches |
 | `m5b-ui-sends-buses` | pending | Routing and Sends sections |
 | `m5b-ui-markers` | pending | Marker track and its head |
-| `m5b-ui-fades` | pending | Fade fields of the info line |
+| `m5b-ui-fades` | report | Fade fields of the info line |
 | `m5b-ui-media` | report | Media tab; the titles of the plan steps that name a clip (`plan-step-N-title`) |
 | `m5b-ui-edit-more` | pending | Tools 4 and 5 |
 | `m5b-ui-audition` | report | Branch chip |

@@ -156,6 +156,11 @@ export function prepareBundle(scratch: string): string {
       length: String(Math.round(bars * BAR)),
     });
   });
+  // The mockup's fades on its selected clip (m5b-ui-fades): its info line
+  // reads Fade In 12 ms and Fade Out 180 ms, 576 and 8640 frames at 48 kHz.
+  if (RATE === 48000) {
+    exec({ op: 'clip.set_fade', clipId: clipId(SELECTED_CLIP), fadeIn: { length: '576', curve: 'linear' }, fadeOut: { length: '8640', curve: 'equal_power' } });
+  }
   return path.dirname(bundle);
 }
 

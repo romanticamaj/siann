@@ -339,8 +339,7 @@ code, dd { font-family: var(--font-mono); }
 /* The toolbar and the info line are ui/project-zone.css's .arr-toolbar and
    .infoline (m5-ui-port-toolbar). The app's own pieces around them: the
    refusal line, which draws nothing while empty, and the empty boxes of the
-   absent parts (spec 3.0): tools 2 and 6 to 9 (M6a), the
-   proposal pill (m5b-ui-ghosts) and the fade fields (m5b-ui-fades), each the
+   absent parts (spec 3.0): tools 2 and 6 to 9 (M6a), each the
    size the fidelity run measures in the mockup (--hold-*-w); a tool, snap,
    the grid type or auto-scroll on an engine without its commands, a tool's
    box (--tool-w, the shared rule's least width) and a field's height (the
@@ -356,9 +355,6 @@ code, dd { font-family: var(--font-mono); }
 .tool-empty { width: var(--tool-w); }
 .field-empty { display: block; flex: none; height: var(--field-h); }
 .auto-scroll-empty { width: calc(2 * var(--space-1h) + var(--icon-s) + 2 * var(--hairline)); }
-.hold-info-fade-in, .hold-info-fade-out { display: block; flex: none; align-self: stretch; }
-.hold-info-fade-in { width: var(--hold-info-fade-in-w); }
-.hold-info-fade-out { width: var(--hold-info-fade-out-w); }
 .tool-empty, .field-empty { pointer-events: none; }
 /* The Media tab (m5b-ui-media; UR-5): the right zone's content while its
    tab is chosen. The mockup draws the tab but not its content, so these

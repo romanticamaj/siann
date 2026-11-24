@@ -17,8 +17,15 @@
 //   pyramid (PeaksCache, waveform.ts), the outline, and a selected clip's
 //   palette and lower corner squares. A clip of a muted (or solo-muted) track
 //   is drawn at 50 %, a selected clip with draw()'s repeat handle (the disc on
-//   its right border, m5b-ui-edit-more). Fade curves (m5b-ui-fades) are
-//   not drawn. The selected plan's ghosts (m5b-ui-ghosts; UI redesign 4.2,
+//   its right border, m5b-ui-edit-more). A clip's fades (m5b-ui-fades; UI
+//   redesign 3.2, "How a fade is drawn"; fades.ts) are draw()'s shade and 1 px
+//   line on the real gain curve at the real length, with the waveform's
+//   columns scaled by the gain, on every clip that has them; a selected clip
+//   carries draw()'s fade triangles (the hovered clip's are the overlay's)
+//   while the engine lists features.clipFades and clip.set_fade
+//   (`fadesEnabled`). A plan's fade step is a dashed violet curve on its clip
+//   (a side set to 0: the current shade cross-hatched) with its step's disc,
+//   solid while heard. The selected plan's ghosts (m5b-ui-ghosts; UI redesign 4.2,
 //   5.2) are, from the `ghosts` source (model/review-store.ts), in the agent
 //   violet as draw() draws its ghosts (ghost-geometry.ts): a proposed track
 //   as a hatched lane under the last lane, a placed clip, the new place of a
@@ -66,7 +73,12 @@
 // the Object Selection tool a drag from empty space draws a rubber band on
 // the overlay that selects every clip it touches (Shift adds; a plain click
 // still clears), and a drag of a selected clip's repeat handle repeats the
-// selection by the drag's distance in spans. Snap types Events and Magnetic
+// selection by the drag's distance in spans. m5b-ui-fades (spec 3.2; 10.11,
+// 23): a fade handle, hit before the edge and the body, drags that side's
+// length (the preview and the tooltip in ms on the overlay) and its release
+// sends one clip.set_fade (fades.ts fadeDragCommand: snapped unless Ctrl,
+// clamped, nothing at the starting length); a double-click on a handle or in
+// a shaded area switches that side's curve. Snap types Events and Magnetic
 // Cursor read the other clips' edges and the cursor (snap.ts, snapContext). The
 // modifiers come from keys/tool-modifiers.ts; a pointer that moved less than
 // DRAG_THRESHOLD_PX is a click. Moves, copies, resizes, splits by click and
@@ -106,7 +118,7 @@ import type { Ghost } from '../plans/ghosts';
 import { TOKENS } from '../tokens';
 import { translator, type T } from '../i18n/t';
 import { toolModifiers, type ModifierFlags } from '../keys/tool-modifiers';
-import type { ClipEntity, MediaEntity } from '../model/document';
+import type { ClipEntity, ClipFade, MediaEntity } from '../model/document';
 import type { MeterFrame } from '../model/meter-frames';
 import type { PeaksCache } from '../model/peaks-cache';
 import { WAVE_FRAMES, type RecordingClip } from '../model/record-clip';
@@ -135,6 +147,23 @@ import {
   type GhostLane,
 } from './ghost-geometry';
 import { CLIPBOARD, type Clipboard } from './clipboard';
+import {
+  FADE_SIDES,
+  fadeCurvePoints,
+  fadeCurveToggleCommand,
+  fadeDragCommand,
+  fadeDragLength,
+  fadeHandles,
+  fadePx,
+  fadeScaledColumns,
+  fadeShadePoints,
+  fadeSideOf,
+  formatMs,
+  framesToMs,
+  type FadeCurve,
+  type FadeHandle,
+  type FadeSide,
+} from './fades';
 import {
   clipGainCommand,
   constrainAxis,
@@ -324,6 +353,23 @@ export interface TimelineCanvasOptions {
   readonly onRefuse?: (reason: GlueRefusal | 'selection') => void;
   // Where Ctrl+C and Ctrl+X put the clips (the window's clipboard when absent).
   readonly clipboard?: Clipboard;
+  // Whether the fade handles are drawn and hit (m5b-ui-fades: the engine lists
+  // features.clipFades and clip.set_fade); off when absent. What a gesture
+  // sends still goes through `allows` (the edit guard).
+  readonly fadesEnabled?: () => boolean;
+}
+
+// A clip's fades as the canvas draws and hits them (m5b-ui-fades; the e2e
+// reads it): its lengths, its handles' triangles (null with fades disabled)
+// and whether they are drawn (the clip selected or hovered).
+export interface FadeDrawn {
+  readonly clipId: string;
+  readonly position: string;
+  readonly length: string;
+  readonly fadeIn: ClipFade | null;
+  readonly fadeOut: ClipFade | null;
+  readonly handles: { readonly fadeIn: Box; readonly fadeOut: Box } | null;
+  readonly shown: boolean;
 }
 
 // The ghosts of the plan under review (m5b-ui-ghosts; model/review-store.ts):
@@ -441,6 +487,9 @@ export interface TimelineTestHooks {
   ghostOutline(): number | null;
   // The red clips of the last overlay frame (m5b-ui-recording).
   recordingClips(): RecordingDrawn[];
+  // Each clip's fades and handles (m5b-ui-fades), and the part a point hits.
+  fades(): FadeDrawn[];
+  hitAt(x: number, y: number): { clipId: string; part: HitPart } | null;
 }
 
 // Why the last split at the cursor sent nothing, or what it built, with the
@@ -456,9 +505,11 @@ export interface EditProbe {
 }
 
 interface Drag {
-  // A clip part (move, copy, resize, Alt-click), the volume control or the
-  // repeat handle of a selected clip (m5b-ui-edit-more).
-  readonly kind: 'clip' | 'gain' | 'repeat';
+  // A clip part (move, copy, resize, Alt-click), the volume control, the
+  // repeat handle of a selected clip (m5b-ui-edit-more) or a fade handle (m5b-ui-fades).
+  readonly kind: 'clip' | 'gain' | 'repeat' | 'fade';
+  // The side a fade drag changes.
+  readonly side?: FadeSide;
   readonly rect: ClipRect;
   readonly part: HitPart;
   readonly startX: number;
@@ -587,7 +638,15 @@ interface Palette {
   readonly aiTitleText: string;
   readonly aiInk: string;
   readonly aiLane: string;
+  // A fade's shade (m5b-ui-fades: draw()'s --bg-0-a550).
+  readonly fadeShade: string;
   track(trackId: string): string;
+}
+
+// A fade ghost to draw (m5b-ui-fades): its clip's box and the ghost.
+interface FadeGhostShape {
+  readonly box: Box & { readonly radius: number };
+  readonly ghost: Extract<Ghost, { kind: 'fade' }>;
 }
 
 export const DEFAULT_FRAMES_PER_PIXEL = 100;
@@ -742,6 +801,7 @@ export class TimelineCanvas {
     const move = (e: PointerEvent) => this.#pointerMove(e);
     const up = (e: PointerEvent) => this.#pointerUp(e);
     const cancel = () => this.#cancelDrag();
+    const dblclick = (e: MouseEvent) => this.#doubleClick(e);
     const leave = () => {
       this.#lastPointer = null;
       if (this.#hoverClipId !== null || this.#state.tool === 'split') {
@@ -754,6 +814,7 @@ export class TimelineCanvas {
     overlay.addEventListener('pointerup', up);
     overlay.addEventListener('pointercancel', cancel);
     overlay.addEventListener('pointerleave', leave);
+    overlay.addEventListener('dblclick', dblclick);
     // Non-passive, so preventDefault keeps the page from scrolling and Chromium from zooming.
     const wheel = (e: WheelEvent) => this.#wheel(e);
     this.#container.addEventListener('wheel', wheel, { passive: false });
@@ -763,6 +824,7 @@ export class TimelineCanvas {
       overlay.removeEventListener('pointerup', up);
       overlay.removeEventListener('pointercancel', cancel);
       overlay.removeEventListener('pointerleave', leave);
+      overlay.removeEventListener('dblclick', dblclick);
       this.#container.removeEventListener('wheel', wheel);
     });
     if (typeof ResizeObserver !== 'undefined') {
@@ -1120,7 +1182,77 @@ export class TimelineCanvas {
       lastEdit: () => this.#lastEdit,
       ghosts: () => [...this.#ghosts],
       ghostOutline: () => this.#ghostOutline,
+      fades: () => {
+        const on = this.#fadesOn();
+        const selected = new Set(this.#state.selectedClipIds);
+        const box = (h: FadeHandle): Box => ({ x: h.x, y: h.y, width: h.width, height: h.height });
+        return this.#rects.map((r) => {
+          const handles = on ? fadeHandles(clipBox(r), r, this.#view.framesPerPixel) : null;
+          return {
+            clipId: r.clipId,
+            position: r.position,
+            length: r.length,
+            fadeIn: r.fadeIn ? { ...r.fadeIn } : null,
+            fadeOut: r.fadeOut ? { ...r.fadeOut } : null,
+            handles: handles ? { fadeIn: box(handles.fadeIn), fadeOut: box(handles.fadeOut) } : null,
+            shown: on && !this.#drag && (selected.has(r.clipId) || r.clipId === this.#hoverClipId),
+          };
+        });
+      },
+      hitAt: (x, y) => {
+        const hit = hitTest(this.#rects, x, y, { fades: this.#fadeHits() });
+        return hit ? { clipId: hit.rect.clipId, part: hit.part } : null;
+      },
     };
+  }
+
+  // The fade handles are drawn and hit (the engine lists the feature and the command).
+  #fadesOn(): boolean {
+    return this.#options.fadesEnabled?.() ?? false;
+  }
+
+  // ... and hit with the Object Selection tool only (10.11, 23).
+  #fadeHits(): boolean {
+    return this.#fadesOn() && this.#state.tool === 'select';
+  }
+
+  // A double-click on a fade handle or inside a fade's shaded area switches
+  // that side's curve, the same length (one clip.set_fade); nothing on a side
+  // without a fade (UI redesign 3.2; 10.11, 23).
+  #doubleClick(e: MouseEvent): void {
+    if (e.button !== 0 || !this.#fadeHits()) return;
+    const snapshot = this.#options.model.getSnapshot();
+    if (!snapshot) return;
+    const { x, y } = this.#point(e);
+    if (y < lanesTopOf(this.#view)) return;
+    const hit = hitTest(clipRects(snapshot, this.#view), x, y, { fades: true });
+    const side = fadeSideOf(hit?.part);
+    if (!hit || !side || !this.#allows('clip.set_fade')) return;
+    const clipId = hit.rect.clipId;
+    void this.#send(() => fadeCurveToggleCommand(snapshot, clipId, side));
+  }
+
+  // The frame a fade drag's end is at so far: the side's end at the press plus the pointer's travel.
+  #fadeEnd(drag: Drag): bigint {
+    const clip = drag.snapshot.entities[`clip:${drag.rect.clipId}`] as ClipEntity | undefined;
+    const position = BigInt(drag.rect.position);
+    const length = BigInt(drag.rect.length);
+    const side = drag.side ?? 'fadeIn';
+    const fade = BigInt(clip?.[side]?.length ?? '0');
+    const at = side === 'fadeIn' ? position + fade : position + length - fade;
+    return at + deltaFrames(drag.dx, this.#view);
+  }
+
+  // The length a held fade drag gives so far, or null for another drag.
+  #fadePreview(drag: Drag | null): { clip: ClipEntity; side: FadeSide; length: bigint; snapped: bigint | null } | null {
+    if (!drag || drag.kind !== 'fade' || !drag.side) return null;
+    const clip = drag.snapshot.entities[`clip:${drag.rect.clipId}`] as ClipEntity | undefined;
+    if (!clip || clip.schema !== 'siann.entity.clip.v1') return null;
+    const mods = toolModifiers(drag.flags, this.#platform());
+    const snap = this.#snapper(drag.snapshot, mods.noSnap, [clip.id]);
+    const end = this.#fadeEnd(drag);
+    const length = this.#moved(drag) ? fadeDragLength(clip, drag.side, end, snap) : BigInt(clip[drag.side]?.length ?? '0');
+    return { clip, side: drag.side, length, snapped: this.#snap.on && !mods.noSnap && this.#moved(drag) ? snap(end) : null };
   }
 
   // Scrolls by the least amount that shows the ghosts of `step` (1-based) as
@@ -1387,8 +1519,10 @@ export class TimelineCanvas {
     }
     const flags = this.#flags(e);
     const mods = toolModifiers(flags, this.#platform());
-    const found = hitTest(clipRects(snapshot, this.#view), x, y);
+    const found = hitTest(clipRects(snapshot, this.#view), x, y, { fades: this.#fadeHits() });
     const hit = found ? { rect: found.rect, part: found.part } : null;
+    // A fade's shaded area is the body for a press (its double-click is #doubleClick's).
+    if (hit && (hit.part === 'fadeInArea' || hit.part === 'fadeOutArea')) hit.part = 'body';
     // The original of a moved, trimmed or removed clip is a clip: it selects as before, and pins its step.
     const original = hit ? this.#ghostBoxes.find((b) => b.clipId === hit.rect.clipId) : undefined;
     if (original) this.#options.ghosts?.pin(original.step);
@@ -1442,6 +1576,16 @@ export class TimelineCanvas {
       return;
     }
     const clipId = hit.rect.clipId;
+    if (hit.part === 'fadeIn' || hit.part === 'fadeOut') {
+      // A fade handle (m5b-ui-fades): the drag changes this clip's side only,
+      // also with others selected; an unselected clip becomes the selection.
+      if (!selection.includes(clipId)) this.#select([clipId], clipId);
+      if (!this.#allows('clip.set_fade')) return;
+      this.#drag = { kind: 'fade', side: hit.part, rect: hit.rect, part: hit.part, startX: x, startY: y, snapshot, ids: [clipId], onClick: null, gain: 0, dx: 0, dy: 0, flags };
+      this.#capture(e);
+      this.#invalidateOverlay();
+      return;
+    }
     let ids: readonly string[];
     let onClick: readonly string[] | null = null;
     if (hit.part === 'gain') {
@@ -1517,7 +1661,7 @@ export class TimelineCanvas {
       this.#invalidateOverlay();
       return;
     }
-    const hit = y >= lanesTopOf(this.#view) ? hitTest(this.#rects, x, y) : null;
+    const hit = y >= lanesTopOf(this.#view) ? hitTest(this.#rects, x, y, { fades: this.#fadeHits() }) : null;
     const hover = hit?.rect.clipId ?? null;
     if (hover !== this.#hoverClipId || this.#state.tool === 'split') {
       this.#hoverClipId = hover;
@@ -1544,6 +1688,8 @@ export class TimelineCanvas {
       case null:
         return 'default';
       case 'body':
+      case 'fadeInArea':
+      case 'fadeOutArea':
         return alt ? 'copy' : 'grab';
       case 'gain':
         return 'ns-resize';
@@ -1611,6 +1757,15 @@ export class TimelineCanvas {
       if (!this.#moved(drag)) return;
       const gain = gainFromDrag(drag.gain, drag.dy, toolModifiers(drag.flags, this.#platform()).fine);
       void this.#send(() => clipGainCommand(snapshot, drag.rect.clipId, gain));
+      return;
+    }
+    if (drag.kind === 'fade') {
+      // One clip.set_fade on release; a click (no movement) sends nothing.
+      if (!this.#moved(drag) || !drag.side) return;
+      const side = drag.side;
+      const snap = this.#snapper(snapshot, toolModifiers(drag.flags, this.#platform()).noSnap, [drag.rect.clipId]);
+      const end = this.#fadeEnd(drag);
+      void this.#send(() => fadeDragCommand(snapshot, drag.rect.clipId, side, end, snap));
       return;
     }
     const plan = this.#plan(drag);
@@ -1880,6 +2035,7 @@ export class TimelineCanvas {
       aiTitleText: read('--ai-title'),
       aiInk: read('--ai-ink'),
       aiLane: read('--ai-a070'),
+      fadeShade: read('--bg-0-a550'),
       track: (trackId) => {
         let colour = tracks.get(trackId);
         if (colour === undefined) {
@@ -1938,7 +2094,7 @@ export class TimelineCanvas {
     ghostLanes.forEach((lane) => parts.push({ id: `lane-${lane.key}`, x: lane.x, y: lane.y, w: lane.width, h: lane.height }));
     const lanesOf = new Map<string, { top: number; height: number }>(order.map((id, i) => [id, { top: tops[i]!, height: laneHeightOf(id, view) }]));
     adds.forEach((g, i) => lanesOf.set(g.trackId, { top: ghostLanes[i]!.y, height: ghostLanes[i]!.height }));
-    const ghostDraw = snapshot ? this.#ghostShapes(ghosts, lanesOf, view, snapshot, parts) : { shapes: [], originals: new Map<string, number>(), outlined: new Set<string>(), removed: new Map<string, { step: number; mode?: 'solid' }>(), lanesRemoved: [] };
+    const ghostDraw = snapshot ? this.#ghostShapes(ghosts, lanesOf, view, snapshot, parts) : { shapes: [], originals: new Map<string, number>(), outlined: new Set<string>(), removed: new Map<string, { step: number; mode?: 'solid' }>(), lanesRemoved: [], fades: [] as FadeGhostShape[] };
     const masks: Array<Omit<SurfacePart, 'id'>> = [];
     this.#rects.forEach((rect, index) => {
       const box = clipBox(rect);
@@ -2021,6 +2177,7 @@ export class TimelineCanvas {
         if (removal !== undefined) this.#drawRemoved(ctx, clipBox(rect), removal.step, removal.mode, palette);
       }
       for (const shape of ghostDraw.shapes) this.#drawGhostShape(ctx, snapshot, shape, palette);
+      for (const shape of ghostDraw.fades) this.#drawFadeGhost(ctx, shape, palette);
       ctx.restore();
       ctx.globalAlpha = 1;
       if (this.#guidance) {
@@ -2147,6 +2304,11 @@ export class TimelineCanvas {
     ctx.fillStyle = tones.title;
     ctx.fillRect(strip.x, strip.y, strip.width, strip.height);
     const columns = this.#drawWaveform(ctx, snapshot, rect, box, tones, alpha);
+    // The fades (m5b-ui-fades): draw()'s shade and curve, at the real length.
+    for (const side of FADE_SIDES) {
+      const fade = rect[side];
+      if (fade) this.#drawFade(ctx, box, side, fadePx(fade.length, this.#view.framesPerPixel), fade.curve, palette);
+    }
     ctx.font = `${TOKENS['fw-strong']} ${TOKENS['fs-micro']} ${palette.font}`;
     ctx.textBaseline = 'middle';
     ctx.textAlign = 'left';
@@ -2171,9 +2333,45 @@ export class TimelineCanvas {
       ctx.beginPath();
       ctx.arc(handle.x, handle.y, handle.radius, 0, 2 * Math.PI);
       ctx.fill();
+      // draw()'s fade triangles at the fades' ends (m5b-ui-fades).
+      if (this.#fadesOn()) this.#drawFadeHandles(ctx, box, rect, palette);
     }
     ctx.restore();
     return columns;
+  }
+
+  // One side's fade as draw() draws it: the --bg-0-a550 shade between the
+  // curve and the top edge below the title strip, then the curve as a 1 px
+  // --select line, at `px` (the real length) on the real gain curve.
+  #drawFade(ctx: CanvasRenderingContext2D, box: Box, side: FadeSide, px: number, curve: FadeCurve, palette: Palette): void {
+    if (!(px > 0)) return;
+    const shade = fadeShadePoints(box, side, px, curve);
+    ctx.fillStyle = palette.fadeShade;
+    ctx.beginPath();
+    shade.forEach(([x, y], i) => (i === 0 ? ctx.moveTo(x, y) : ctx.lineTo(x, y)));
+    ctx.closePath();
+    ctx.fill();
+    ctx.strokeStyle = palette.select;
+    ctx.lineWidth = 1;
+    ctx.beginPath();
+    fadeCurvePoints(box, side, px, curve).forEach(([x, y], i) => (i === 0 ? ctx.moveTo(x, y) : ctx.lineTo(x, y)));
+    ctx.stroke();
+  }
+
+  // The two handles of a clip: draw()'s 8 x 6 px --select triangles, the fades'
+  // lengths given (a held drag's preview), else the clip's.
+  #drawFadeHandles(ctx: CanvasRenderingContext2D, box: Box, fades: { readonly fadeIn?: ClipFade; readonly fadeOut?: ClipFade }, palette: Palette): void {
+    const handles = fadeHandles(box, fades, this.#view.framesPerPixel);
+    ctx.fillStyle = palette.select;
+    for (const side of FADE_SIDES) {
+      const [a, b, c] = handles[side].points;
+      ctx.beginPath();
+      ctx.moveTo(a[0], a[1]);
+      ctx.lineTo(b[0], b[1]);
+      ctx.lineTo(c[0], c[1]);
+      ctx.closePath();
+      ctx.fill();
+    }
   }
 
   // Where each ghost of the frame goes (m5b-ui-ghosts): the shapes to draw
@@ -2187,6 +2385,7 @@ export class TimelineCanvas {
     const outlined = new Set<string>();
     const removed = new Map<string, { step: number; mode?: 'solid' }>();
     const lanesRemoved: Array<{ step: number; box: Box; mode?: 'solid' }> = [];
+    const fades: FadeGhostShape[] = [];
     const boxes: GhostBox[] = [];
     const rows: Array<{ step: number; top: number; height: number }> = [];
     const counts = new Map<string, number>();
@@ -2249,6 +2448,15 @@ export class TimelineCanvas {
           part('locator-band-ghost', band);
           break;
         }
+        case 'fade': {
+          // m5b-ui-fades (4.2): on the clip's box as the ticked steps before it leave it.
+          const lane = lanes.get(g.trackId);
+          if (!lane) break;
+          const box = ghostClipBox(lane.top, lane.height, g.position, g.length, view);
+          fades.push({ box, ghost: g });
+          boxes.push({ step: g.step, box, pure: false });
+          break;
+        }
         case 'gain':
         case 'pan':
         case 'mute':
@@ -2265,7 +2473,60 @@ export class TimelineCanvas {
     }
     this.#ghostBoxes = boxes;
     this.#ghostRows = rows;
-    return { shapes, originals, outlined, removed, lanesRemoved };
+    return { shapes, originals, outlined, removed, lanesRemoved, fades };
+  }
+
+  // A fade ghost (m5b-ui-fades; UI redesign 4.2, 4.3): each side the step
+  // changes, its proposed curve as a dashed --ai line at the proposed length
+  // and curve; a side set to 0 shows its current curve's shade cross-hatched
+  // in violet; the step's disc. While the proposal is heard (solid): the line
+  // unbroken and the removed side's shade the ghost body, unhatched.
+  #drawFadeGhost(ctx: CanvasRenderingContext2D, shape: FadeGhostShape, palette: Palette): void {
+    const { box, ghost } = shape;
+    const stroke = ghostStroke(ghost.mode);
+    const fpp = this.#view.framesPerPixel;
+    ctx.save();
+    ctx.beginPath();
+    ctx.roundRect(box.x, box.y, box.width, box.height, box.radius);
+    ctx.clip();
+    for (const side of FADE_SIDES) {
+      const before = ghost.before[side];
+      const after = ghost.after[side];
+      if (before?.length === after?.length && before?.curve === after?.curve) continue;
+      if (after) {
+        ctx.setLineDash([...stroke.dash]);
+        ctx.strokeStyle = palette.ai;
+        ctx.lineWidth = GHOST_OUTLINE_W;
+        ctx.beginPath();
+        fadeCurvePoints(box, side, fadePx(after.length, fpp), after.curve).forEach(([x, y], i) => (i === 0 ? ctx.moveTo(x, y) : ctx.lineTo(x, y)));
+        ctx.stroke();
+        ctx.setLineDash([]);
+      } else if (before) {
+        ctx.save();
+        ctx.beginPath();
+        fadeShadePoints(box, side, fadePx(before.length, fpp), before.curve).forEach(([x, y], i) => (i === 0 ? ctx.moveTo(x, y) : ctx.lineTo(x, y)));
+        ctx.closePath();
+        if (!stroke.hatch) {
+          ctx.fillStyle = palette.aiBody;
+          ctx.fill();
+        } else {
+          ctx.clip();
+          ctx.strokeStyle = palette.aiHatch;
+          ctx.lineWidth = GHOST_HATCH_WIDTH;
+          for (let k = -box.height; k < box.width + box.height; k += GHOST_HATCH_PITCH) {
+            ctx.beginPath();
+            ctx.moveTo(box.x + k, box.y + box.height);
+            ctx.lineTo(box.x + k + box.height, box.y);
+            ctx.moveTo(box.x + k, box.y);
+            ctx.lineTo(box.x + k + box.height, box.y + box.height);
+            ctx.stroke();
+          }
+        }
+        ctx.restore();
+      }
+    }
+    if (ghost.step > 0) this.#drawStepDisc(ctx, box, ghost.step, palette);
+    ctx.restore();
   }
 
   // A removed track's lane: the proposed lane's hatch, crossed, and its step
@@ -2497,7 +2758,7 @@ export class TimelineCanvas {
     const half = (box.height - CLIP_TITLE_HEIGHT) / 2 - WAVE_MARGIN;
     if (!(half > 0)) return [];
     const mid = box.y + CLIP_TITLE_HEIGHT + (box.height - CLIP_TITLE_HEIGHT) / 2;
-    const { columns } = waveformColumns(pyramid, {
+    const { columns: unfaded } = waveformColumns(pyramid, {
       sourceStart: Number(rect.sourceStart),
       length: Number(rect.length),
       framesPerPixel: this.#view.framesPerPixel,
@@ -2508,6 +2769,8 @@ export class TimelineCanvas {
       mid,
       half,
     });
+    // m5b-ui-fades: each column scaled by the fade gain at its frame.
+    const columns = fadeScaledColumns(unfaded, rect, this.#view.framesPerPixel) as WaveColumn[];
     ctx.globalAlpha = alpha * tones.waveOuterAlpha;
     ctx.fillStyle = tones.waveOuter;
     for (const c of columns) ctx.fillRect(c.x, mid - c.outerSpan.up, c.w, c.outerSpan.up + c.outerSpan.down);
@@ -2560,6 +2823,9 @@ export class TimelineCanvas {
     if (plan && (plan.kind === 'move' || plan.kind === 'copy' || plan.kind === 'trim') && plan.guide !== null) {
       this.#guideX = frameToX(plan.guide, view);
     }
+    // A held fade drag (m5b-ui-fades): its side at the length so far, and the snap guide at its end.
+    const fading = this.#fadePreview(drag);
+    if (fading?.snapped !== null && fading?.snapped !== undefined) this.#guideX = frameToX(fading.snapped, view);
     // The hovered (or pinned) step's ghosts, outlined (m5b-ui-ghosts).
     this.#ghostOutline = this.#options.ghosts?.outlineStep() ?? null;
     if (ctx && palette && this.#ghostOutline !== null) {
@@ -2599,6 +2865,23 @@ export class TimelineCanvas {
       ctx.globalAlpha = 1;
       ctx.fillStyle = palette.select;
       for (const rect of hovered) for (const corner of cornerHandles(clipBox(rect))) ctx.fillRect(corner.x, corner.y, corner.width, corner.height);
+      // The hovered clip's fade handles (m5b-ui-fades; the selected clips' are the content layer's).
+      if (this.#fadesOn()) for (const rect of hovered) this.#drawFadeHandles(ctx, clipBox(rect), rect, palette);
+      if (fading && drag) {
+        const rect = this.#rects.find((r) => r.clipId === drag.rect.clipId);
+        if (rect) {
+          const box = clipBox(rect);
+          const curve = fading.clip[fading.side]?.curve ?? 'linear';
+          const fades = { ...rect, [fading.side]: fading.length > 0n ? { length: fading.length.toString(), curve } : undefined };
+          ctx.save();
+          ctx.beginPath();
+          ctx.roundRect(box.x, box.y, box.width, box.height, box.radius);
+          ctx.clip();
+          this.#drawFade(ctx, box, fading.side, fadePx(fading.length, view.framesPerPixel), curve, palette);
+          ctx.restore();
+          this.#drawFadeHandles(ctx, box, fades, palette);
+        }
+      }
       for (const rect of gains) this.#drawGain(ctx, snapshot, rect, palette);
       if (drag?.kind === 'gain') this.#drawGain(ctx, snapshot, drag.rect, palette, gainFromDrag(drag.gain, drag.dy, toolModifiers(drag.flags, this.#platform()).fine));
       if (this.#guideX !== null) {
@@ -2791,9 +3074,15 @@ export class TimelineCanvas {
       return;
     }
     let text: string;
+    const fading = this.#fadePreview(drag);
     if (drag.kind === 'gain') {
       const gain = gainFromDrag(drag.gain, drag.dy, toolModifiers(drag.flags, this.#platform()).fine);
       text = `${formatDb(gain)}  (${formatDb(gain - drag.gain)})`;
+    } else if (fading) {
+      // A fade's length and its change in whole milliseconds, the same in every locale.
+      const rate = snapshot.root?.sampleRate ?? 48000;
+      const change = framesToMs(fading.length, rate) - framesToMs(fading.clip[fading.side]?.length ?? '0', rate);
+      text = `${formatMs(fading.length, rate)}  (${change < 0n ? '-' : '+'}${change < 0n ? -change : change} ms)`;
     } else {
       if (!plan || (plan.kind !== 'move' && plan.kind !== 'copy' && plan.kind !== 'trim')) {
         this.#hideTooltip();

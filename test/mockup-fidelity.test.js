@@ -1282,7 +1282,8 @@ test('every gate of an M5 feature is report, none is enforce, every rule has an 
   assert.deepEqual(Object.entries(MANIFEST.gates).filter(([, mode]) => mode === 'enforce'), [], 'no gate is enforce');
   for (const rule of MANIFEST.rules) assert.ok(rule.feature && rule.gate && FEATURES.has(rule.gate), `${rule.match.join(', ')} has an owner`);
   const holds = [...read('app', 'renderer', 'tokens.css').matchAll(/--hold-([a-z0-9-]+)-[wh]\s*:/g)].map((m) => m[1]);
-  assert.ok(holds.length > 10, `${holds.length} hold tokens`);
+  // The scanner finds them (they shrink as parts land: 8 after m5b-ui-fades).
+  assert.ok(holds.length > 0, `${holds.length} hold tokens`);
   for (const id of holds) assert.equal(MANIFEST.gates[ruleOf(id).gate], 'pending', `--hold-${id}: its part's gate is pending`);
 });
 
