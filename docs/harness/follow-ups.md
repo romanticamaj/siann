@@ -294,6 +294,12 @@ None of these blocks M5b; each has no owner yet unless it names one.
 15. Punch, pre-roll and count-in are in the Record button's options panel
     (10.11, 17). Toggles in the transport bar itself need a mockup and a token
     change: the maintainer's.
+16. The bus and send steps other than add and remove (`bus.set_gain`, `bus.set_pan`,
+    `bus.set_mute`, `bus.set_solo`, `bus.rename`, `bus.set_output`, `send.set_level`,
+    `send.set_pre`, `send.set_enabled`, `track.set_output`) get no ghost in M5b
+    (`m5b-ui-sends-buses`; UI redesign 4.2, 10.11, 24): they are read on the plan card.
+    A ghost cap on a bus fader, a ring on a send's switches and a dashed output
+    selector would draw them in place.
 
 ## Where tests run
 
