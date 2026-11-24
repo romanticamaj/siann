@@ -817,8 +817,12 @@ test('the Sends rack: a .slot per send with on, the bus name as the level, pre/p
   const [one, two] = strips(root);
   const rack = find(one!, byClass('ins'));
   // Two sends: every slot in the track's sends order, then one empty slot.
-  assert.deepEqual(elements(rack).map(sig), ['div.off.slot', 'div.slot', 'div.empty.slot']);
+  // A send slot carries .send-slot (shell.css keeps its level the room in the
+  // strip's 80 px), a pre-fader one .send-pre too; its tooltip names PRE or POST.
+  assert.deepEqual(elements(rack).map(sig), ['div.off.send-pre.send-slot.slot', 'div.send-slot.slot', 'div.empty.slot']);
   const [off, on, empty] = elements(rack);
+  assert.equal(off!.attrs.title, 'Delay · 0.0 dB · PRE');
+  assert.equal(on!.attrs.title, 'Verb · -6.0 dB · POST');
   assert.deepEqual(findAll(off!, (el) => el.tag === 'button').map((b) => b.attrs['data-testid']), ['send-on-snd_2', 'send-pre-snd_2', 'send-remove-snd_2']);
   assert.equal(find(off!, byAttr('data-testid', 'send-on-snd_2')).attrs['aria-pressed'], 'false');
   assert.equal(text(find(off!, byAttr('data-testid', 'send-pre-snd_2'))), 'PRE');
@@ -846,7 +850,7 @@ test('a send ghost: a dashed slot numbered by step in the sends rack; a removed 
     { kind: 'send-remove', step: 3, sendId: 'snd_1', trackId: 'trk_a', busId: 'bus_v', cascade: false },
   ];
   const rack = find(strips(renderBuses([{ ...kick(), sends: ['snd_1'] }], [verb()], sends, { racks: { shown: 'sends' }, ghosts }))[0]!, byClass('ins'));
-  assert.deepEqual(elements(rack).map(sig), ['div.ghost-removed.slot', 'div.ghost.slot', 'div.empty.slot']);
+  assert.deepEqual(elements(rack).map(sig), ['div.ghost-removed.send-slot.slot', 'div.ghost.slot', 'div.empty.slot']);
   const added = elements(rack)[1]!;
   assert.equal(text(find(added, byClass('stepn'))), '2');
   assert.equal(text(find(added, byClass('slot-name'))), 'Verb');

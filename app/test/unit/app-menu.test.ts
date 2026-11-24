@@ -189,6 +189,34 @@ test('Add Bus and Remove Bus are in the Studio menu with features.buses, Remove 
   assert.deepEqual(commands(noRemove.menus[1]!.items).map((c) => c.command), ['studio.setup', 'mixer.bus.add']);
 });
 
+// The edit guard (UI redesign 4.5 C5; 10.11, 24): while a proposal is heard
+// Add Bus and Remove Bus are disabled, the reason in their label (a native
+// menu item has no tooltip on Windows or Linux); the other items stay.
+test('while a proposal is heard Add Bus and Remove Bus are disabled with the reason in every locale', () => {
+  for (const locale of ['en', 'zh-Hant', 'zh-Hans'] as const) {
+    const t = translator(locale);
+    const reason = t('guard.structural');
+    const guarded = appMenuModel({ t, recent: RECENT, shell: true, can: capabilitySelector(FULL), busSelected: true, guard: reason });
+    const studioItems = (model: MenuModel) => model.menus.find((m) => m.id === 'studio')!.items.flatMap((i) => (i.type === 'command' ? [i] : []));
+    const items = studioItems(guarded);
+    assert.deepEqual(
+      items.map((i) => [i.command, i.label, i.enabled ?? true]),
+      [
+        ['studio.setup', t('menu.studioSetup'), true],
+        ['mixer.bus.add', t('menu.guarded', { label: t('menu.addBus'), reason }), false],
+        ['mixer.bus.remove', t('menu.guarded', { label: t('menu.removeBus'), reason }), false],
+      ],
+      locale,
+    );
+    assert.ok(items[1]!.label.includes(reason), `${locale}: the reason is in the label`);
+    // The File menu is not structural and stays as it is.
+    assert.deepEqual(guarded.menus[0], appMenuModel({ t, recent: RECENT, shell: true, can: capabilitySelector(FULL), busSelected: true }).menus[0], locale);
+    // With no proposal heard, nothing is guarded.
+    const free = appMenuModel({ t, recent: RECENT, shell: true, can: capabilitySelector(FULL), busSelected: true, guard: null });
+    assert.deepEqual(studioItems(free).map((i) => [i.label, i.enabled ?? true]), [[t('menu.studioSetup'), true], [t('menu.addBus'), true], [t('menu.removeBus'), true]], locale);
+  }
+});
+
 test('the shell keeps a disabled item disabled and sends nothing for it', () => {
   const m = appMenuModel({ t: translator('en'), recent: RECENT, shell: true, can: capabilitySelector(FULL) });
   const parsed = parseMenuModel(JSON.parse(JSON.stringify(m)));

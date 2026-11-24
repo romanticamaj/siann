@@ -27,6 +27,8 @@ import type { Ghost } from '../../src/renderer/plans/ghosts';
 import { HeardContext } from '../../src/renderer/plans/heard-context';
 import { CapabilitiesContext } from '../../src/renderer/shell/Capable';
 import { Toolbar } from '../../src/renderer/timeline/Toolbar';
+import { BusSelection } from '../../src/renderer/mixer/bus-selection';
+import { bus, busSnapshot, send } from './support/buses';
 import { byAttr, find, parse, type Element } from './support/mockup';
 import { snapshotOf, track } from './support/timeline';
 
@@ -187,4 +189,69 @@ test('a heard proposal\'s insert ghosts and bypass ring carry the solid mode', (
     assert.equal(find(render('solid'), byAttr('data-testid', id)).attrs['data-ghost-mode'], 'solid', id);
     assert.ok(!('data-ghost-mode' in find(render(undefined), byAttr('data-testid', id)).attrs), id);
   }
+});
+
+// ---- The buses and sends of m5b-ui-sends-buses under the guard (UI redesign
+// 4.5 C5; 10.11, 24): a bus strip's M, S, pan and rename, the output
+// selectors, a send's on, PRE / POST and Remove and the empty send slot are
+// disabled with the reason while a branch is heard; the bus pan knob stays in
+// the DOM, aria-disabled with the reason as its tooltip (it is not the empty
+// box of a part the engine cannot show, spec 3.0). The bus fader and the send
+// level are gestures and stay.
+
+function busMixer(heard: string | null, shown: 'routing' | 'sends'): Element {
+  const snap = busSnapshot([{ ...bus('bus_v', 'Verb'), pan: -2500 }], [send('snd_1', 'trk_a', 'bus_v')], [{ ...track('trk_a'), name: 'A', sends: ['snd_1'] }]);
+  const model = {
+    getSnapshot: () => snap,
+    getView: () => ({ snapshot: snap, gesture: null, overlaid: null }),
+    select: (ref: string) => (snap.entities as Record<string, unknown>)[ref],
+    subscribe: () => () => undefined,
+  };
+  const client = { model, getState: () => ({ status: 'connected', legend: null }), subscribe: () => () => undefined, execute: async () => undefined } as unknown as SessionClient;
+  return within(heard, <Mixer client={client} gestures={gestures} realtime={realtime} racks={{ shown }} busSelection={new BusSelection()} />);
+}
+
+// The text of an svg's <title> child (its tooltip), or null.
+function svgTitle(el: Element): string | null {
+  const title = el.children.find((c): c is Element => typeof c !== 'string' && c.tag === 'title');
+  return title ? title.children.join('') : null;
+}
+
+test('a bus strip\'s M, S, pan and name, the output selectors and a send\'s buttons are held with the reason while a branch is heard', () => {
+  for (const shown of ['routing', 'sends'] as const) {
+    const heard = busMixer('p1', shown);
+    for (const id of ['mute-bus_v', 'solo-bus_v']) {
+      const button = find(heard, byAttr('data-testid', id));
+      assert.ok('disabled' in button.attrs, id);
+      assert.equal(button.attrs.title, REASON, id);
+    }
+    // The pan knob is there, disabled with the reason, its value shown.
+    const knob = find(heard, byAttr('data-testid', 'pan-bus_v'));
+    assert.equal(knob.tag, 'svg');
+    assert.equal(knob.attrs['aria-disabled'], 'true');
+    assert.equal(svgTitle(knob), REASON);
+    assert.equal(find(heard, byAttr('data-testid', 'pan-value-bus_v')).children.join(''), 'L25');
+    assert.equal(find(heard, byAttr('data-testid', 'strip-name-bus_v')).attrs.title, REASON);
+    // The bus fader is a gesture and stays.
+    const fader = find(heard, byAttr('data-testid', 'fader-bus_v'));
+    assert.ok(!('aria-disabled' in fader.attrs) && !('disabled' in fader.attrs));
+    // With main heard the knob is a live slider, with no reason.
+    const free = find(busMixer('main', shown), byAttr('data-testid', 'pan-bus_v'));
+    assert.ok(!('aria-disabled' in free.attrs));
+    assert.equal(svgTitle(free), null);
+  }
+  const routing = busMixer('p1', 'routing');
+  for (const id of ['output-trk_a', 'output-bus_v']) assert.ok('disabled' in find(routing, byAttr('data-testid', id)).attrs, id);
+  const sends = busMixer('p1', 'sends');
+  for (const id of ['send-on-snd_1', 'send-pre-snd_1', 'send-remove-snd_1']) {
+    const button = find(sends, byAttr('data-testid', id));
+    assert.ok('disabled' in button.attrs, id);
+    assert.equal(button.attrs.title, REASON, id);
+  }
+  assert.ok(!('aria-disabled' in find(sends, byAttr('data-testid', 'send-level-snd_1')).attrs), 'the send level is a gesture and stays');
+  const empty = find(sends, byAttr('data-testid', 'send-add-trk_a-1'));
+  assert.equal(empty.attrs['aria-disabled'], 'true');
+  assert.equal(empty.attrs.title, REASON);
+  const free = busMixer('main', 'sends');
+  for (const id of ['send-on-snd_1', 'send-pre-snd_1', 'send-remove-snd_1']) assert.ok(!('disabled' in find(free, byAttr('data-testid', id)).attrs), id);
 });

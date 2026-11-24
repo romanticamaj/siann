@@ -20,6 +20,19 @@
 // (e) Every data-part id of the feature is in the window; with capabilities
 //     without features.buses and features.sends (capabilities-reduced.json,
 //     the override inserts.spec.ts uses) none of it is in the DOM.
+// (f) The strip's send slot: the level (the bus name) keeps its room at rest,
+//     hovered and focused; a drag, Ctrl-click and a typed value on it; PRE /
+//     POST by the keyboard; on and Remove, one revision each.
+// (g) A bus strip's fader is one gesture on bus:<id> (gain) and one
+//     revision; M and S one revision each; Escape clears the bus selection;
+//     the Inspector's Out row routes the track to the bus.
+// (h) SIANN_TEST_PLUGIN_CLAP: an insert on a bus strip is one
+//     plugin.instantiate with its busId.
+// (i) While a proposal is heard (the edit guard, 4.5 C5): Add Bus and Remove
+//     Bus in the menu, the bus strip's M, S, pan and rename, the send slots'
+//     buttons and empty slot, the output selectors and the Out row are
+//     disabled with the reason (the pan knob stays, aria-disabled); the bus
+//     fader and the send level go onto the branch.
 //
 // Waits are Playwright condition waits; none sleeps.
 
@@ -28,8 +41,12 @@ import * as fs from 'node:fs';
 import * as os from 'node:os';
 import * as path from 'node:path';
 
+import { translator } from '../../src/renderer/i18n/t';
 import { engineClient, type EngineClient } from './support/engine-client';
-import { APP_DIR, launchApp, seedBundle } from './support/seed';
+import { agentFor, APP_DIR, launchApp, seedBundle, selectPlan } from './support/seed';
+
+const t = translator('en');
+const PLUGIN = process.env.SIANN_TEST_PLUGIN_CLAP;
 
 const KEYS = 'trk_keys';
 const PAD = 'trk_pad';
@@ -153,11 +170,9 @@ test('(a) a bus from the menu, a post-fader send, the bus meter following the fa
   });
   await expect.poll(() => meterPeak(`bus:${bus}`), { timeout: 10_000 }).toBeLessThan(0.05);
 
-  // Pre-fader: the bus reads the track before its fader again.
-  await oneRevision(async () => {
-    await page.getByTestId(`send-${sendId}`).hover();
-    await page.getByTestId(`send-pre-${sendId}`).click();
-  });
+  // Pre-fader (the Inspector's slot, which always shows the switch): the bus reads the track before its fader again.
+  await page.getByTestId(`track-header-${KEYS}`).click();
+  await oneRevision(() => page.getByTestId(`islot-send-pre-${sendId}`).click());
   await expect(page.getByTestId(`send-pre-${sendId}`)).toHaveText('PRE');
   await expect(page.getByTestId(`send-pre-${sendId}`)).toHaveAttribute('aria-pressed', 'true');
   await expect.poll(() => meterPeak(`bus:${bus}`), { timeout: 10_000 }).toBeGreaterThan(0.2);
@@ -332,4 +347,227 @@ test('(e) every data-part id of the feature is in the window; reduced capabiliti
   const hold = page.locator('.inspector-hold.routing');
   await expect(hold).toHaveCount(1);
   expect(await hold.evaluate((el) => el.getBoundingClientRect().height)).toBe(91);
+});
+
+// A send in the strip's 80 px slot, en and zh-TW measured by i18n-fit.spec.ts:
+// the level (the bus name) keeps the room at rest, hovered and focused, with
+// on and Remove beside it; PRE / POST shows there only while it holds the
+// keyboard focus.
+async function levelWidth(sendId: string): Promise<number> {
+  return page.getByTestId(`send-level-${sendId}`).evaluate((el) => el.getBoundingClientRect().width);
+}
+
+test('(f) the strip\'s send slot: the level keeps its room; drag, Ctrl-click and a typed value; on, PRE by the keyboard, and Remove', async () => {
+  await launch();
+  const bus = await addBusFromMenu();
+  const sendId = await addSend(KEYS, 'Bus 1');
+  const slot = page.getByTestId(`send-${sendId}`);
+  const level = page.getByTestId(`send-level-${sendId}`);
+  await page.mouse.move(1, 1);
+  const slotWidth = await slot.evaluate((el) => el.getBoundingClientRect().width);
+  const rest = await levelWidth(sendId);
+  expect(rest, 'the level at rest').toBeGreaterThan(slotWidth / 2);
+  await expect(level).toHaveText('Bus 1');
+  // Hovered: on and Remove show, PRE / POST does not, and the level keeps more than a third of the slot.
+  await slot.hover();
+  await expect(page.getByTestId(`send-remove-${sendId}`)).toBeVisible();
+  const hovered = await levelWidth(sendId);
+  expect(hovered, 'the level hovered').toBeGreaterThan(slotWidth / 3);
+  expect(await page.getByTestId(`send-pre-${sendId}`).evaluate((el) => el.getBoundingClientRect().width)).toBe(0);
+  for (const id of [`send-on-${sendId}`, `send-remove-${sendId}`]) expect(await page.getByTestId(id).evaluate((el) => el.getBoundingClientRect().width), id).toBeGreaterThan(0);
+  // A drag on the strip's level is one revision.
+  await oneRevision(() => dragBy(level, -40));
+  expect((await entity(`send:${sendId}`))!.levelMilliDb as number).toBeLessThan(0);
+  // Ctrl-click: 0 dB.
+  await oneRevision(async () => {
+    await page.keyboard.down('Control');
+    await level.click();
+    await page.keyboard.up('Control');
+  });
+  expect((await entity(`send:${sendId}`))!.levelMilliDb).toBe(0);
+  // A double-click types a value.
+  await oneRevision(async () => {
+    await level.dblclick();
+    await page.getByTestId(`send-level-input-${sendId}`).fill('-12');
+    await page.getByTestId(`send-level-input-${sendId}`).press('Enter');
+  });
+  expect((await entity(`send:${sendId}`))!.levelMilliDb).toBe(-12000);
+  // Focused (the keyboard): the level keeps its room too.
+  await page.mouse.move(1, 1);
+  await level.focus();
+  expect(await levelWidth(sendId), 'the level focused').toBeGreaterThan(slotWidth / 3);
+  // PRE / POST by the keyboard: it shows while focused, and Enter switches it (Space is the transport's).
+  await page.keyboard.press('Tab');
+  await expect(page.getByTestId(`send-pre-${sendId}`)).toBeFocused();
+  expect(await page.getByTestId(`send-pre-${sendId}`).evaluate((el) => el.getBoundingClientRect().width)).toBeGreaterThan(0);
+  await oneRevision(() => page.keyboard.press('Enter'));
+  expect((await entity(`send:${sendId}`))!.pre).toBe(true);
+  // A pre-fader send at rest: PRE does not take the level's room; the name is in italics and the tooltip says PRE.
+  await page.mouse.move(1, 1);
+  await page.getByTestId('mixer').click({ position: { x: 2, y: 2 } });
+  expect(await levelWidth(sendId), 'a pre send at rest').toBeGreaterThan(slotWidth / 2);
+  expect(await level.evaluate((el) => getComputedStyle(el).fontStyle)).toBe('italic');
+  await expect(slot).toHaveAttribute('title', /PRE$/);
+  // The on button: one send.set_enabled.
+  await oneRevision(async () => {
+    await slot.hover();
+    await page.getByTestId(`send-on-${sendId}`).click();
+  });
+  expect((await entity(`send:${sendId}`))!.enabled).toBe(false);
+  await expect(page.getByTestId(`send-on-${sendId}`)).toHaveAttribute('aria-pressed', 'false');
+  // Remove: one send.remove; the rack has two empty slots again.
+  await oneRevision(async () => {
+    await slot.hover();
+    await page.getByTestId(`send-remove-${sendId}`).click();
+  });
+  expect(await entity(`send:${sendId}`)).toBeNull();
+  await expect(page.getByTestId(`mixer-strip-${KEYS}`).locator('.ins .slot.empty')).toHaveCount(2);
+  expect((await entity(`bus:${bus}`))?.name).toBe('Bus 1');
+});
+
+test('(g) a bus strip: the fader is one bus gain gesture, M and S one revision each; Escape clears the selection; the Inspector\'s Out row routes the track', async () => {
+  await launch();
+  const bus = await addBusFromMenu();
+  // The fader: one gesture on bus:<id> (gain), one revision.
+  const cap = page.getByTestId(`fader-${bus}`).locator('[data-part-of="cap"]');
+  const box = (await cap.boundingBox())!;
+  await oneRevision(async () => {
+    await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2);
+    await page.mouse.down();
+    await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2 + 40, { steps: 5 });
+    await page.mouse.up();
+  });
+  expect((await entity(`bus:${bus}`))!.gainMilliDb as number).toBeLessThan(0);
+  const sent = await page.evaluate(() => (window as unknown as { __siannClient: { sent(): Array<{ method: string; params: Record<string, unknown> }> } }).__siannClient.sent());
+  const begins = sent.filter((r) => r.method === 'gesture.begin' && (r.params.target as { ref: string }).ref === `bus:${bus}`);
+  expect(begins.map((r) => (r.params.target as { param: string }).param)).toEqual(['gain']);
+  // M and S: one revision each.
+  for (const [id, field] of [[`mute-${bus}`, 'mute'], [`solo-${bus}`, 'solo']] as const) {
+    await oneRevision(() => page.getByTestId(id).click());
+    await expect(page.getByTestId(id)).toHaveAttribute('aria-pressed', 'true');
+    expect((await entity(`bus:${bus}`))![field], field).toBe(true);
+  }
+  await expect(busStrip(bus)).toHaveClass(/\bmuted\b/);
+  // A press outside the controls selects the bus; Escape in the lower zone clears it.
+  await busStrip(bus).locator('.scale').click();
+  await expect(busStrip(bus)).toHaveAttribute('aria-selected', 'true');
+  await page.keyboard.press('Escape');
+  await expect(busStrip(bus)).toHaveAttribute('aria-selected', 'false');
+  await expect(busStrip(bus)).not.toHaveClass(/\bsel\b/);
+  // The Inspector's Out row: Keys to the bus, one track.set_output.
+  await page.getByTestId(`track-header-${KEYS}`).click();
+  await expect(page.getByTestId('inspector-output-name')).toHaveText('Master');
+  await oneRevision(() => page.getByTestId('inspector-output').selectOption(bus));
+  expect((await entity(`track:${KEYS}`))?.output).toEqual({ busId: bus });
+  await expect(page.getByTestId('inspector-output-name')).toHaveText('Bus 1');
+});
+
+test('(h) an insert on a bus strip is one plugin.instantiate with its busId', async () => {
+  test.skip(!PLUGIN, 'set SIANN_TEST_PLUGIN_CLAP (the test plugin, as inserts.spec.ts)');
+  await launch({ SIANN_ENGINE_TEST_ARGS: JSON.stringify(['--device', 'fake', '--plugin-dir', path.dirname(PLUGIN!)]) });
+  const bus = await addBusFromMenu();
+  const registry = (await client!.call('plugin.registry')) as { plugins: Array<{ format: string; path: string; approved: boolean }> };
+  const install = registry.plugins.find((p) => path.basename(p.path) === path.basename(PLUGIN!))!;
+  expect(install, 'the test plugin is registered').toBeTruthy();
+  if (!install.approved) await client!.call('plugin.approve', { format: install.format, path: install.path, approved: true });
+  await expect(rackSwitch('inserts')).toHaveAttribute('aria-pressed', 'true');
+  await oneRevision(async () => {
+    await busStrip(bus).locator('.ins .slot.empty').first().click();
+    const picker = page.getByTestId('plugin-picker');
+    await expect(picker).toBeVisible();
+    await picker.getByTestId('picker-search').fill(path.basename(PLUGIN!, '.clap'));
+    await picker.locator(`[data-testid="picker-install"][data-file="${path.basename(PLUGIN!)}"]`).getByTestId('picker-choose').click();
+  });
+  const inserts = ((await entity(`bus:${bus}`))?.inserts as string[] | undefined) ?? [];
+  expect(inserts).toHaveLength(1);
+  await expect(busStrip(bus).locator('.ins .slot:not(.empty) .slot-name')).toHaveText('SIANN Test Plugin');
+  const sent = await page.evaluate(() => (window as unknown as { __siannClient: { sent(): Array<{ method: string; params: Record<string, unknown> }> } }).__siannClient.sent());
+  const instantiated = sent.filter((r) => r.method === 'plugin.instantiate');
+  expect(instantiated.map((r) => [r.params.busId, r.params.trackId])).toEqual([[bus, undefined]]);
+});
+
+test('(i) while a proposal is heard every bus, send and routing control is disabled with the reason, the menu items too; the bus fader and the send level go onto the branch', async () => {
+  await launch();
+  const bus = await addBusFromMenu();
+  const sendId = await addSend(KEYS, 'Bus 1');
+  const watcher = await engineClient(page, { events: true });
+  try {
+    const agent = await agentFor(app!);
+    const hash = (await agent.tool('submit_plan', { steps: [{ op: 'track.set_gain', trackId: PAD, gainMilliDb: -6000 }] })).hash as string;
+    await selectPlan(page, hash);
+    await page.getByTestId('plan-audition').click();
+    await expect(page.getByTestId('shell')).toHaveAttribute('data-hearing', 'proposal');
+    const mainHead = (await watcher.call('session.inspect')).revision as string;
+    const reason = t('guard.structural');
+    const guarded = async (id: string) => {
+      await expect(page.getByTestId(id), id).toBeDisabled();
+      await expect(page.getByTestId(id), id).toHaveAttribute('title', reason);
+    };
+    // The menu: Add Bus and Remove Bus disabled, the reason in their label.
+    await busStrip(bus).locator('.scale').click();
+    await expect(busStrip(bus)).toHaveAttribute('aria-selected', 'true');
+    const items = () => app!.evaluate(({ Menu }) => ['mixer.bus.add', 'mixer.bus.remove'].map((id) => { const item = Menu.getApplicationMenu()?.getMenuItemById(id); return item ? [item.enabled, item.label] : null; }));
+    await expect.poll(items).toEqual([[false, t('menu.guarded', { label: t('menu.addBus'), reason })], [false, t('menu.guarded', { label: t('menu.removeBus'), reason })]]);
+    // The bus strip: M, S and the name tag; the pan knob stays, aria-disabled with the reason.
+    await guarded(`mute-${bus}`);
+    await guarded(`solo-${bus}`);
+    await expect(page.getByTestId(`strip-name-${bus}`)).toHaveAttribute('title', reason);
+    await page.getByTestId(`strip-name-${bus}`).dblclick();
+    await expect(page.getByTestId(`bus-rename-${bus}`)).toHaveCount(0);
+    const knob = page.getByTestId(`pan-${bus}`);
+    await expect(knob).toBeVisible();
+    await expect(knob).toHaveAttribute('aria-disabled', 'true');
+    await expect(knob.locator('title')).toHaveText(reason);
+    const knobBox = (await knob.boundingBox())!;
+    await page.mouse.move(knobBox.x + knobBox.width / 2, knobBox.y + knobBox.height / 2);
+    await page.mouse.down();
+    await page.mouse.move(knobBox.x + knobBox.width / 2 - 30, knobBox.y + knobBox.height / 2, { steps: 5 });
+    await page.mouse.up();
+    // The Sends rack: on, PRE / POST and Remove; the empty slot.
+    await expect(rackSwitch('sends')).toHaveAttribute('aria-pressed', 'true');
+    await page.getByTestId(`send-${sendId}`).hover();
+    for (const id of [`send-on-${sendId}`, `send-pre-${sendId}`, `send-remove-${sendId}`]) await guarded(id);
+    const empty = page.getByTestId(`mixer-strip-${PAD}`).locator('.ins .slot.empty').first();
+    await expect(empty).toHaveAttribute('aria-disabled', 'true');
+    await expect(empty).toHaveAttribute('title', reason);
+    await empty.click({ force: true });
+    await expect(page.getByTestId('bus-picker')).toHaveCount(0);
+    // The Inspector: its send's buttons and its Out row.
+    await page.getByTestId(`track-header-${KEYS}`).click();
+    for (const id of [`islot-send-on-${sendId}`, `islot-send-pre-${sendId}`, `islot-send-remove-${sendId}`]) await guarded(id);
+    await expect(page.getByTestId('inspector-output')).toBeDisabled();
+    await expect(page.getByTestId('inspector-output')).toHaveAttribute('title', reason);
+    // The Routing rack: every output selector.
+    await rackSwitch('routing').click();
+    for (const id of [`output-${KEYS}`, `output-${PAD}`, `output-${bus}`]) await expect(page.getByTestId(id), id).toBeDisabled();
+    await expect(page.getByTestId(`mixer-strip-${KEYS}`).locator('.ins .slot')).toHaveAttribute('title', reason);
+    // Nothing reached main.
+    expect((await watcher.call('session.inspect')).revision).toBe(mainHead);
+    expect((await entity(`bus:${bus}`))!.pan).toBe(0);
+
+    // The bus fader and the send level are gestures: they go onto the branch, main's head stays.
+    const from = watcher.events.length;
+    const cap = page.getByTestId(`fader-${bus}`).locator('[data-part-of="cap"]');
+    const capBox = (await cap.boundingBox())!;
+    await page.mouse.move(capBox.x + capBox.width / 2, capBox.y + capBox.height / 2);
+    await page.mouse.down();
+    await page.mouse.move(capBox.x + capBox.width / 2, capBox.y + capBox.height / 2 + 30, { steps: 5 });
+    await page.mouse.up();
+    await expect.poll(() => watcher.events.slice(from).filter((e) => e.type === 'proposal.changed').length).toBeGreaterThan(0);
+    const level = page.locator('[data-part="inspector-sends"]').getByTestId(`islot-send-level-${sendId}`);
+    const second = watcher.events.length;
+    await dragBy(level, -40);
+    await expect.poll(() => watcher.events.slice(second).filter((e) => e.type === 'proposal.changed').length).toBeGreaterThan(0);
+    expect((await watcher.call('session.inspect')).revision).toBe(mainHead);
+
+    // With main heard everything is enabled again.
+    await watcher.call('audition.hear', { side: 'main' });
+    await expect(page.getByTestId('shell')).not.toHaveAttribute('data-hearing', 'proposal');
+    for (const id of [`mute-${bus}`, `islot-send-on-${sendId}`, `output-${bus}`, 'inspector-output']) await expect(page.getByTestId(id), id).toBeEnabled();
+    await expect(page.getByTestId(`pan-${bus}`)).not.toHaveAttribute('aria-disabled', 'true');
+    // Remove Bus is disabled again for its own reason: the track's selection cleared the bus's.
+    await expect.poll(items).toEqual([[true, t('menu.addBus')], [false, t('menu.removeBus')]]);
+  } finally {
+    watcher.close();
+  }
 });

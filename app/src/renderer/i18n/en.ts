@@ -662,6 +662,7 @@ export const en = {
   'bus.default': 'Bus {n}',
   'menu.addBus': 'Add Bus',
   'menu.removeBus': 'Remove Bus',
+  'menu.guarded': '{label} ({reason})',
   'racks.routing': 'Routing',
   'racks.sends': 'Sends',
   'inspector.routing': 'Routing',

@@ -203,6 +203,15 @@ test('New, Open and Save are Cubase\'s keys; Studio Setup and Open Recent are un
   assert.ok(!(COMMAND_IDS as readonly string[]).includes('project.openRecent.11'), 'ten recent entries, no more');
 });
 
+// m5b-ui-sends-buses (UI redesign 3.4; 10.11, 24): Escape with the lower zone
+// focused clears the bus selection. A press on a bus strip leaves the focus
+// on the zone's frame (the strip is not focusable), so the key is the lower
+// zone's edit.cancel, as the project zone's Escape is, and not a handler on
+// the MixConsole's own element.
+test('Escape is the lower zone\'s edit.cancel, as the project zone\'s', () => {
+  assert.deepEqual(CUBASE_PRESET.filter((b) => b.commandId === 'edit.cancel').map((b) => [b.chord, b.scope]), [['Escape', 'project'], ['Escape', 'lower']]);
+});
+
 // m5b-ui-edit-more (UI redesign spec 3.2, 3.6): Glue and Erase on 4 and 5,
 // cut, copy and paste at the cursor and at the origin, Repeat, the nudges of
 // the key-command table, Select None; edit.glue has no key, as in Cubase.

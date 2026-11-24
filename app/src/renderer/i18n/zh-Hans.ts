@@ -611,6 +611,7 @@ export const zhHans: Catalog = {
   'bus.default': '总线 {n}',
   'menu.addBus': '添加总线',
   'menu.removeBus': '移除总线',
+  'menu.guarded': '{label}（{reason}）',
   'racks.routing': '路由',
   'racks.sends': '发送',
   'inspector.routing': '路由',

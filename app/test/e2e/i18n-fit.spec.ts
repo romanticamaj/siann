@@ -485,8 +485,9 @@ test('the rack switch, the slots, the Inspector\'s Inserts section and the picke
 // selector's slot, the Inspector's Routing and Sends sections, the bus
 // picker and the Add Bus and Remove Bus menu labels fit in en, zh-TW and
 // zh-CN at 1440x900. The bus name in a slot ellipsises inside its box by
-// design, so the check is on the controls.
-const SENDS = '[data-part=mixer-racks] button, .slot:hover button, .slot.empty, .islot button, .islot.empty, [data-part=inspector-routing] .irow > span:first-child, [data-part=inspector-sends] .sec-h, [data-part=inspector-routing] .sec-h';
+// design, so the check is on the controls, and on the room the name keeps
+// in a strip's slot (a strip's PRE / POST is measured focused, where it shows).
+const SENDS = '[data-part=mixer-racks] button, .slot:hover button:not(.pre), .slot.empty, .islot button, .islot.empty, [data-part=inspector-routing] .irow > span:first-child, [data-part=inspector-sends] .sec-h, [data-part=inspector-routing] .sec-h';
 const ROUTING = '.ins .slot, [data-part=inspector-routing] .pick';
 
 test('the rack switches, the send slots, the output selector, the Routing and Sends sections and the bus picker fit in every locale', async () => {
@@ -500,6 +501,8 @@ test('the rack switches, the send slots, the output selector, the Routing and Se
     commands: [
       { op: 'bus.add', busId: 'bus_fit', name: 'Verb' },
       { op: 'send.add', sendId: 'snd_fit', trackId: 'trk_keys', busId: 'bus_fit', levelMilliDb: 0, pre: false },
+      { op: 'bus.add', busId: 'bus_fit_pre', name: 'Delay' },
+      { op: 'send.add', sendId: 'snd_fit_pre', trackId: 'trk_bass', busId: 'bus_fit_pre', levelMilliDb: 0, pre: true },
     ],
   });
   engine.close();
@@ -526,9 +529,28 @@ test('the rack switches, the send slots, the output selector, the Routing and Se
     }, selector);
     // The Sends rack, its slot hovered (its buttons show then).
     await page.locator('[data-part="mixer-racks"]').getByTestId('rack-sends').click();
+    // The level (the bus name) keeps its room in the strip's 80 px slot: more
+    // than half of it at rest, a pre-fader send's too, and more than a third
+    // hovered, beside on and Remove (fix round 1).
+    const room = (id: string) => page.getByTestId(`send-${id}`).evaluate((slot) => {
+      const level = slot.querySelector('.send-level')!;
+      return level.getBoundingClientRect().width / slot.getBoundingClientRect().width;
+    });
+    await page.mouse.move(1, 1);
+    for (const id of ['snd_fit', 'snd_fit_pre']) {
+      const share = await room(id);
+      if (share <= 0.5) failures.push(`${locale}: ${id} at rest, the level has ${share.toFixed(2)} of the slot`);
+      await page.getByTestId(`send-${id}`).hover();
+      const hovered = await room(id);
+      if (hovered <= 1 / 3) failures.push(`${locale}: ${id} hovered, the level has ${hovered.toFixed(2)} of the slot`);
+    }
     await page.getByTestId('send-snd_fit').hover();
     await expect(page.getByTestId('send-snd_fit').locator('button')).toHaveCount(3);
     for (const entry of await measure(SENDS)) failures.push(`${locale}: ${entry}`);
+    // A strip's PRE / POST shows while it holds the keyboard focus.
+    await page.getByTestId('send-pre-snd_fit').focus();
+    for (const entry of await measure('.ins > .slot:focus-within > button.pre')) failures.push(`${locale}: ${entry}`);
+    expect(await page.getByTestId('send-pre-snd_fit').evaluate((el) => el.getBoundingClientRect().width), `${locale}: PRE / POST focused`).toBeGreaterThan(0);
     // The bus picker of an empty slot.
     await page.getByTestId('mixer-strip-trk_bass').locator('.slot.empty').first().click();
     await expect(page.getByTestId('bus-picker')).toBeVisible();

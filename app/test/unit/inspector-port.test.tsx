@@ -743,7 +743,7 @@ test('the Sends section is sec(\'Sends\', body, count): a .islot per send with i
     const [mHead] = elements(mockup);
     assert.deepEqual(elements(head!).map(sig), elements(mHead!).map(sig));
     assert.equal(text(head!), text(mHead!).replace(/0$/, '2'), `${locale}: the title and the count`);
-    assert.deepEqual(elements(body!).map(sig), ['div.islot.off', 'div.islot', 'div.empty.islot']);
+    assert.deepEqual(elements(body!).map(sig), ['div.islot.off.send-pre.send-slot', 'div.islot.send-slot', 'div.empty.islot']);
     const [first, second, empty] = elements(body!);
     assert.equal(text(find(first!, byClass('islot-name'))), 'Delay', 'the track\'s sends order');
     assert.deepEqual(findAll(second!, (el) => el.tag === 'button').map((b) => b.attrs['data-testid']), ['islot-send-on-snd_1', 'islot-send-pre-snd_1', 'islot-send-remove-snd_1']);
@@ -779,7 +779,7 @@ test('a send ghost in the Inspector: a dashed slot numbered by its step; a remov
     { kind: 'send-remove', step: 5, sendId: 'snd_1', trackId: 'trk_a', busId: 'bus_v', cascade: true },
   ];
   const body = find(find(render([{ ...vox(), sends: ['snd_1'] }], { buses: [bus('bus_v', 'Verb')], sends: [send('snd_1', 'trk_a', 'bus_v')], ghosts }), byAttr('data-part', 'inspector-sends')), byClass('sec-b'));
-  assert.deepEqual(elements(body).map(sig), ['div.ghost-removed.islot', 'div.ghost.islot', 'div.empty.islot']);
+  assert.deepEqual(elements(body).map(sig), ['div.ghost-removed.islot.send-slot', 'div.ghost.islot', 'div.empty.islot']);
   assert.equal(text(find(elements(body)[1]!, byClass('stepn'))), '4');
   assert.equal(elements(body)[0]!.attrs['data-ghost'], '5');
 });

@@ -611,6 +611,7 @@ export const zhHant: Catalog = {
   'bus.default': '匯流排 {n}',
   'menu.addBus': '新增匯流排',
   'menu.removeBus': '移除匯流排',
+  'menu.guarded': '{label}（{reason}）',
   'racks.routing': '路由',
   'racks.sends': '傳送',
   'inspector.routing': '路由',
