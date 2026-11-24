@@ -197,6 +197,9 @@ test('two files dropped on a track import and land on consecutive tracks at the 
   await expect.poll(async () => (await jobResults()).length).toBe(3);
   expect((await jobResults()).at(-1)).toMatchObject({ existing: true });
   await expect(page.locator('[data-testid^="media-row-"]')).toHaveCount(2);
+  // The timeline's clips follow the clip count a frame later (as the poll above
+  // waits for the first two): wait for Alpha's clip before reading it.
+  await expect.poll(async () => (await clips()).some((c) => c.trackId === 'trk_a')).toBe(true);
   const third = (await clips()).find((c) => c.trackId === 'trk_a')!;
   expect(third.mediaId).toBe(placed[0]!.mediaId);
   expect(third.title).toBe('kick.wav');
