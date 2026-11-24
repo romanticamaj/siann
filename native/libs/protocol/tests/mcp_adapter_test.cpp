@@ -1092,6 +1092,44 @@ TEST_CASE("execute carries track.set_monitor; list_commands names it and no tool
     }
 }
 
+// m5b-engine-markers: markers need no tool of their own; execute (trusted) runs
+// marker.add, submit_plan (propose) carries a marker step, list_commands names them.
+TEST_CASE("execute runs marker.add, submit_plan carries a marker step; list_commands names them",
+          "[protocol][mcp][markers]") {
+    {
+        Fixture f(trusted());
+        Mcp mcp(f);
+        mcp.initialize();
+        const Value add = Value(Object{{"op", Value("marker.add")}, {"markerId", Value("mk_1")},
+                                       {"position", Value("48000")}, {"name", Value("Intro")}});
+        const Value executed = mcp.ok("execute", Value(Object{{"commands", Value(Array{add})}}));
+        CHECK(at(at(executed, "revision"), "diff").asArray().at(0).asString() == "marker:mk_1");
+        REQUIRE(f.head().document.marker("mk_1") != nullptr);
+        CHECK(f.head().document.marker("mk_1")->name == "Intro");
+    }
+    Fixture f;  // the default propose scope
+    Mcp mcp(f);
+    mcp.initialize();
+    const Value add = Value(Object{{"op", Value("marker.add")}, {"markerId", Value("mk_2")},
+                                   {"position", Value("0")}, {"length", Value("96000")}});
+    const Value plan = mcp.ok("submit_plan", Value(Object{{"steps", Value(Array{add})}}));
+    const auto& writeSet = at(plan, "writeSet").asArray();
+    REQUIRE(writeSet.size() == 1);
+    CHECK(at(writeSet[0], "type").asString() == "marker");
+    CHECK(at(writeSet[0], "id").asString() == "mk_2");
+    CHECK(at(writeSet[0], "hash").isNull());
+    CHECK(f.head().document.marker("mk_2") == nullptr);  // a plan is not applied by submitting it
+
+    std::vector<std::string> names;
+    const Value commands = mcp.tool("list_commands");  // kept: the loop reads into it
+    for (const Value& name : at(at(commands, "structuredContent"), "commands").asArray()) {
+        names.push_back(name.asString());
+    }
+    for (const char* name : {"marker.add", "marker.move", "marker.rename", "marker.remove"}) {
+        CHECK(std::find(names.begin(), names.end(), name) != names.end());
+    }
+}
+
 // m5b-engine-plan-metadata (spec, "Plans", decisions of 2026-11-15; Protocol v0
 // items 15 and 29; docs/schemas/protocol-mcp-v0.md): submit_plan's title and
 // intent, the actor from initialize's clientInfo.name, and DELETE /v0/mcp.

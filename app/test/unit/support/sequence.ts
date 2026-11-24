@@ -79,6 +79,12 @@ export interface Sequence {
     text: string;
     steps: SequenceStep[];
   };
+  // m5b-engine-markers: deltas on markers (add, move, rename, remove) in format v4,
+  // and a sync that holds two of them.
+  markers: {
+    steps: SequenceStep[];
+    sync: Sequence['sync'];
+  };
 }
 
 export function sequence(): Sequence {

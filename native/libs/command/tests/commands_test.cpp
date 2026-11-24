@@ -400,8 +400,8 @@ TEST_CASE("The command catalog is listed", "[command]") {
     CHECK(names == std::vector<std::string>{
                        "bus.add", "bus.remove", "bus.rename", "bus.set_gain", "bus.set_mute", "bus.set_output",
                        "bus.set_pan", "bus.set_solo",
-                       "clip.move", "clip.place", "clip.remove", "clip.set_fade", "clip.set_gain", "clip.trim", "master.set_gain",
-                       "media.add",
+                       "clip.move", "clip.place", "clip.remove", "clip.set_fade", "clip.set_gain", "clip.trim",
+                       "marker.add", "marker.move", "marker.remove", "marker.rename", "master.set_gain", "media.add",
                        "media.remove", "media.rename", "plugin.insert", "plugin.remove", "plugin.set_bypass",
                        "send.add", "send.remove", "send.set_enabled", "send.set_level", "send.set_pre", "session.rename",
                        "session.set_locators", "session.set_tempo", "track.add", "track.remove",
@@ -1161,4 +1161,201 @@ TEST_CASE("clip.trim shortens fades that no longer fit, in the same revision", "
 TEST_CASE("commandNames lists clip.set_fade", "[command][fades]") {
     const auto names = commandNames();
     CHECK(std::find(names.begin(), names.end(), "clip.set_fade") != names.end());
+}
+
+// ---- m5b-engine-markers: marker.add, marker.move, marker.rename, marker.remove
+
+namespace {
+
+std::string addMarker(const std::string& id, const std::string& extra = "") {
+    return R"({"op":"marker.add","markerId":")" + id + R"(","position":"1000")" + extra + "}";
+}
+
+std::int32_t numberOf(const Document& doc, const std::string& id) {
+    const auto* m = doc.marker(id);
+    REQUIRE(m != nullptr);
+    return m->number;
+}
+
+}  // namespace
+
+TEST_CASE("marker.add adds a position or cycle marker and declares exactly marker:<id>", "[command][markers]") {
+    const Document doc = base();
+    const auto added = prepare(doc, cmd(R"({"op":"marker.add","markerId":"mk_1","position":"96000"})"));
+    CHECK(added.effects == DeclaredEffects{ref(EntityType::marker, "mk_1")});
+    const auto* m = added.result.marker("mk_1");
+    REQUIRE(m != nullptr);
+    CHECK(m->position == 96'000);
+    CHECK(m->name.empty());
+    CHECK(m->number == 1);
+    CHECK_FALSE(m->length.has_value());
+    CHECK(added.result.sharesEntity(doc, ref(EntityType::root, "root")));
+    const auto changes = diff(doc, added.result);
+    REQUIRE(changes.size() == 1);
+    CHECK(changes[0].entity == ref(EntityType::marker, "mk_1"));
+
+    const auto cycle = prepare(added.result, cmd(R"({"op":"marker.add","markerId":"mk_2","position":"0","length":"48000","name":"Chorus 聲","number":7})"));
+    CHECK(cycle.effects == DeclaredEffects{ref(EntityType::marker, "mk_2")});
+    const auto* c = cycle.result.marker("mk_2");
+    REQUIRE(c != nullptr);
+    CHECK(c->length == std::optional<std::int64_t>(48'000));
+    CHECK(c->name == "Chorus 聲");
+    CHECK(c->number == 7);
+    // A cycle marker with the number of a position marker: the kinds number apart.
+    const auto one = prepare(added.result, cmd(addMarker("mk_3", R"(,"length":"10","number":1)")));
+    CHECK(numberOf(one.result, "mk_3") == 1);
+    CHECK(numberOf(one.result, "mk_1") == 1);
+}
+
+TEST_CASE("marker.add without a number takes the lowest free one of its kind", "[command][markers]") {
+    Document doc = base();
+    doc = applied(doc, addMarker("p1"));
+    doc = applied(doc, addMarker("p2"));
+    doc = applied(doc, addMarker("p3"));
+    CHECK(numberOf(doc, "p1") == 1);
+    CHECK(numberOf(doc, "p2") == 2);
+    CHECK(numberOf(doc, "p3") == 3);
+    // Cycle markers number on their own.
+    doc = applied(doc, addMarker("c1", R"(,"length":"100")"));
+    CHECK(numberOf(doc, "c1") == 1);
+    // After removing 1 of {1, 2, 3} the next add gets 1, the one after it 4.
+    doc = applied(doc, R"({"op":"marker.remove","markerId":"p1"})");
+    doc = applied(doc, addMarker("p4"));
+    CHECK(numberOf(doc, "p4") == 1);
+    doc = applied(doc, addMarker("p5"));
+    CHECK(numberOf(doc, "p5") == 4);
+    // An explicit number leaves a gap the next automatic one fills.
+    doc = applied(doc, addMarker("c2", R"(,"length":"100","number":3)"));
+    doc = applied(doc, addMarker("c3", R"(,"length":"100")"));
+    CHECK(numberOf(doc, "c3") == 2);
+}
+
+TEST_CASE("marker.add refuses a taken number, a used id and bad values", "[command][markers]") {
+    Document doc = applied(base(), addMarker("p1", R"(,"number":5)"));
+    CHECK(errorCode(doc, addMarker("p2", R"(,"number":5)")) == "marker_number_taken");
+    CHECK(errorCode(doc, addMarker("p2", R"(,"number":5,"length":"1")")) == "no error");
+    CHECK(errorCode(doc, addMarker("p1")) == "already_exists");
+    CHECK(errorCode(doc, addMarker("p1", R"(,"length":"1")")) == "already_exists");
+    // Ranges: invalid_marker.
+    CHECK(errorCode(doc, R"({"op":"marker.add","markerId":"m","position":"-1"})") == "invalid_marker");
+    CHECK(errorCode(doc, R"({"op":"marker.add","markerId":"m","position":"4398046511105"})") == "invalid_marker");
+    CHECK(errorCode(doc, R"({"op":"marker.add","markerId":"m","position":"4398046511104"})") == "no error");
+    CHECK(errorCode(doc, addMarker("m", R"(,"length":"0")")) == "invalid_marker");
+    CHECK(errorCode(doc, addMarker("m", R"(,"length":"-1")")) == "invalid_marker");
+    CHECK(errorCode(doc, addMarker("m", R"(,"length":"4398046510104")")) == "no error");
+    CHECK(errorCode(doc, addMarker("m", R"(,"length":"4398046510105")")) == "invalid_marker");
+    CHECK(errorCode(doc, addMarker("m", R"(,"number":0)")) == "invalid_marker");
+    CHECK(errorCode(doc, addMarker("m", R"(,"number":10000)")) == "invalid_marker");
+    CHECK(errorCode(doc, addMarker("m", R"(,"number":9999)")) == "no error");
+    CHECK(errorCode(doc, addMarker("m", R"(,"name":")" + std::string(255, 'a') + "\"")) == "no error");
+    CHECK(errorCode(doc, addMarker("m", R"(,"name":")" + std::string(256, 'a') + "\"")) == "invalid_marker");
+    CHECK(errorCode(doc, R"({"op":"marker.add","markerId":"m 1","position":"0"})") == "invalid_id");
+    // Malformed params.
+    CHECK(errorCode(doc, R"({"op":"marker.add","markerId":"m","position":1000})") == "invalid_params");
+    CHECK(errorCode(doc, R"({"op":"marker.add","markerId":"m","position":"1e3"})") == "invalid_params");
+    CHECK(errorCode(doc, R"({"op":"marker.add","markerId":"m"})") == "invalid_params");
+    CHECK(errorCode(doc, R"({"op":"marker.add","position":"0"})") == "invalid_params");
+    CHECK(errorCode(doc, addMarker("m", R"(,"number":"2")")) == "invalid_params");
+    CHECK(errorCode(doc, addMarker("m", R"(,"number":1.5)")) == "invalid_params");
+    CHECK(errorCode(doc, addMarker("m", R"(,"name":7)")) == "invalid_params");
+    CHECK(errorCode(doc, addMarker("m", R"(,"name":null)")) == "invalid_params");
+    CHECK(errorCode(doc, addMarker("m", R"(,"length":null)")) == "invalid_params");
+    CHECK(errorCode(doc, addMarker("m", R"(,"extra":1)")) == "invalid_params");
+}
+
+TEST_CASE("marker.move keeps number and name, resizes only a cycle marker", "[command][markers]") {
+    Document doc = base();
+    doc = applied(doc, addMarker("p1", R"(,"name":"Intro","number":4)"));
+    doc = applied(doc, addMarker("c1", R"(,"name":"Loop","length":"500","number":4)"));
+
+    const auto moved = prepare(doc, cmd(R"({"op":"marker.move","markerId":"p1","position":"2000"})"));
+    CHECK(moved.effects == DeclaredEffects{ref(EntityType::marker, "p1")});
+    const auto* p = moved.result.marker("p1");
+    REQUIRE(p != nullptr);
+    CHECK(p->position == 2000);
+    CHECK(p->number == 4);
+    CHECK(p->name == "Intro");
+    CHECK_FALSE(p->length.has_value());
+    CHECK(moved.result.sharesEntity(doc, ref(EntityType::marker, "c1")));
+
+    // A cycle marker moves with its length, or is resized with one.
+    const auto shifted = prepare(doc, cmd(R"({"op":"marker.move","markerId":"c1","position":"3000"})"));
+    CHECK(shifted.result.marker("c1")->position == 3000);
+    CHECK(shifted.result.marker("c1")->length == std::optional<std::int64_t>(500));
+    const auto resized = prepare(doc, cmd(R"({"op":"marker.move","markerId":"c1","position":"1000","length":"9000"})"));
+    CHECK(resized.effects == DeclaredEffects{ref(EntityType::marker, "c1")});
+    CHECK(resized.result.marker("c1")->length == std::optional<std::int64_t>(9000));
+    CHECK(resized.result.marker("c1")->number == 4);
+    CHECK(resized.result.marker("c1")->name == "Loop");
+
+    // The kind never changes: a length on a position marker is invalid_params.
+    CHECK(errorCode(doc, R"({"op":"marker.move","markerId":"p1","position":"0","length":"10"})") == "invalid_params");
+    CHECK(errorCode(doc, R"({"op":"marker.move","markerId":"c1","position":"0","length":"0"})") == "invalid_marker");
+    CHECK(errorCode(doc, R"({"op":"marker.move","markerId":"c1","position":"4398046511000"})") == "invalid_marker");
+    CHECK(errorCode(doc, R"({"op":"marker.move","markerId":"p1","position":"-5"})") == "invalid_marker");
+    CHECK(errorCode(doc, R"({"op":"marker.move","markerId":"zz","position":"0"})") == "not_found");
+    CHECK(errorCode(doc, R"({"op":"marker.move","markerId":"p1"})") == "invalid_params");
+    CHECK(errorCode(doc, R"({"op":"marker.move","markerId":"p1","position":"0","name":"x"})") == "invalid_params");
+    CHECK(errorCode(doc, R"({"op":"marker.move","markerId":"p1","position":"0","number":2})") == "invalid_params");
+}
+
+TEST_CASE("marker.rename sets the name, empty included, and declares exactly the marker", "[command][markers]") {
+    const Document doc = applied(base(), addMarker("p1", R"(,"name":"Intro")"));
+    const auto renamed = prepare(doc, cmd(R"({"op":"marker.rename","markerId":"p1","name":"Verse 1"})"));
+    CHECK(renamed.effects == DeclaredEffects{ref(EntityType::marker, "p1")});
+    CHECK(renamed.result.marker("p1")->name == "Verse 1");
+    CHECK(renamed.result.marker("p1")->position == 1000);
+    const auto cleared = prepare(renamed.result, cmd(R"({"op":"marker.rename","markerId":"p1","name":""})"));
+    CHECK(cleared.result.marker("p1")->name.empty());
+    CHECK(errorCode(doc, R"({"op":"marker.rename","markerId":"zz","name":"x"})") == "not_found");
+    CHECK(errorCode(doc, R"({"op":"marker.rename","markerId":"p1"})") == "invalid_params");
+    CHECK(errorCode(doc, R"({"op":"marker.rename","markerId":"p1","name":null})") == "invalid_params");
+    CHECK(errorCode(doc, R"({"op":"marker.rename","markerId":"p1","name":"x","position":"0"})") == "invalid_params");
+    CHECK(errorCode(doc, R"({"op":"marker.rename","markerId":"p1","name":")" + std::string(256, 'a') + "\"}") ==
+          "invalid_marker");
+}
+
+TEST_CASE("marker.add and marker.rename refuse a display-unsafe name with invalid_name", "[command][names][markers]") {
+    const Document doc = applied(base(), addMarker("p1", R"(,"name":"Intro")"));
+    for (const std::string& name : kUnsafeNames) {
+        INFO(name);
+        CHECK(errorCodeOf(doc, withName(Object{{"op", Value("marker.add")}, {"markerId", Value("p2")},
+                                               {"position", Value("0")}},
+                                        name)) == "invalid_name");
+        CHECK(errorCodeOf(doc, withName(Object{{"op", Value("marker.rename")}, {"markerId", Value("p1")}}, name)) ==
+              "invalid_name");
+    }
+    CHECK(errorCode(doc, R"({"op":"marker.rename","markerId":"p1","name":"副歌 Chorus"})") == "no error");
+    // The length rule stays invalid_marker.
+    CHECK(errorCode(doc, R"({"op":"marker.rename","markerId":"p1","name":")" + std::string(256, 'a') + "\"}") ==
+          "invalid_marker");
+}
+
+TEST_CASE("marker.remove removes the marker and declares exactly it", "[command][markers]") {
+    const Document doc = base();
+    const Document with = applied(doc, addMarker("p1"));
+    const auto removed = prepare(with, cmd(R"({"op":"marker.remove","markerId":"p1"})"));
+    CHECK(removed.effects == DeclaredEffects{ref(EntityType::marker, "p1")});
+    CHECK(removed.result.marker("p1") == nullptr);
+    CHECK(removed.result.documentHash() == doc.documentHash());
+    CHECK(removed.result.toJson().find("markers") == nullptr);
+    CHECK(errorCode(doc, R"({"op":"marker.remove","markerId":"p1"})") == "not_found");
+    CHECK(errorCode(with, R"({"op":"marker.remove","markerId":"p1","extra":true})") == "invalid_params");
+    CHECK(errorCode(with, R"({"op":"marker.remove"})") == "invalid_params");
+    // No marker command has cascades.
+    const auto cascades = siann::command::commandCascades();
+    for (const char* name : {"marker.add", "marker.move", "marker.rename", "marker.remove"}) {
+        CHECK(cascades.count(name) == 0);
+    }
+}
+
+TEST_CASE("Marker commands pass the declared-effects check inside a transaction", "[command][markers]") {
+    const Document doc = base();
+    const auto prepared = prepareTransaction(
+        doc, {cmd(addMarker("p1")), cmd(addMarker("p2")), cmd(R"({"op":"marker.move","markerId":"p1","position":"5"})"),
+              cmd(R"({"op":"marker.rename","markerId":"p2","name":"B"})")});
+    CHECK(prepared.effects == DeclaredEffects{ref(EntityType::marker, "p1"), ref(EntityType::marker, "p2")});
+    CHECK(numberOf(prepared.result, "p2") == 2);
+    const auto back = prepareTransaction(doc, {cmd(addMarker("p1")), cmd(R"({"op":"marker.remove","markerId":"p1"})")});
+    CHECK(back.result.documentHash() == doc.documentHash());
 }
