@@ -608,7 +608,7 @@ input.marker-rename {
 .irow[aria-hidden="true"] { min-height: var(--control-h); }
 /* The label column keeps the mockup's width and grows for a longer label
    (the pseudo-locale's "[Out~~]"), never cut, as the fit check asks. */
-.irow { grid-template-columns: minmax(var(--inspector-routing-label-w), max-content) minmax(0, 1fr); }
+[data-part="inspector-routing"] .irow { grid-template-columns: minmax(var(--inspector-routing-label-w), max-content) minmax(0, 1fr); }
 .irow .pick { position: relative; min-width: 0; }
 .irow .pick-name { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .irow .pick-select { position: absolute; inset: 0; width: 100%; height: 100%; opacity: 0; cursor: pointer; }
