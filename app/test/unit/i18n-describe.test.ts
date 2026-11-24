@@ -312,6 +312,8 @@ const CODES = [
   'agent_busy',
   'agent_not_connected',
   'invalid_request_text',
+  // The Notepad's refusal (m5b-ui-notepad; protocol-engine-v0.md track.set_notes).
+  'invalid_notes',
 ];
 
 test('engine error codes: catalog text in Chinese, the engine\'s own message in English', () => {

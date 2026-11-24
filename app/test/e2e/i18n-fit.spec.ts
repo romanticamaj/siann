@@ -727,3 +727,55 @@ test('the record options panel, Record and the In row fit in every locale at eit
   engine.close();
   expect(failures).toEqual([]);
 });
+
+// m5b-ui-notepad (UI redesign 3.4, 6.3): the Notepad section open with text,
+// its refusal line and its "changed elsewhere" line fit in every locale at
+// either window size: the head's title stays on its line, nothing overflows
+// its box, and the section stays inside the left zone.
+test('the Notepad section, its refusal line and its changed-elsewhere line fit in every locale at either window size', async () => {
+  test.setTimeout(150_000);
+  scratch = fs.mkdtempSync(path.join(os.tmpdir(), 'siann-fit-notepad-'));
+  const sessionDir = seedBundle(scratch, TRACKS);
+  app = await launchApp({ sessionDir, userData: path.join(scratch, 'user-data'), languages: ['en-US'] });
+  page = await app.firstWindow();
+  await expect(page.getByTestId('status')).toHaveAttribute('data-status', 'connected');
+  await resize(SIZES[0]!);
+  const engine = await engineClient(page);
+  const header = page.getByTestId('track-header-trk_voxlead');
+  await header.locator('.name').click();
+  await expect(header).toHaveAttribute('aria-selected', 'true');
+  const notepad = page.locator('[data-part="inspector-notepad"]');
+  await notepad.getByRole('button').click();
+  const area = page.getByTestId('notepad-text');
+  // A refused draft (U+202E is display-unsafe), kept; then a change from another connection.
+  await area.fill('Double the chorus vocal at bar 17 ‮');
+  await header.locator('.name').click();
+  await expect(page.getByTestId('notepad-refusal')).toHaveAttribute('data-code', 'invalid_notes');
+  await engine.call('command.execute', { commands: [{ op: 'track.set_notes', trackId: 'trk_voxlead', notes: 'Set elsewhere' }] });
+  await expect(page.getByTestId('notepad-changed')).toBeVisible();
+  engine.close();
+  const NOTEPAD = '[data-part=inspector-notepad] .sec-h, [data-part=inspector-notepad] textarea, [data-testid=notepad-refusal], [data-testid=notepad-refusal] button, [data-testid=notepad-changed]';
+  const failures: string[] = [];
+  for (const locale of LOCALES) {
+    await page.evaluate((next) => window.__siannLocale!.setLocale(next as never), locale);
+    await expect(page.locator('html')).toHaveAttribute('data-locale', locale);
+    for (const size of SIZES) {
+      await resize(size);
+      // Under 1100 px the left zone starts hidden: its button shows it for this window.
+      if ((await page.getByTestId('zone-left').getAttribute('data-visible')) !== 'true') await page.getByTestId('zone-button-left').click();
+      await expect(page.getByTestId('zone-left')).toHaveAttribute('data-visible', 'true');
+      await expect(area).toBeVisible();
+      for (const entry of await overflowing(NOTEPAD)) failures.push(`${locale} ${size.width}x${size.height} (notepad): ${entry}`);
+      for (const entry of await wrapped('[data-part=inspector-notepad] .sec-h, [data-testid=notepad-refusal] button')) failures.push(`${locale} ${size.width}x${size.height} (notepad): ${entry}`);
+      const inside = await notepad.evaluate((el) => {
+        const zone = el.closest('[data-zone=left]')!.getBoundingClientRect();
+        return [...el.querySelectorAll<HTMLElement>('*')].every((child) => {
+          const r = child.getBoundingClientRect();
+          return r.width === 0 || (r.left >= zone.left - 0.5 && r.right <= zone.right + 0.5);
+        });
+      });
+      if (!inside) failures.push(`${locale} ${size.width}x${size.height}: the Notepad section leaves the left zone`);
+    }
+  }
+  expect(failures).toEqual([]);
+});

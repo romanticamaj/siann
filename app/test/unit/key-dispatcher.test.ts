@@ -75,6 +75,30 @@ test('nothing fires while a text field has focus', () => {
   assert.equal(resolveKey(input({ code: 'Delete', key: 'Delete', targetIsTextField: true }), CUBASE_PRESET), null);
 });
 
+// m5b-ui-notepad (acceptance 2 as corrected; UI redesign 2.1, 3.4, 10.11
+// item 23): from the Notepad's text area M mutes nothing and Mod+Enter runs no
+// preset command (the area commits it itself), while Escape, Tab and F6 still
+// move the focus.
+test('from the Notepad\'s TEXTAREA KeyM and Mod+Enter resolve to nothing; Escape, Tab and F6 to the focus commands', () => {
+  const area = { tagName: 'TEXTAREA' } as unknown as EventTarget;
+  assert.equal(isTextField(area), true);
+  const field = (code: string, key: string, modifiers = NONE, platform: 'mac' | 'other' = 'other') =>
+    resolveKey(input({ code, key, modifiers, targetIsTextField: isTextField(area), focusedZone: 'left', platform }), CUBASE_PRESET);
+  // M is bound outside a field (mute the selected track).
+  assert.notEqual(resolveKey(input({ code: 'KeyM', key: 'm' }), CUBASE_PRESET), null, 'M is bound');
+  assert.equal(field('KeyM', 'm'), null);
+  assert.equal(resolveKey(input({ code: 'KeyM', key: 'm', targetIsTextField: true }), CUBASE_PRESET), null, 'whatever zone has the frame');
+  // Mod+Enter is plans.primary in the right zone (3.6); from the area, nothing, on both platforms.
+  assert.notEqual(resolveKey(input({ code: 'Enter', key: 'Enter', modifiers: { ...NONE, ctrl: true }, focusedZone: 'right' }), CUBASE_PRESET), null, 'Mod+Enter is bound');
+  for (const focusedZone of ['left', 'right'] as const) {
+    assert.equal(resolveKey(input({ code: 'Enter', key: 'Enter', modifiers: { ...NONE, ctrl: true }, targetIsTextField: true, focusedZone }), CUBASE_PRESET), null, focusedZone);
+    assert.equal(resolveKey(input({ code: 'Enter', key: 'Enter', modifiers: { ...NONE, meta: true }, targetIsTextField: true, focusedZone, platform: 'mac' }), CUBASE_PRESET), null, `${focusedZone} mac`);
+  }
+  assert.equal(field('Escape', 'Escape')?.commandId, 'focus.zoneRoot');
+  assert.equal(field('Tab', 'Tab')?.commandId, 'focus.next');
+  assert.equal(field('F6', 'F6')?.commandId, 'focus.nextZone');
+});
+
 // m5b-ui-composer (acceptance 1 as corrected; UI redesign 2.1): from the
 // "ask the agent" box no transport, edit or tool command runs, while the focus
 // keys still move the focus.

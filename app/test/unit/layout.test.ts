@@ -299,7 +299,7 @@ test('serialize and parse one object; unknown or corrupt JSON falls back to the 
   const withHeights: Layout = { ...changed, stripWidth: 'narrow', trackHeights: { ses_a: { trk_1: 96 } } };
   const text = serializeLayout(withHeights);
   const object = JSON.parse(text) as Record<string, unknown>;
-  assert.deepEqual(Object.keys(object).sort(), ['autoScroll', 'collapsed', 'racks', 'sizes', 'snap', 'stripWidth', 'tabs', 'timeFormat', 'trackHeights', 'trackList']);
+  assert.deepEqual(Object.keys(object).sort(), ['autoScroll', 'collapsed', 'inspector', 'racks', 'sizes', 'snap', 'stripWidth', 'tabs', 'timeFormat', 'trackHeights', 'trackList']);
   assert.deepEqual(parseLayout(text), withHeights);
   for (const bad of [null, '', '{', 'null', '42', '[]', '"x"']) assert.deepEqual(parseLayout(bad), DEFAULT_LAYOUT, String(bad));
   // Field by field: a bad field falls back, the rest is kept.
@@ -570,4 +570,29 @@ test('tabs: a stored Media tab falls back to Plans when the engine has no Media 
   assert.equal(rightTab(media, { media: false }), 'plans');
   assert.equal(rightTab(DEFAULT_LAYOUT, { media: true }), 'plans');
   assert.equal(rightTab(DEFAULT_LAYOUT, { media: false }), 'plans');
+});
+
+// m5b-ui-notepad (UI redesign 3.4): whether the Inspector's Notepad section is
+// open is kept in siann.layout.v1, shut by default as the mockup draws it.
+test('the Notepad section: shut by default, toggled by its action, parsed field by field and stored', () => {
+  assert.deepEqual(DEFAULT_LAYOUT.inspector, { notepad: false });
+  const open = reduce(start(), { type: 'section', section: 'notepad' });
+  assert.deepEqual(open.layout.inspector, { notepad: true });
+  assert.deepEqual(reduce(open, { type: 'section', section: 'notepad' }).layout.inspector, { notepad: false });
+  assert.equal(reduce(open, { type: 'section', section: 'notepad', open: true }), open, 'unchanged: the same state');
+  assert.deepEqual(reduce(start(), { type: 'section', section: 'sends' as 'notepad' }).layout, DEFAULT_LAYOUT, 'an unknown section changes nothing');
+  assert.deepEqual(open.layout.sizes, DEFAULT_LAYOUT.sizes);
+  // A layout stored before this feature has no inspector field: the default.
+  assert.deepEqual(parseLayout(JSON.stringify({ trackList: 300 })).inspector, { notepad: false });
+  for (const bad of ['yes', 1, null, [], { notepad: 'open' }]) assert.deepEqual(parseLayout(JSON.stringify({ inspector: bad })).inspector, { notepad: false }, JSON.stringify(bad));
+  assert.deepEqual(parseLayout(JSON.stringify({ inspector: { notepad: true } })).inspector, { notepad: true });
+  const layout: Layout = { ...DEFAULT_LAYOUT, inspector: { notepad: true } };
+  assert.deepEqual(parseLayout(serializeLayout(layout)), layout);
+
+  const saved = new Map<string, string>();
+  const store = createLayoutStore({ storage: { getItem: (k) => saved.get(k) ?? null, setItem: (k, v) => void saved.set(k, v) } });
+  store.dispatch({ type: 'section', section: 'notepad' });
+  assert.deepEqual((JSON.parse(saved.get(LAYOUT_KEY)!) as { inspector: unknown }).inspector, { notepad: true });
+  const reloaded = createLayoutStore({ storage: { getItem: (k) => saved.get(k) ?? null, setItem: () => undefined } });
+  assert.deepEqual(reloaded.getSnapshot().layout.inspector, { notepad: true });
 });
