@@ -76,7 +76,7 @@ test('nothing fires while a text field has focus', () => {
 });
 
 // m5b-ui-notepad (acceptance 2 as corrected; UI redesign 2.1, 3.4, 10.11
-// item 23): from the Notepad's text area M mutes nothing and Mod+Enter runs no
+// item 24): from the Notepad's text area M mutes nothing and Mod+Enter runs no
 // preset command (the area commits it itself), while Escape, Tab and F6 still
 // move the focus.
 test('from the Notepad\'s TEXTAREA KeyM and Mod+Enter resolve to nothing; Escape, Tab and F6 to the focus commands', () => {

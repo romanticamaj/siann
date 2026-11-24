@@ -34,7 +34,7 @@ test('the table of structural ops', () => {
     'track.set_mute',
     'track.set_solo',
     'track.set_pan',
-    // m5b-ui-notepad (UI redesign 4.5 C5; 10.11, 23): a track's notes commit onto main, as track.rename does.
+    // m5b-ui-notepad (UI redesign 4.5 C5; 10.11, 24): a track's notes commit onto main, as track.rename does.
     'track.set_notes',
     'marker.add',
     'marker.move',

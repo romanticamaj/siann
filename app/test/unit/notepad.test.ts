@@ -1,4 +1,4 @@
-// The Notepad's drafts (m5b-ui-notepad; UI redesign 3.4, 10.11 item 23): a
+// The Notepad's drafts (m5b-ui-notepad; UI redesign 3.4, 10.11 item 24): a
 // pure per-track reducer and its store, no React. The expectations come from
 // the spec's 3.4 paragraph, not from the code under test:
 //

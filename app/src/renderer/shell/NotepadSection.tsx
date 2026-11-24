@@ -1,5 +1,5 @@
 // The Inspector's Notepad section (m5b-ui-notepad, UR-17; UI redesign 3.4,
-// 10.11 item 23), ported from the mockup's sec('Notepad',''): div.sec, .shut
+// 10.11 item 24), ported from the mockup's sec('Notepad',''): div.sec, .shut
 // while closed, with its head div.sec-h (the chevron, the title, an empty
 // span) styled by ui/left-zone.css. The head is a toggle: role=button,
 // tabindex 0 and aria-expanded are added to the mockup's markup, and a click,

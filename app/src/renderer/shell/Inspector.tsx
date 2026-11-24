@@ -45,7 +45,7 @@
 // section is an empty box, sized by a shell.css calc() of the tokens the
 // shared rules size the section with (the 117 px the mockup measures).
 //
-// Notepad (m5b-ui-notepad; UI redesign 3.4, 10.11 item 23) is the mockup's
+// Notepad (m5b-ui-notepad; UI redesign 3.4, 10.11 item 24) is the mockup's
 // sec('Notepad','') (NotepadSection.tsx): shut by default, its head opens it (the
 // Shell keeps whether it is open in siann.layout.v1), and open it holds the
 // track's notes in a text area whose drafts are notepad.ts's store. On an

@@ -1,5 +1,5 @@
 // The Inspector's Notepad end to end (m5b-ui-notepad, UR-17; UI redesign 3.4,
-// 2.1, 3.0, 4.5 C5, 10.11 item 23). The app runs the real siann-engine
+// 2.1, 3.0, 4.5 C5, 10.11 item 24). The app runs the real siann-engine
 // (SIANN_ENGINE_EXE) on the fake device under SIANN_SHELL_TEST=1, the bundle
 // prepared with siann-cli (SIANN_CLI_EXE); a second protocol client is
 // another connection. Controls are found by role and test id; waits are
