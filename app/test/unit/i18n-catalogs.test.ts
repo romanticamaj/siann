@@ -231,7 +231,8 @@ test('the toolbar and info line words are in every catalog, the mockup\'s in en 
     assert.equal(en[key], english, key);
     assert.equal(zhHant[key], traditional, key);
   }
-  assert.equal(en['toolbar.autoScrollTitle'], 'Auto-Scroll (F)');
+  // The key is added by tipWithKey from the preset (UI redesign 3.6), never written in the string.
+  assert.equal(en['toolbar.autoScrollTitle'], 'Auto-Scroll');
   // The old toolbar's words are gone: no Delete clip button, the gain field is the volume field.
   for (const gone of ['timeline.deleteClip', 'timeline.mediaPool', 'info.gain']) assert.ok(!(gone in en), gone);
 });

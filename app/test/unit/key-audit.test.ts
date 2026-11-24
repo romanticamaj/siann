@@ -110,7 +110,11 @@ export function researchKeys(markdown: string): Map<string, Set<string>> {
         continue;
       }
       if (/^-+$/.test(cells[0] ?? '')) continue;
-      for (const match of (cells[column] ?? '').matchAll(/`([^`]+)`/g)) keys.add(match[1]!);
+      const cell = cells[column] ?? '';
+      const ticked = [...cell.matchAll(/`([^`]+)`/g)].map((match) => match[1]!);
+      for (const key of ticked) keys.add(key);
+      // A key written without backticks ("Arrow keys") is a key too: the cell as written.
+      if (ticked.length === 0 && cell !== '' && !/^[—–-]+$/.test(cell)) keys.add(cell);
     } else {
       column = -1;
       if (!hasTable && line.startsWith('`')) for (const match of line.matchAll(/`([^`]+)`/g)) keys.add(match[1]!);
@@ -134,6 +138,8 @@ test('the guard: the parser reads a table\'s Windows column and a sentence of ke
     '| Tool | Key |',
     '|---|---|',
     '| Split | `3` |',
+    '| Step | Arrow keys |',
+    '| Nothing | — |',
     '### 7.9 File',
     '`Ctrl+N` new, `Ctrl+O` open.',
     '### 7.10 Things with no default key',
@@ -147,7 +153,7 @@ test('the guard: the parser reads a table\'s Windows column and a sentence of ke
     [...keys].map(([section, set]) => [section, [...set]]),
     [
       ['7.1', ['Enter', 'Num -', 'Num +']],
-      ['7.3', ['3']],
+      ['7.3', ['3', 'Arrow keys']],
       ['7.9', ['Ctrl+N', 'Ctrl+O']],
       ['7.10', []],
     ],

@@ -34,6 +34,8 @@ const CHORD = /(^|[^\p{L}])(Ctrl|Cmd|Alt|Opt|Option|Shift|Mod|Meta|Control)\+(\S
 // A single key, where only a key can stand: a letter, a digit, a symbol key or a named key.
 const SINGLE = /^(?:[A-Z0-9]|[,./\-=;`]|Space|Enter|Return|Esc|Escape|Tab|Delete|Backspace|Insert|Home|End|PageUp|PageDown)$/;
 const KEY_POSITIONS = new Set(['title', 'aria-keyshortcuts']);
+// A single key written in brackets inside a catalog sentence: 'Auto-Scroll (F)', '自動捲動（F）', 'Play [Space]'.
+const BRACKETED = /[(（[]\s*(?:[A-Z0-9]|[,./\-=;`]|Space|Enter|Return|Esc|Escape|Tab|Delete|Backspace|Insert|Home|End|Page ?Up|Page ?Down|Arrow\w*|[←→↑↓])\s*[)）\]]/u;
 
 export interface Finding {
   readonly file: string;
@@ -138,9 +140,12 @@ test('no key literal in the renderer or the shell outside the key table', () => 
 test('no catalog string writes a key: a key is a {key} placeholder filled by formatChord', () => {
   const found: string[] = [];
   for (const [name, catalog] of [['en', en], ['zh-Hant', zhHant], ['zh-Hans', zhHans]] as const) {
-    for (const [key, value] of Object.entries(catalog)) if (typeof value === 'string' && CHORD.test(value)) found.push(`${name} ${key}: ${value}`);
+    for (const [key, value] of Object.entries(catalog)) if (typeof value === 'string' && (CHORD.test(value) || BRACKETED.test(value))) found.push(`${name} ${key}: ${value}`);
   }
   assert.deepEqual(found, []);
+  // The catalog check sees a bare key in brackets, not only chords: 'Auto-Scroll (F)' wrapped in tipWithKey showed the key twice.
+  for (const written of ['Auto-Scroll (F)', '自動捲動（F）', 'Play [Space]', 'Step (Arrow Left)', 'Locate (Home)']) assert.ok(BRACKETED.test(written), written);
+  for (const prose of ['Volume (dB)', 'Grid (1/16)', '(optional)', 'Tempo (BPM)']) assert.ok(!BRACKETED.test(prose), prose);
   // The two strings that named keys take them as placeholders now.
   for (const catalog of [en, zhHant, zhHans]) {
     assert.ok(String(catalog['pill.toggle']).includes('{key}'), String(catalog['pill.toggle']));
