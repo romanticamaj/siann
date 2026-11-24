@@ -1107,11 +1107,14 @@ test("every id of the event display is found, no pending part's id is, and the h
   const engine = await engineClient(page);
   await engine.call('transport.locate', { frames: '4800' });
   engine.close();
-  await expect.poll(async () => (await parts()).map((p) => p.id)).toEqual(['ruler-upper', 'ruler-lower', 'lane-1', 'lane-2', 'lane-3', 'clip-1', 'cursor', 'cursor-head']);
-  // No part of a pending feature, and no ghost without a plan (m5b-ui-ghosts): not in the DOM, not on the surface.
-  for (const pending of ['marker-track', 'marker-head', 'lane-ghost']) await expect(page.locator(`[data-part="${pending}"]`)).toHaveCount(0);
+  await expect.poll(async () => (await parts()).map((p) => p.id)).toEqual(['ruler-upper', 'ruler-lower', 'marker-track', 'lane-1', 'lane-2', 'lane-3', 'clip-1', 'cursor', 'cursor-head']);
+  // The marker track (m5b-ui-markers) on the full engine: marker-head in the DOM, marker-track on the surface.
+  await expect(page.locator('[data-part="marker-head"]')).toHaveCount(1);
+  expect((await parts()).filter((p) => p.id === 'marker-track').map((p) => [p.y, p.h])).toEqual([[40, 20]]);
+  // No ghost without a plan (m5b-ui-ghosts): not in the DOM, not on the surface.
+  await expect(page.locator('[data-part="lane-ghost"]')).toHaveCount(0);
   await expect(page.locator('[data-part^="clip-ghost-"]')).toHaveCount(0);
-  for (const id of (await parts()).map((p) => p.id)) expect(id).not.toMatch(/^(marker-track|marker-head|clip-ghost-|lane-ghost)/);
+  for (const id of (await parts()).map((p) => p.id)) expect(id).not.toMatch(/^(clip-ghost-|lane-ghost|marker-ghost-)/);
   // Headers and lanes are level: the marker track row sits in both columns.
   const display = await box('event-display');
   const lanes = (await parts()).filter((p) => p.id.startsWith('lane-'));
@@ -1407,7 +1410,9 @@ test('every landed id of the track list is in the window and no pending one is, 
   });
   const landed = ids.filter((id) => gateOf(id) === 'report');
   const pending = ids.filter((id) => gateOf(id) === 'pending');
-  for (const id of ['marker-head', 'track-1-read', 'track-1-write']) expect(pending).toContain(id);
+  for (const id of ['track-1-read', 'track-1-write']) expect(pending).toContain(id);
+  // The marker head landed with m5b-ui-markers.
+  expect(landed).toContain('marker-head');
   // Record enable landed with m5b-ui-recording.
   expect(landed).toContain('track-1-record');
   // The ghost track landed with m5b-ui-ghosts and is drawn for a reviewable plan only: none here.
@@ -1415,9 +1420,10 @@ test('every landed id of the track list is in the window and no pending one is, 
   for (const id of landed.filter((id) => !/ghost/.test(id))) expect(shown, id).toContain(id);
   expect(shown.filter((id) => /ghost/.test(id))).toEqual([]);
   for (const id of pending) expect(shown, id).not.toContain(id);
-  // The structure: .headers > .corner (.add, .cnt), the empty marker box, the headers as th() draws them.
+  // The structure: .headers > .corner (.add, .cnt), the marker head (m5b-ui-markers), the headers as th() draws them.
   await expect(page.locator('.headers > .corner > .add + .cnt')).toHaveCount(1);
-  await expect(page.locator('.headers > div[aria-hidden="true"]:not([class])')).toHaveCount(1);
+  await expect(page.locator('.headers > .corner + .mk[data-part="marker-head"] > svg.i')).toHaveCount(1);
+  await expect(page.locator('.headers > div[aria-hidden="true"]:not([class])')).toHaveCount(0);
   await expect(page.locator('.th > .col + .idx + .body > .r1 + .r2')).toHaveCount(3);
   await expect(page.locator('.th .r1 > .name + .msr.m + .msr.s + .msr.r + .msr-box + .msr-box')).toHaveCount(3);
   await expect(page.locator('.th .r2 > .db.num + .pan.num + .hmeter')).toHaveCount(3);

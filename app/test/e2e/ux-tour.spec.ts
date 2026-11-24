@@ -1163,6 +1163,32 @@ test('UX screenshot tour', async () => {
     `The Keys clip selected with a linear fade in (${fadeMs(keysLength / 8n)}) and an equal power fade out (${fadeMs(keysLength / 4n)}), one clip.set_fade: each fade is drawn as draw() draws it, the --bg-0-a550 shade between the real gain curve and the top edge below the title strip and a 1 px --select line, at its real length, with the waveform scaled by the gain; the 8 x 6 px --select triangles at the fades' ends are the handles (drag: the length, snapped, Ctrl unsnapped; double-click: linear or equal power). The info line ends with Fade In and Fade Out in whole milliseconds, typed values in ms.`,
     { number: 33 },
   );
+
+  // ---- 37 (m5b-ui-markers; UI redesign 3.2, "Marker track"; numbered
+  // explicitly, written after 33): two position markers and a cycle marker on
+  // the marker track, added by another connection, then removed again so the
+  // later launches are as before.
+  const bar = (n: number) => String(Math.round(((n - 1) * 4 * 60 * RATE) / 120));
+  await recorder.call('command.execute', {
+    commands: [
+      { op: 'marker.add', markerId: 'mk_tour_verse', position: bar(1), name: 'Verse' },
+      { op: 'marker.add', markerId: 'mk_tour_chorus', position: bar(3), name: 'Chorus' },
+      { op: 'marker.add', markerId: 'mk_tour_loop', position: bar(2), length: String(Number(bar(3)) - Number(bar(2))), name: 'Fill' },
+    ],
+  });
+  await expect
+    .poll(async () => page.evaluate(() => ((window as unknown as { __siannTimeline?: { markers(): unknown[] } }).__siannTimeline?.markers() ?? []).length))
+    .toBe(3);
+  await painted(page);
+  await shoot(
+    page,
+    'Marker track with markers',
+    'The marker track (m5b-ui-markers) under the ruler, as draw() draws it: position markers 1 Verse and 2 Chorus as numbered flags (the 2 px bar, the 14 % tint to the next marker or the end of the last clip, the label "N  name") and cycle marker 1 Fill as a tinted range with a bar at each end; each marker\'s colour is a track-palette token by the hash of its id. Insert adds a position marker at the cursor, Alt-click one on the track, Ctrl-drag on empty space a cycle marker; Shift+3..9 and Num 3..9 go to position markers 3 to 9, Shift+N / Shift+B to the next and previous marker. The head beside it is the mockup\'s .mk with the flag icon and "Markers".',
+    { number: 37 },
+  );
+  await recorder.call('command.execute', {
+    commands: ['mk_tour_verse', 'mk_tour_chorus', 'mk_tour_loop'].map((markerId) => ({ op: 'marker.remove', markerId })),
+  });
   recorder.close();
   // ---- 38 (m5b-ui-sends-buses; UI redesign 3.4; 10.11, 25; numbered
   // explicitly): a bus strip after the tracks' strips, and Vox Lead's send to

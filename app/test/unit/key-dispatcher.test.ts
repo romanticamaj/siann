@@ -203,7 +203,8 @@ test('the editing keys (m5-ui-edit-basics) never fire while typing; 1 is the num
   assert.equal(resolveKey(input({ code: 'Digit1', key: '1' }), CUBASE_PRESET)?.commandId, 'tool.select');
   // Num 1 is not the tool: it goes to the left locator (m5-ui-loop-click).
   assert.equal(resolveKey(input({ code: 'Numpad1', key: '1' }), CUBASE_PRESET)?.commandId, 'transport.toLeftLocator');
-  assert.equal(resolveKey(input({ code: 'Numpad3', key: '3' }), CUBASE_PRESET)?.commandId, undefined);
+  // Num 3 is not the Split tool either: it goes to position marker 3 (m5b-ui-markers).
+  assert.equal(resolveKey(input({ code: 'Numpad3', key: '3' }), CUBASE_PRESET)?.commandId, 'marker.goTo3');
   // Cmd+D on macOS, Ctrl+D elsewhere.
   assert.equal(resolveKey(input({ code: 'KeyD', key: 'd', modifiers: { ...NONE, meta: true }, platform: 'mac' }), CUBASE_PRESET)?.commandId, 'edit.duplicate');
   assert.equal(resolveKey(input({ code: 'KeyD', key: 'd', modifiers: { ...NONE, ctrl: true } }), CUBASE_PRESET)?.commandId, 'edit.duplicate');
@@ -219,6 +220,39 @@ test('Opt+I on macOS toggles the left zone (event.key is a dead character there)
   assert.equal(resolveKey(cmdOptL, CUBASE_PRESET)?.commandId, 'zone.left.toggle');
   const ctrlAltL = input({ code: 'KeyL', key: 'l', modifiers: { ...NONE, ctrl: true, alt: true } });
   assert.equal(resolveKey(ctrlAltL, CUBASE_PRESET)?.commandId, 'zone.left.toggle');
+});
+
+// m5b-ui-markers (UI redesign 3.1, 3.6, UR-9): Shift+3..9 and Num 3..9 go to
+// position markers 3 to 9, Insert adds one, Shift+N and Shift+B step through
+// the markers; window commands, as the locator keys. Shift+1, Shift+2, Num 1
+// and Num 2 stay the locators; N and B stay the clip locate commands; the
+// number row's 3 stays the Split tool.
+test('the marker keys: Shift+3..9, Num 3..9, Insert, Shift+N and Shift+B; the locators, N, B and 3 keep theirs', () => {
+  const shift = { ...NONE, shift: true };
+  for (let n = 3; n <= 9; n += 1) {
+    for (const [code, modifiers] of [[`Digit${n}`, shift], [`Numpad${n}`, NONE]] as const) {
+      for (const zone of ['project', 'left', 'lower', 'right', null] as const) {
+        const binding = resolveKey(input({ code, key: String(n), modifiers, focusedZone: zone }), CUBASE_PRESET);
+        assert.deepEqual([binding?.scope, binding?.commandId], ['window', `marker.goTo${n}`], `${code} ${JSON.stringify(modifiers)} in ${zone}`);
+      }
+      assert.equal(resolveKey(input({ code, key: String(n), modifiers, targetIsTextField: true }), CUBASE_PRESET), null, `${code} while typing`);
+    }
+  }
+  const at = (code: string, modifiers = NONE) => resolveKey(input({ code, key: code, modifiers }), CUBASE_PRESET);
+  assert.deepEqual([at('Insert')?.scope, at('Insert')?.commandId], ['window', 'marker.insert']);
+  assert.deepEqual([at('KeyN', shift)?.scope, at('KeyN', shift)?.commandId], ['window', 'marker.next']);
+  assert.deepEqual([at('KeyB', shift)?.scope, at('KeyB', shift)?.commandId], ['window', 'marker.previous']);
+  assert.equal(at('Digit1', shift)?.commandId, 'transport.toLeftLocator');
+  assert.equal(at('Digit2', shift)?.commandId, 'transport.toRightLocator');
+  assert.equal(at('Numpad1')?.commandId, 'transport.toLeftLocator');
+  assert.equal(at('Numpad2')?.commandId, 'transport.toRightLocator');
+  assert.equal(at('KeyN')?.commandId, 'transport.locateNextClip');
+  assert.equal(at('KeyB')?.commandId, 'transport.locatePreviousClip');
+  assert.equal(at('Digit3')?.commandId, 'tool.split');
+  // One binding per chord.
+  for (const chord of ['Insert', 'Shift+N', 'Shift+B', ...[3, 4, 5, 6, 7, 8, 9].flatMap((n) => [`Shift+${n}`, `Numpad${n}`])]) {
+    assert.equal(CUBASE_PRESET.filter((b) => b.chord === chord).length, 1, chord);
+  }
 });
 
 // m5-ui-transport (UI redesign spec 3.1, 3.6): the transport keys, the

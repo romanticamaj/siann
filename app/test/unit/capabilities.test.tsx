@@ -29,6 +29,7 @@ import { Timeline, editGates } from '../../src/renderer/timeline/Timeline';
 import { TimelineCanvas } from '../../src/renderer/timeline/TimelineCanvas';
 import { createLayoutStore } from '../../src/renderer/shell/layout-store';
 import { TrackList } from '../../src/renderer/timeline/TrackList';
+import { markersEnabled } from '../../src/renderer/timeline/markers';
 import { MediaImporter } from '../../src/renderer/model/media-import';
 import { MediaTab } from '../../src/renderer/media/MediaTab';
 import { GUARD_REASON } from '../../src/renderer/model/edit-guard';
@@ -533,6 +534,30 @@ test('locators, cycle and click: the full fixture lists them, the gates follow t
   assert.equal(loopClickGates(capabilitySelector(without('transport.set_click'))).click, false);
   assert.equal(loopClickGates(capabilitySelector({ ...FULL, commands: FULL.commands!.filter((c) => c !== 'session.set_locators') })).locators, false);
   assert.equal(loopClickGates(capabilitySelector({ ...FULL, features: { ...FULL.features, cycle: false } })).cycle, false);
+});
+
+// m5b-ui-markers (UI redesign 3.0, 3.1): the marker track needs
+// features.markers and the four marker commands. The two reduced fixtures are
+// the full one less the feature, and less the commands.
+test('the marker track: on with the full fixture; off without features.markers, without the marker commands, and unknown', () => {
+  const NO_MARKERS = read('capabilities-no-markers.json');
+  const NO_COMMANDS = read('capabilities-markers-no-commands.json');
+  assert.equal(NO_MARKERS.features!.markers, undefined, 'the fixture has no features.markers');
+  assert.ok(['marker.add', 'marker.move', 'marker.rename', 'marker.remove'].every((c) => NO_MARKERS.commands!.includes(c)), 'but the commands');
+  assert.equal(NO_COMMANDS.features!.markers, true, 'the fixture has the feature');
+  assert.ok(!NO_COMMANDS.commands!.some((c) => c.startsWith('marker.')), 'but no marker command');
+  // Otherwise each is the full fixture.
+  assert.deepEqual({ ...NO_MARKERS, features: { ...NO_MARKERS.features, markers: true } }, FULL);
+  assert.deepEqual([...NO_COMMANDS.commands!, 'marker.add', 'marker.move', 'marker.remove', 'marker.rename'].sort(), [...FULL.commands!].sort());
+  assert.equal(markersEnabled(capabilitySelector(FULL)), true);
+  assert.equal(markersEnabled(capabilitySelector(NO_MARKERS)), false);
+  assert.equal(markersEnabled(capabilitySelector(NO_COMMANDS)), false);
+  assert.equal(markersEnabled(capabilitySelector(REDUCED)), false);
+  assert.equal(markersEnabled(capabilitySelector(null)), false);
+  // Each of the four commands is needed.
+  for (const op of ['marker.add', 'marker.move', 'marker.rename', 'marker.remove']) {
+    assert.equal(markersEnabled(capabilitySelector({ ...FULL, commands: FULL.commands!.filter((c) => c !== op) })), false, op);
+  }
 });
 
 // The empty-width token of the locator display (UI redesign 3.0; 10.7, 5) is

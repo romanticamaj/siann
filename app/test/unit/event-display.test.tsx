@@ -11,8 +11,9 @@
 //
 // Extras the mockup does not have, allowed as extras only: the overlay canvas
 // (the second layer of UI redesign 5.2), the drag tooltip, and the zoom's
-// range input inside u. The track list gains the empty marker row (UI
-// redesign 3.0): no role, not focusable, hidden, no data-part, no text.
+// range input inside u. The track list's marker row is the mockup's
+// div.mk[marker-head] with the marker track (m5b-ui-markers), else an empty
+// box (UI redesign 3.0): no role, not focusable, hidden, no data-part, no text.
 
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
@@ -32,6 +33,7 @@ import { sampleSnapshot } from './support/timeline';
 const ROOT = path.resolve(__dirname, '..', '..', '..', '..');
 const FIXTURES = path.resolve(__dirname, '..', '..', '..', 'test', 'unit', 'fixtures');
 const FULL = JSON.parse(fs.readFileSync(path.join(FIXTURES, 'capabilities-full.json'), 'utf8')) as Capabilities;
+const NO_MARKERS = JSON.parse(fs.readFileSync(path.join(FIXTURES, 'capabilities-no-markers.json'), 'utf8')) as Capabilities;
 const MOCKUP = fs.readFileSync(path.join(ROOT, 'docs', 'superpowers', 'specs', '2026-11-13-siann-ui-redesign', 'mockup.html'), 'utf8');
 
 function fakeClient(): SessionClient {
@@ -51,9 +53,9 @@ function fakeClient(): SessionClient {
   } as unknown as SessionClient;
 }
 
-function render(): string {
+function render(caps: Capabilities = FULL): string {
   return renderToStaticMarkup(
-    <CapabilitiesContext.Provider value={FULL}>
+    <CapabilitiesContext.Provider value={caps}>
       <Timeline client={fakeClient()} peaks={{ get: () => undefined, subscribe: () => () => undefined } as unknown as PeaksCache} commands={new CommandRegistry()} />
     </CapabilitiesContext.Provider>,
   );
@@ -140,8 +142,18 @@ test('the arrange body is .arr-body[arrange] with the track list, its divider an
   assert.equal(kids[2], 'div.lanes[event-display]');
 });
 
-test('the track list has one empty, hidden element in the marker row, between its head and its body', () => {
+// m5b-ui-markers: with features.markers and the marker commands the row's
+// element is the mockup's div.mk[marker-head] (its flag icon and label).
+test("with the marker track, the track list has the mockup's div.mk[marker-head] between its head and its body", () => {
   const list = element(render(), /<div class="headers"/);
+  assert.deepEqual(children(list), ['div.corner[track-list-head]', 'div.mk[marker-head]', 'div.track-list-body']);
+  const head = element(list, /<div class="mk"/);
+  assert.deepEqual(children(head), ['svg.i']);
+  assert.match(head, />Markers<\/div>$/);
+});
+
+test('without the marker track, the track list has one empty, hidden element in the marker row, between its head and its body', () => {
+  const list = element(render(NO_MARKERS), /<div class="headers"/);
   const kids = children(list);
   assert.deepEqual(kids, ['div.corner[track-list-head]', 'div', 'div.track-list-body']);
   // The marker row: no role, not focusable, hidden from assistive technology, no part id, no text, no class.

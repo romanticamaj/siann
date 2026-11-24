@@ -16,7 +16,7 @@ import type { LocatorsEntity, PluginSlotEntity, TrackEntity } from '../../src/re
 import type { Snapshot } from '../../src/renderer/model/read-model';
 import type { PlanPreview } from '../../src/renderer/plans/diff';
 import { busGhosts, ghostsOf, hasStripGhost, masterGhosts, sendGhosts, slotGhosts, type Ghost } from '../../src/renderer/plans/ghosts';
-import { clip, media, snapshotOf, track } from './support/timeline';
+import { clip, marker, media, snapshotOf, track, withMarkers } from './support/timeline';
 
 const A = 'trk_a';
 const B = 'trk_b';
@@ -519,4 +519,105 @@ test('the bus and send ghosts by owner, and the strip ghosts of their steps', ()
   assert.equal(busGhosts(ghosts, 'bus_new').remove, null);
   for (const step of [1, 2, 3, 4, 5, 6]) assert.equal(hasStripGhost(ghosts, step), true, `step ${step} is on a strip`);
   assert.equal(hasStripGhost(ghosts, 9), false);
+});
+
+// ---- m5b-ui-markers (UI redesign 4.2; P2-1): the marker kinds. A marker
+// step's ghost is a flag (a position marker) or a range (with a length) in
+// the marker track, numbered by its step; its old values are the preview's
+// before with the ticked steps applied in order; a marker.add without a number
+// takes the lowest free number of its kind there, as the engine does; a move,
+// rename or remove of a marker neither the snapshot nor a ticked marker.add
+// holds gives none.
+
+function markerSession(): Snapshot {
+  return withMarkers(session(), [
+    marker('mk_1', 1, '0', 'Intro'),
+    marker('mk_2', 2, '384000', 'Verse'),
+    marker('mk_cyc', 1, '96000', 'Loop', '96000'),
+  ]);
+}
+
+function markerPreview(snapshot: Snapshot, overrides: Record<string, Record<string, unknown>> = {}): PlanPreview {
+  const refs = ['marker:mk_1', 'marker:mk_2', 'marker:mk_cyc'];
+  const e = (ref: string) => overrides[ref] ?? ((snapshot.entities[ref] as unknown as Record<string, unknown> | undefined) ?? null);
+  return { revision: 'r7', documentHash: `sha256:${'d'.repeat(64)}`, stale: [], entities: refs.map((ref) => ({ ref, before: e(ref), after: e(ref) })) };
+}
+
+const MARKER_STEPS: ReadonlyArray<Record<string, unknown>> = [
+  /* 1 */ { op: 'marker.add', markerId: 'mk_new', position: '480000', name: 'Bridge' },
+  /* 2 */ { op: 'marker.add', markerId: 'mk_loop', position: '96000', length: '192000', name: 'Fill' },
+  /* 3 */ { op: 'marker.move', markerId: 'mk_1', position: '48000' },
+  /* 4 */ { op: 'marker.move', markerId: 'mk_cyc', position: '200000', length: '50000' },
+  /* 5 */ { op: 'marker.rename', markerId: 'mk_new', name: 'Bridge 2' },
+  /* 6 */ { op: 'marker.remove', markerId: 'mk_2' },
+  /* 7 */ { op: 'marker.move', markerId: 'mk_ghost', position: '1' },
+  /* 8 */ { op: 'marker.remove', markerId: 'mk_ghost' },
+  /* 9 */ { op: 'marker.add', markerId: 'mk_num', position: '10', number: 7 },
+];
+
+const markerGhosts = (ticked: ReadonlySet<number> | null = null, preview = markerPreview(markerSession())) =>
+  ghostsOf(MARKER_STEPS, preview, markerSession(), ticked).filter((g) => g.kind.startsWith('marker-'));
+const markerUnticked = (...steps: number[]) => new Set(MARKER_STEPS.map((_, i) => i).filter((i) => !steps.includes(i + 1)));
+
+test('marker.add: a ghost flag (no length) or a ghost range (a length), numbered by step, the lowest free number of its kind', () => {
+  const [flag, range] = markerGhosts();
+  assert.deepEqual(flag, { kind: 'marker-add', step: 1, markerId: 'mk_new', number: 3, name: 'Bridge', position: '480000', length: null });
+  // Cycle markers number apart from position markers: 1 is taken, so 2.
+  assert.deepEqual(range, { kind: 'marker-add', step: 2, markerId: 'mk_loop', number: 2, name: 'Fill', position: '96000', length: '192000' });
+  // A given number is kept.
+  assert.deepEqual(markerGhosts().find((g) => g.step === 9), { kind: 'marker-add', step: 9, markerId: 'mk_num', number: 7, name: '', position: '10', length: null });
+});
+
+test("marker.move: before and after (with a cycle marker's length), the old value from the preview's before", () => {
+  assert.deepEqual(markerGhosts().find((g) => g.step === 3), {
+    kind: 'marker-move',
+    step: 3,
+    markerId: 'mk_1',
+    number: 1,
+    name: 'Intro',
+    before: { position: '0', length: null },
+    after: { position: '48000', length: null },
+  });
+  assert.deepEqual(markerGhosts().find((g) => g.step === 4), {
+    kind: 'marker-move',
+    step: 4,
+    markerId: 'mk_cyc',
+    number: 1,
+    name: 'Loop',
+    before: { position: '96000', length: '96000' },
+    after: { position: '200000', length: '50000' },
+  });
+  // The preview's before wins over the snapshot.
+  const preview = markerPreview(markerSession(), { 'marker:mk_1': { ...(markerSession().entities['marker:mk_1'] as unknown as Record<string, unknown>), position: '24000' } });
+  const moved = markerGhosts(null, preview).find((g) => g.step === 3) as Extract<Ghost, { kind: 'marker-move' }>;
+  assert.deepEqual(moved.before, { position: '24000', length: null });
+});
+
+test("marker.rename after a ticked marker.add takes its old name from that step; marker.remove keeps the marker's place and number", () => {
+  assert.deepEqual(markerGhosts().find((g) => g.step === 5), { kind: 'marker-rename', step: 5, markerId: 'mk_new', number: 3, position: '480000', length: null, before: 'Bridge', after: 'Bridge 2' });
+  assert.deepEqual(markerGhosts().find((g) => g.step === 6), { kind: 'marker-remove', step: 6, markerId: 'mk_2', number: 2, name: 'Verse', position: '384000', length: null });
+});
+
+test('an unticked marker step gives none and changes no later old value; a marker nobody holds gives none', () => {
+  assert.deepEqual(markerGhosts().map((g) => [g.kind, g.step]), [
+    ['marker-add', 1],
+    ['marker-add', 2],
+    ['marker-move', 3],
+    ['marker-move', 4],
+    ['marker-rename', 5],
+    ['marker-remove', 6],
+    ['marker-add', 9],
+  ]);
+  // Step 1 unticked: the rename of its marker has nothing to rename.
+  assert.deepEqual(markerGhosts(markerUnticked(1)).map((g) => g.step), [2, 3, 4, 6, 9]);
+  // Step 3 unticked: no move ghost, and nothing else changes.
+  assert.deepEqual(markerGhosts(markerUnticked(3)).map((g) => g.step), [1, 2, 4, 5, 6, 9]);
+  // An unnumbered add after a ticked remove takes the freed number.
+  const later = ghostsOf([{ op: 'marker.remove', markerId: 'mk_2' }, { op: 'marker.add', markerId: 'mk_x', position: '5' }], markerPreview(markerSession()), markerSession(), null);
+  assert.equal((later.find((g) => g.kind === 'marker-add') as Extract<Ghost, { kind: 'marker-add' }>).number, 2);
+  // ... and with the remove unticked, the next one after 2.
+  const kept = ghostsOf([{ op: 'marker.remove', markerId: 'mk_2' }, { op: 'marker.add', markerId: 'mk_x', position: '5' }], markerPreview(markerSession()), markerSession(), new Set([1]));
+  assert.equal((kept.find((g) => g.kind === 'marker-add') as Extract<Ghost, { kind: 'marker-add' }>).number, 3);
+  // A marker's ghosts are not on a strip.
+  assert.equal(hasStripGhost(markerGhosts(), 1), false);
 });
