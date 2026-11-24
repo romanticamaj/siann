@@ -694,3 +694,93 @@ test('(g) the commit that removes master:master drops an ended master overlay, a
   fresh.cancelGesture();
   assert.throws(() => fresh.beginGesture('master:master', 'pan'), (e: unknown) => e instanceof ReadModelError && e.code === 'not_continuous');
 });
+
+// m5b-engine-markers: marker:<id> refs, the markers table of a sync chunk, and
+// its deltas. Without them parseRef refused the refs (invalid_ref) and a sync of
+// a document with a marker failed its hash check.
+test('(i) marker refs parse, sync as a table and follow session.changed', async () => {
+  assert.deepEqual(parseRef('marker:mk_1'), { type: 'marker', id: 'mk_1' });
+  assert.deepEqual(parseRef('marker:mk-2'), { type: 'marker', id: 'mk-2' });
+
+  const model = new ReadModel();
+  await model.fromSync(chunks);
+  for (let i = 0; i < seq.steps.length; i += 1) await model.applyChanged(step(i).event, step(i).fetched);
+  for (const s of [...seq.locators.steps, ...seq.master.steps, ...seq.buses.steps]) {
+    await model.applyChanged(s.event as unknown as SessionChanged, s.fetch.result.entities as unknown as FetchedEntity[]);
+  }
+  assert.deepEqual(model.getSnapshot()!.markers, []);
+  const expected: Array<Array<[string, string, string | undefined, string]>> = [
+    [['mk_pos', '0', undefined, 'Intro']],
+    [['mk_cyc', '96000', '48000', ''], ['mk_pos', '0', undefined, 'Intro']],
+    [['mk_cyc', '144000', '96000', ''], ['mk_pos', '0', undefined, 'Intro']],
+    [['mk_cyc', '144000', '96000', 'Chorus 聲'], ['mk_pos', '0', undefined, 'Intro']],
+    [['mk_pos', '0', undefined, 'Intro']],
+  ];
+  for (let i = 0; i < seq.markers.steps.length; i += 1) {
+    const s = seq.markers.steps[i]!;
+    const snapshot = await model.applyChanged(
+      s.event as unknown as SessionChanged,
+      s.fetch.result.entities as unknown as FetchedEntity[],
+    );
+    // The document hash is the engine's (the generator's src/hash).
+    assert.equal(snapshot.documentHash, s.documentHash, `step ${i}`);
+    assert.deepEqual(
+      snapshot.markers.map((m) => [m.id, m.position, m.length, m.name]),
+      expected[i],
+      `step ${i}`,
+    );
+    for (const m of snapshot.markers) assert.equal(snapshot.entities[`marker:${m.id}`], m);
+  }
+  assert.equal(model.getSnapshot()!.entities['marker:mk_cyc'], undefined);
+
+  const synced = await new ReadModel().fromSync(seq.markers.sync as unknown as SyncChunk[]);
+  assert.equal(synced.documentHash, seq.markers.steps[1]!.documentHash);
+  assert.deepEqual(synced.markers.map((m) => m.id), ['mk_cyc', 'mk_pos']);
+  assert.equal(synced.markers[0]!.number, 1);
+  assert.equal(synced.markers[1]!.number, 1);
+});
+
+// The v4 model fixture with markers hashes as the bridge says.
+test('the markers model fixture syncs with its document hash', async () => {
+  const fixture = readFixture<{ document: Record<string, unknown>; entityHashes: readonly unknown[]; documentHash: string }>(
+    'model',
+    'session-document-v4-markers.json',
+  );
+  const chunk = {
+    revision: 'r9',
+    seq: '0',
+    documentHash: fixture.documentHash,
+    entities: fixture.entityHashes.length,
+    meters: null,
+    chunk: fixture.document as unknown as SyncChunk['chunk'],
+    next: null,
+  } as unknown as SyncChunk;
+  const snapshot = await new ReadModel().fromSync([chunk]);
+  assert.equal(snapshot.documentHash, fixture.documentHash);
+  assert.deepEqual(snapshot.markers.map((m) => m.id), ['mrk-blank', 'mrk_loop', 'mrk_verse']);
+  assert.equal(snapshot.markers[1]!.length, '192000');
+  assert.equal(snapshot.markers[0]!.name, '');
+});
+
+// m5b-ui-sends-buses (protocol-gestures-v0.md): a bus fader's gain and a
+// send's level take a gesture overlay, as a track's gain does; a bus's pan
+// does not (the gesture protocol takes only gain on a bus: its pan is one
+// bus.set_pan when the drag ends), nor does any send field but the level.
+test('(j) a gesture overlay on a bus gain and on a send level; select() shows it, the snapshot stays', async () => {
+  const model = new ReadModel();
+  await model.fromSync(seq.buses.sync as unknown as SyncChunk[], 'ses_1');
+  const committedBus = model.getSnapshot()!.entities['bus:b1'] as unknown as { gainMilliDb: number };
+  model.beginGesture('bus:b1', 'gainMilliDb');
+  model.setGesture(-7000);
+  assert.equal(gainOf(model.select('bus:b1')), -7000);
+  assert.equal(gainOf(model.getSnapshot()!.buses[0]), committedBus.gainMilliDb, 'the snapshot is untouched');
+  model.cancelGesture();
+  model.beginGesture('send:s1', 'levelMilliDb');
+  model.setGesture(-15000);
+  assert.equal((model.select('send:s1') as unknown as { levelMilliDb: number }).levelMilliDb, -15000);
+  assert.equal((model.select('bus:b1') as unknown as { gainMilliDb: number }).gainMilliDb, committedBus.gainMilliDb, 'the bus shows its committed gain');
+  model.cancelGesture();
+  for (const [ref, field] of [['bus:b1', 'pan'], ['send:s1', 'gainMilliDb'], ['track:trk_1', 'levelMilliDb']] as const) {
+    assert.throws(() => model.beginGesture(ref, field), (e: unknown) => e instanceof ReadModelError && e.code === 'not_continuous', `${ref} ${field}`);
+  }
+});

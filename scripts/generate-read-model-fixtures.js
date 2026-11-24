@@ -22,7 +22,10 @@
 // length "0"), so its hash and the document hash return to the values before
 // the first step. A seventh part (m5b-engine-track-notes), also after the master
 // steps, sets notes on trk_1 and removes them with "", so the track and document
-// hashes return to their values before. Hashes come from the bridge's fixture-verified src/hash (RFC 8785 and RFC 6962), independent
+// hashes return to their values before. An eighth part (m5b-engine-markers, format v4), after the bus
+// steps, adds a marker, moves, renames and removes it, and syncs a document
+// holding markers (a table after the sends, only in a chunk that holds rows).
+// Hashes come from the bridge's fixture-verified src/hash (RFC 8785 and RFC 6962), independent
 // of the renderer code the fixture tests.
 const fs = require('node:fs');
 const path = require('node:path');
@@ -125,7 +128,8 @@ function entitiesOf(document) {
   if (document.locators) out.push({ type: 'locators', entity: document.locators });
   if (document.master) out.push({ type: 'master', entity: document.master });
   // Buses and sends after the master, each in id order (m5b-engine-buses-sends).
-  for (const [table, type] of [['buses', 'bus'], ['sends', 'send']]) {
+  // Markers after the sends, in id order (m5b-engine-markers).
+  for (const [table, type] of [['buses', 'bus'], ['sends', 'send'], ['markers', 'marker']]) {
     const rows = [...(document[table] || [])].sort((a, b) => (a.id < b.id ? -1 : a.id > b.id ? 1 : 0));
     for (const entity of rows) out.push({ type, entity });
   }
@@ -138,6 +142,12 @@ function bus(id, overrides = {}) {
 
 function send(id, trackId, busId) {
   return { schema: 'siann.entity.send.v1', id, trackId, busId, levelMilliDb: 0, pre: false, enabled: true };
+}
+
+function marker(id, number, name, position, length) {
+  const out = { schema: 'siann.entity.marker.v1', id, number, name, position };
+  if (length !== undefined) out.length = length;
+  return out;
 }
 
 function locators(left, right) {
@@ -178,7 +188,8 @@ function syncChunks(document, revision, seq) {
     const masterEntry = slice.find((e) => e.type === 'master');
     if (masterEntry) chunk.master = masterEntry.entity;
     // Buses and sends only in a chunk that holds rows (m5b-engine-buses-sends).
-    for (const [table, type] of [['buses', 'bus'], ['sends', 'send']]) {
+    // Markers likewise (m5b-engine-markers), after the sends.
+    for (const [table, type] of [['buses', 'bus'], ['sends', 'send'], ['markers', 'marker']]) {
       const rows = slice.filter((e) => e.type === type).map((e) => e.entity);
       if (rows.length > 0) chunk[table] = rows;
     }
@@ -339,6 +350,32 @@ function buildNotesSteps(after) {
   });
 }
 
+// After the bus steps, in format v4: marker.add m1 (a cycle marker), marker.move
+// m1, marker.rename m1, then marker.remove m1 (m5b-engine-markers). A second
+// marker, a position marker, is added first and stays, so the last document
+// still holds the table.
+function buildMarkerSteps(after) {
+  const start = clone(after.document);
+  start.schemaVersion = 'siann.session_document.v4';
+  return recordSteps(start, Number(after.event.seq), Number(after.event.revision.slice(1)), (commit) => {
+    commit((d) => {
+      d.markers = [marker('mk_pos', 1, 'Intro', '0')];
+    }, [{ ref: 'marker:mk_pos', change: 'added' }]);
+    commit((d) => {
+      d.markers = [marker('mk_cyc', 1, '', '96000', '48000'), ...d.markers];
+    }, [{ ref: 'marker:mk_cyc', change: 'added' }]);
+    commit((d) => {
+      d.markers[0] = marker('mk_cyc', 1, '', '144000', '96000');
+    }, [{ ref: 'marker:mk_cyc', change: 'modified' }]);
+    commit((d) => {
+      d.markers[0] = marker('mk_cyc', 1, 'Chorus 聲', '144000', '96000');
+    }, [{ ref: 'marker:mk_cyc', change: 'modified' }]);
+    commit((d) => {
+      d.markers = d.markers.filter((m) => m.id !== 'mk_cyc');
+    }, [{ ref: 'marker:mk_cyc', change: 'removed' }]);
+  });
+}
+
 function recordSteps(initial, firstSeq, firstRevision, run) {
   const steps = [];
   let document = initial;
@@ -436,6 +473,8 @@ function buildFixture() {
   const withBus = busSteps[0];
   const fadeSteps = buildFadeSteps(masterEnd);
   const notesSteps = buildNotesSteps(masterEnd);
+  const markerSteps = buildMarkerSteps(busSteps[busSteps.length - 1]);
+  const withMarkers = markerSteps[1];
   return {
     schemaVersion: 'siann.protocol_fixtures.v1',
     description:
@@ -474,6 +513,11 @@ function buildFixture() {
       before: { revision: masterEnd.event.revision, documentHash: masterEnd.documentHash },
       text: TRACK_NOTES,
       steps: notesSteps,
+    },
+    markers: {
+      steps: markerSteps,
+      // A sync pinned at the revision that holds both markers.
+      sync: syncChunks(withMarkers.document, withMarkers.event.revision, withMarkers.event.seq),
     },
   };
 }

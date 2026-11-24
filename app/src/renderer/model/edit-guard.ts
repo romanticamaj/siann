@@ -16,15 +16,18 @@ export function structuralBlocked(heard: string | null): boolean {
 
 // Track ops sent as commands that change the structure or a value the
 // engine commits onto main: add, remove, rename, mute, solo, pan and gain,
-// the input, the output and the monitor (m5b-ui-recording; 10.11, 22).
-const TRACK_OPS = new Set(['track.add', 'track.remove', 'track.rename', 'track.set_mute', 'track.set_solo', 'track.set_pan', 'track.set_gain', 'track.set_input', 'track.set_output', 'track.set_monitor']);
+// the input, the output and the monitor (m5b-ui-recording; 10.11, 22), and
+// the notes (m5b-ui-notepad; 10.11, 24).
+const TRACK_OPS = new Set(['track.add', 'track.remove', 'track.rename', 'track.set_mute', 'track.set_solo', 'track.set_pan', 'track.set_gain', 'track.set_input', 'track.set_output', 'track.set_monitor', 'track.set_notes']);
 // An insert, its removal and its bypass (m5b-ui-inserts-master) commit onto
 // main too; a plugin's editor window, the registry and an approval do not.
 // A media's rename and removal (m5b-ui-media) commit onto main as
 // track.rename does.
 const OTHER_OPS = new Set(['media.import', 'media.rename', 'media.remove', 'transport.record', 'plugin.instantiate', 'plugin.insert', 'plugin.remove', 'plugin.set_bypass']);
 
+// Every bus and send command (m5b-ui-sends-buses; 4.5 C5; 10.11, 25) commits onto main
+// too; the bus fader and the send level are gestures (gesture.*) and stay.
 export function isStructural(op: string): boolean {
-  if (op.startsWith('clip.') || op.startsWith('marker.')) return true;
+  if (op.startsWith('clip.') || op.startsWith('marker.') || op.startsWith('bus.') || op.startsWith('send.')) return true;
   return TRACK_OPS.has(op) || OTHER_OPS.has(op);
 }

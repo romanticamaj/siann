@@ -24,6 +24,9 @@ const NAMES: StepNames = {
   clip: (id) => ({ clp_1: { trackId: 'trk_k', position: '72000' } } as Record<string, { trackId: string; position: string }>)[id],
   slot: (id) => ({ slt_1: { trackId: 'trk_k', name: 'Pro-Q 3' } } as Record<string, { trackId: string; name: string }>)[id],
   sampleRate: 48000,
+  // m5b-ui-sends-buses: a bus by its name, a send by its track and bus.
+  bus: (id) => ({ bus_v: 'Verb', bus_d: 'Delay 雙' } as Record<string, string>)[id],
+  send: (id) => ({ snd_1: { trackId: 'trk_k', busId: 'bus_v' } } as Record<string, { trackId: string; busId: string }>)[id],
 };
 
 const STEPS = {
@@ -91,6 +94,29 @@ const STEPS = {
   sessionRename: { op: 'session.rename', name: 'Night Drive' },
   tempo: { op: 'session.set_tempo', tempo: [{ ticks: '0', milliBpm: 128000 }] },
   tempoMap: { op: 'session.set_tempo', tempo: [{ ticks: '0', milliBpm: 120000 }, { ticks: '7680', milliBpm: 96500 }] },
+  // m5b-ui-sends-buses: the fourteen bus, send and routing commands (protocol-engine-v0, "Buses and sends").
+  busAdd: { op: 'bus.add', busId: 'bus_n', name: 'Hall' },
+  busRemove: { op: 'bus.remove', busId: 'bus_v' },
+  busRemoveUnknown: { op: 'bus.remove', busId: 'bus_x' },
+  busRename: { op: 'bus.rename', busId: 'bus_v', name: 'Plate' },
+  busGain: { op: 'bus.set_gain', busId: 'bus_v', gainMilliDb: -6000 },
+  busPan: { op: 'bus.set_pan', busId: 'bus_v', pan: -2500 },
+  busMute: { op: 'bus.set_mute', busId: 'bus_v', mute: true },
+  busUnmute: { op: 'bus.set_mute', busId: 'bus_v', mute: false },
+  busSolo: { op: 'bus.set_solo', busId: 'bus_v', solo: true },
+  busUnsolo: { op: 'bus.set_solo', busId: 'bus_v', solo: false },
+  busOutput: { op: 'bus.set_output', busId: 'bus_v', output: { busId: 'bus_d' } },
+  busOutputMaster: { op: 'bus.set_output', busId: 'bus_v', output: null },
+  sendAdd: { op: 'send.add', sendId: 'snd_n', trackId: 'trk_a', busId: 'bus_v', levelMilliDb: 0, pre: false },
+  sendRemove: { op: 'send.remove', sendId: 'snd_1' },
+  sendRemoveUnknown: { op: 'send.remove', sendId: 'snd_x' },
+  sendLevel: { op: 'send.set_level', sendId: 'snd_1', levelMilliDb: -12000 },
+  sendPre: { op: 'send.set_pre', sendId: 'snd_1', pre: true },
+  sendPost: { op: 'send.set_pre', sendId: 'snd_1', pre: false },
+  sendOn: { op: 'send.set_enabled', sendId: 'snd_1', enabled: true },
+  sendOff: { op: 'send.set_enabled', sendId: 'snd_1', enabled: false },
+  trackOutput: { op: 'track.set_output', trackId: 'trk_a', output: { busId: 'bus_v' } },
+  trackOutputMaster: { op: 'track.set_output', trackId: 'trk_a', output: null },
   unknown: { op: 'track.set_colour', trackId: 'trk_a', colour: '#ff0000' },
 } as const satisfies Record<string, Record<string, unknown>>;
 
@@ -148,6 +174,28 @@ test('English wording for every op the engine accepts, and a generic line for an
     sessionRename: `Rename the session to ${n('Night Drive')}`,
     tempo: 'Set the tempo to 128 BPM',
     tempoMap: 'Set a tempo map with 2 changes',
+    busAdd: `Add bus ${n('Hall')}`,
+    busRemove: `Remove bus ${n('Verb')}`,
+    busRemoveUnknown: 'Remove a bus',
+    busRename: `Rename bus ${n('Verb')} to ${n('Plate')}`,
+    busGain: `Set bus ${n('Verb')} volume to ${formatMilliDb(-6000)}`,
+    busPan: `Pan bus ${n('Verb')} to L25`,
+    busMute: `Mute bus ${n('Verb')}`,
+    busUnmute: `Unmute bus ${n('Verb')}`,
+    busSolo: `Solo bus ${n('Verb')}`,
+    busUnsolo: `Unsolo bus ${n('Verb')}`,
+    busOutput: `Route bus ${n('Verb')} to ${n('Delay 雙')}`,
+    busOutputMaster: `Route bus ${n('Verb')} to the master`,
+    sendAdd: `Send ${n('Lead')} to ${n('Verb')}`,
+    sendRemove: `Remove the send from ${n('Keys')} to ${n('Verb')}`,
+    sendRemoveUnknown: 'Remove a send',
+    sendLevel: `Set the send from ${n('Keys')} to ${n('Verb')} to ${formatMilliDb(-12000)}`,
+    sendPre: `Make the send from ${n('Keys')} to ${n('Verb')} pre-fader`,
+    sendPost: `Make the send from ${n('Keys')} to ${n('Verb')} post-fader`,
+    sendOn: `Turn on the send from ${n('Keys')} to ${n('Verb')}`,
+    sendOff: `Turn off the send from ${n('Keys')} to ${n('Verb')}`,
+    trackOutput: `Route ${n('Lead')} to ${n('Verb')}`,
+    trackOutputMaster: `Route ${n('Lead')} to the master`,
     unknown: 'Change (details below)',
   };
   for (const [step, text] of Object.entries(expected)) assert.equal(describe('en', step as StepName), text, step);
@@ -193,7 +241,7 @@ test('positions follow the primary display format and the tempo map', () => {
 });
 
 test('no step description shows an entity id, a raw pan value or a milli-dB integer', () => {
-  const ids = ['trk_a', 'trk_b', 'trk_v', 'trk_k', 'trk_x', 'trk_pad', 'clp_1', 'clp_9', 'clp_new', 'med_1', 'med_2', 'slt_1', 'slt_new', 'com.example.eq'];
+  const ids = ['trk_a', 'trk_b', 'trk_v', 'trk_k', 'trk_x', 'trk_pad', 'clp_1', 'clp_9', 'clp_new', 'med_1', 'med_2', 'slt_1', 'slt_new', 'com.example.eq', 'bus_v', 'bus_d', 'bus_n', 'bus_x', 'snd_1', 'snd_n', 'snd_x'];
   for (const locale of LOCALES) {
     for (const step of Object.keys(STEPS) as StepName[]) {
       const text = describe(locale, step);
@@ -207,8 +255,8 @@ test('no step description shows an entity id, a raw pan value or a milli-dB inte
 
 test('Chinese step descriptions use the glossary terms', () => {
   const terms: Record<'zh-Hant' | 'zh-Hans', Partial<Record<StepName, string>>> = {
-    'zh-Hant': { add: '音軌', removeUnknown: '音軌', gain: '音量', pan: '聲相', mute: '靜音', unmute: '靜音', solo: '獨奏', unsolo: '獨奏', move: '片段', clipRemove: '片段', insert: '外掛', tempo: '速度', inputMono: '輸入', inputClear: '輸入', monitorOff: '監聽', monitorAuto: '監聽', monitorInput: '監聽', notes: '記事本', notesClear: '記事本', fadeIn: '淡入', fadeOut: '淡出', fades: '淡出', fadeInRemove: '淡入', fadesRemove: '淡入', fadeOutRemoveIn: '淡出' },
-    'zh-Hans': { add: '音轨', removeUnknown: '音轨', gain: '音量', pan: '声像', mute: '静音', unmute: '静音', solo: '独奏', unsolo: '独奏', move: '片段', clipRemove: '片段', insert: '插件', tempo: '速度', inputMono: '输入', inputClear: '输入', monitorOff: '监听', monitorAuto: '监听', monitorInput: '监听', notes: '记事本', notesClear: '记事本', fadeIn: '淡入', fadeOut: '淡出', fades: '淡出', fadeInRemove: '淡入', fadesRemove: '淡入', fadeOutRemoveIn: '淡出' },
+    'zh-Hant': { add: '音軌', removeUnknown: '音軌', gain: '音量', pan: '聲相', mute: '靜音', unmute: '靜音', solo: '獨奏', unsolo: '獨奏', move: '片段', clipRemove: '片段', insert: '外掛', tempo: '速度', inputMono: '輸入', inputClear: '輸入', monitorOff: '監聽', monitorAuto: '監聽', monitorInput: '監聽', notes: '記事本', notesClear: '記事本', fadeIn: '淡入', fadeOut: '淡出', fades: '淡出', fadeInRemove: '淡入', fadesRemove: '淡入', fadeOutRemoveIn: '淡出', busAdd: '匯流排', busRemoveUnknown: '匯流排', busGain: '音量', busPan: '聲相', sendAdd: '傳送', sendLevel: '傳送', sendRemoveUnknown: '傳送', busOutputMaster: '主輸出', trackOutputMaster: '主輸出' },
+    'zh-Hans': { add: '音轨', removeUnknown: '音轨', gain: '音量', pan: '声像', mute: '静音', unmute: '静音', solo: '独奏', unsolo: '独奏', move: '片段', clipRemove: '片段', insert: '插件', tempo: '速度', inputMono: '输入', inputClear: '输入', monitorOff: '监听', monitorAuto: '监听', monitorInput: '监听', notes: '记事本', notesClear: '记事本', fadeIn: '淡入', fadeOut: '淡出', fades: '淡出', fadeInRemove: '淡入', fadesRemove: '淡入', fadeOutRemoveIn: '淡出', busAdd: '总线', busRemoveUnknown: '总线', busGain: '音量', busPan: '声像', sendAdd: '发送', sendLevel: '发送', sendRemoveUnknown: '发送', busOutputMaster: '主输出', trackOutputMaster: '主输出' },
   };
   for (const [locale, table] of Object.entries(terms) as Array<['zh-Hant' | 'zh-Hans', Record<string, string>]>) {
     for (const [step, term] of Object.entries(table)) {
@@ -312,6 +360,10 @@ const CODES = [
   'agent_busy',
   'agent_not_connected',
   'invalid_request_text',
+  // The Notepad's refusal (m5b-ui-notepad; protocol-engine-v0.md track.set_notes).
+  'invalid_notes',
+  // A bus routed into a loop (m5b-ui-sends-buses; protocol-engine-v0, "Buses and sends").
+  'routing_cycle',
 ];
 
 test('engine error codes: catalog text in Chinese, the engine\'s own message in English', () => {

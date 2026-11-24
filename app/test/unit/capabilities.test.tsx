@@ -151,6 +151,13 @@ test('has(method) and feature(name) over the full and the reduced capabilities',
   assert.equal(full.feature('loudness'), true);
   assert.equal(reduced.feature('load'), false, 'the reduced engine has no features.load');
   assert.equal(reduced.feature('loudness'), false, 'the reduced engine has no features.loudness');
+  // m5b-engine-markers: features.markers and the four marker commands.
+  assert.equal(full.feature('markers'), true);
+  assert.equal(reduced.feature('markers'), false, 'the reduced engine has no features.markers');
+  for (const name of ['marker.add', 'marker.move', 'marker.rename', 'marker.remove']) {
+    assert.equal(full.command(name), true, name);
+    assert.equal(reduced.command(name), false, name);
+  }
   const none = capabilitySelector(null);
   assert.equal(none.has('engine.about'), false);
   assert.equal(none.feature('plans'), false);

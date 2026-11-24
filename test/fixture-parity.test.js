@@ -231,3 +231,39 @@ test('the buses model fixture matches its Node generator and keeps the untouched
   assert.equal(slot.busId, 'bus-drums');
   assert.equal(slot.trackId, undefined);
 });
+
+// m5b-engine-markers: format v4 adds the markers table and nothing else, so every
+// v3 entity keeps its hash; the earlier fixtures stay as they were.
+test('the markers model fixture matches its Node generator and keeps every v3 hash', () => {
+  const { FIXTURE_FILE_V4_MARKERS, buildFixtureV4Markers, FIXTURE_FILE_V3_BUSES } = generators.model;
+  const committed = JSON.parse(fs.readFileSync(FIXTURE_FILE_V4_MARKERS, 'utf8'));
+  assert.deepEqual(committed, buildFixtureV4Markers());
+  assert.equal(committed.document.schemaVersion, 'siann.session_document.v4');
+  const v3 = JSON.parse(fs.readFileSync(FIXTURE_FILE_V3_BUSES, 'utf8'));
+  assert.equal(v3.document.schemaVersion, 'siann.session_document.v3');
+  assert.equal(v3.document.markers, undefined);
+  const v3Hashes = new Map(v3.entityHashes.map((leaf) => [`${leaf.type}:${leaf.id}`, leaf.entityHash]));
+  for (const [key, hash] of v3Hashes) {
+    assert.equal(committed.entityHashes.find((l) => `${l.type}:${l.id}` === key)?.entityHash, hash, key);
+  }
+  const added = committed.entityHashes.filter((leaf) => !v3Hashes.has(`${leaf.type}:${leaf.id}`));
+  assert.deepEqual(added.map((l) => `${l.type}:${l.id}`).sort(), ['marker:mrk-blank', 'marker:mrk_loop', 'marker:mrk_verse']);
+  for (const leaf of added) {
+    assert.equal(leaf.entityHash, sha256Jcs(committed.document.markers.find((m) => m.id === leaf.id)));
+  }
+  assert.equal(documentHash(committed.entityHashes), committed.documentHash);
+  // Sorted by id; a position marker 1 and a cycle marker 1 coexist; an empty name is kept.
+  assert.deepEqual(committed.document.markers.map((m) => m.id), ['mrk-blank', 'mrk_loop', 'mrk_verse']);
+  const ones = committed.document.markers.filter((m) => m.number === 1);
+  assert.deepEqual(ones.map((m) => m.length !== undefined).sort(), [false, true]);
+  assert.equal(committed.document.markers.find((m) => m.id === 'mrk-blank').name, '');
+  // The earlier fixtures are untouched by the v4 generator.
+  for (const [file, build] of [
+    [generators.model.FIXTURE_FILE, generators.model.buildFixture],
+    [generators.model.FIXTURE_FILE_V2, generators.model.buildFixtureV2],
+    [generators.model.FIXTURE_FILE_V2_MASTER, generators.model.buildFixtureV2Master],
+    [FIXTURE_FILE_V3_BUSES, generators.model.buildFixtureV3Buses],
+  ]) {
+    assert.deepEqual(JSON.parse(fs.readFileSync(file, 'utf8')), build(), file);
+  }
+});

@@ -125,7 +125,7 @@ import type { MeterFrame } from '../model/meter-frames';
 import type { PeaksCache } from '../model/peaks-cache';
 import { WAVE_FRAMES, type RecordingClip } from '../model/record-clip';
 import type { ReadModel, Snapshot } from '../model/read-model';
-import { PlayheadClock } from '../transport/playhead-clock';
+import { MAX_LEAD_MS, PlayheadClock } from '../transport/playhead-clock';
 import { nextScroll } from './auto-scroll';
 import { gestureCommand, newClipId, type TimelineCommand } from './commands';
 import { clipTitle } from './clip-title';
@@ -2763,6 +2763,7 @@ export class TimelineCanvas {
     const page = nextScroll({
       view: this.#view,
       cursor: this.#playhead,
+      lead: Math.floor((MAX_LEAD_MS * rate) / 1000),
       playing: this.#playing,
       enabled: this.#autoScroll,
       dragging: this.#drag !== null || this.#rulerDrag !== null || this.#band !== null,

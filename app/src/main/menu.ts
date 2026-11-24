@@ -16,6 +16,8 @@ export interface MenuCommandItem {
   readonly command: string;
   readonly label: string;
   readonly chord?: string;
+  // false: shown disabled (Remove Bus with no bus selected; m5b-ui-sends-buses).
+  readonly enabled?: false;
 }
 
 export interface MenuSeparator {
@@ -55,7 +57,14 @@ function parseItems(value: unknown, depth: number): MenuItemModel[] | null {
     } else if (item.type === 'command') {
       if (typeof item.command !== 'string' || !COMMAND.test(item.command) || !label(item.label)) return null;
       if (item.chord !== undefined && (typeof item.chord !== 'string' || !CHORD.test(item.chord))) return null;
-      out.push({ type: 'command', command: item.command, label: item.label, ...(item.chord !== undefined ? { chord: item.chord as string } : {}) });
+      if (item.enabled !== undefined && item.enabled !== false) return null;
+      out.push({
+        type: 'command',
+        command: item.command,
+        label: item.label,
+        ...(item.chord !== undefined ? { chord: item.chord as string } : {}),
+        ...(item.enabled === false ? { enabled: false as const } : {}),
+      });
     } else if (item.type === 'submenu' && depth === 0) {
       const items = parseItems(item.items, depth + 1);
       if (!items || !label(item.label)) return null;
@@ -141,6 +150,7 @@ function items(list: readonly MenuItemModel[], send: (command: string) => void):
       label: item.label,
       ...(accelerator ? { accelerator } : {}),
       registerAccelerator: false,
+      ...(item.enabled === false ? { enabled: false } : {}),
       click: (_menuItem, _window, event: ClickEvent | undefined) => {
         if (event?.triggeredByAccelerator) return;
         send(item.command);

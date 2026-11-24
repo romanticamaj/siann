@@ -23,11 +23,14 @@ import type { GestureController } from '../model/gesture-controller';
 import type { MeterStore } from '../model/meter-store';
 import type { RealtimeClient } from '../model/realtime-client';
 import type { SessionClient } from '../model/session-client';
+import { useCapabilities } from '../shell/Capable';
+import type { Rack } from '../shell/layout';
 import { useRecordHost } from '../shell/record-context';
 import { MeterBoard } from './meter-board';
 import { MetersContext } from './meters-context';
 import type { MeterTestHooks } from './MixerMeters';
 import { useMeterBoard } from './Mixer';
+import { availableRacks, shownRack } from './routing';
 import { Strip } from './Strip';
 
 export interface ChannelZoneProps {
@@ -38,8 +41,8 @@ export interface ChannelZoneProps {
   readonly store: MeterStore;
   // The primary selected track, or null.
   readonly trackId: string | null;
-  // The Inserts rack switch (siann.layout.v1), as the MixConsole's strips have it.
-  readonly racks?: { readonly inserts: boolean };
+  // The rack switches (siann.layout.v1): the lit one's rack, as the MixConsole's strips show it.
+  readonly racks?: { readonly shown: Rack | null };
   // The strip's e: lit while the zone shows its track (always, while shown), and its press.
   readonly onEditChannel?: (trackId: string) => void;
   // Test-only (SIANN_SHELL_TEST=1): the zone's meter canvas hooks.
@@ -47,6 +50,8 @@ export interface ChannelZoneProps {
 }
 
 export function ChannelZone({ client, gestures, realtime, store, trackId, racks, onEditChannel, onMeterHooks }: ChannelZoneProps) {
+  const can = useCapabilities();
+  const rack = shownRack(racks?.shown === undefined ? 'inserts' : racks.shown, availableRacks(can));
   const record = useRecordHost();
   const recordRef = useRef(record);
   recordRef.current = record;
@@ -57,7 +62,7 @@ export function ChannelZone({ client, gestures, realtime, store, trackId, racks,
   return (
     <MetersContext.Provider value={board}>
       <div className="channel-zone" data-testid="channel-zone" ref={container}>
-        {trackId ? <Strip key={trackId} trackId={trackId} client={client} gestures={gestures} inserts={racks?.inserts ?? true} variant="channel" editLit onEdit={onEditChannel} /> : null}
+        {trackId ? <Strip key={trackId} trackId={trackId} client={client} gestures={gestures} rack={rack} variant="channel" editLit onEdit={onEditChannel} /> : null}
         <canvas className="channel-meters" ref={canvas} aria-hidden="true" />
       </div>
     </MetersContext.Provider>

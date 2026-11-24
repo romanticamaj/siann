@@ -12,11 +12,16 @@
 //
 // Framework-free; PluginPicker.tsx renders it.
 
-import { failureOf, type PluginActions, type PluginFailure, type RegistryEntry } from '../model/plugin-actions';
+import { failureOf, type InsertOwner, type PluginActions, type PluginFailure, type RegistryEntry } from '../model/plugin-actions';
+
+export type { InsertOwner } from '../model/plugin-actions';
 
 export interface PickerState {
   readonly open: boolean;
+  // The track the picker inserts on, or null (no picker, or a bus's).
   readonly trackId: string | null;
+  // The track or bus the picker inserts on (m5b-ui-sends-buses: a bus strip's rack).
+  readonly owner: InsertOwner | null;
   // null while plugin.registry is asked.
   readonly installs: readonly RegistryEntry[] | null;
   readonly query: string;
@@ -26,7 +31,7 @@ export interface PickerState {
   readonly busy: boolean;
 }
 
-const CLOSED: PickerState = Object.freeze({ open: false, trackId: null, installs: null, query: '', confirm: null, error: null, busy: false });
+const CLOSED: PickerState = Object.freeze({ open: false, trackId: null, owner: null, installs: null, query: '', confirm: null, error: null, busy: false });
 
 // The last segment of an install's path, whatever its separators.
 export const fileName = (file: string) => file.split(/[\\/]/).filter(Boolean).pop() ?? file;
@@ -62,9 +67,11 @@ export class PickerController {
     return query === '' ? all : all.filter((e) => e.name.toLowerCase().includes(query) || fileName(e.path).toLowerCase().includes(query));
   }
 
-  async open(trackId: string): Promise<void> {
+  // A track id, or the track or bus the empty slot belongs to.
+  async open(target: string | InsertOwner): Promise<void> {
+    const owner: InsertOwner = typeof target === 'string' ? { trackId: target } : target;
     const session = ++this.#opened;
-    this.#set({ ...CLOSED, open: true, trackId });
+    this.#set({ ...CLOSED, open: true, owner, trackId: 'trackId' in owner ? owner.trackId : null });
     await this.#load(session);
   }
 
@@ -101,14 +108,14 @@ export class PickerController {
     if (session === this.#opened) await this.#load(session);
   }
 
-  // Inserts the install at the end of the track's chain; closes on success.
+  // Inserts the install at the end of the track's or the bus's chain; closes on success.
   async choose(entry: RegistryEntry): Promise<boolean> {
-    const trackId = this.#state.trackId;
-    if (!this.#state.open || trackId === null || !entry.approved) return false;
+    const owner = this.#state.owner;
+    if (!this.#state.open || owner === null || !entry.approved) return false;
     const session = this.#opened;
     this.#set({ ...this.#state, busy: true, error: null });
     try {
-      await this.#actions.instantiate(trackId, entry);
+      await this.#actions.instantiate(owner, entry);
     } catch (error) {
       if (session === this.#opened) this.#set({ ...this.#state, busy: false, error: failureOf(error) });
       return false;

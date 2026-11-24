@@ -44,6 +44,38 @@ test('every flag that gates an app e2e test has a row in section 3.2 of the test
   }
 });
 
+// A path gate: the spec reads a variable naming a built file
+// (`const PLUGIN = process.env.SIANN_TEST_PLUGIN_CLAP;`) and a test skips
+// without it (`test.skip(!PLUGIN, ...)`). Each spec with such a gate has a row
+// in section 3.2 whose Test column names the spec and whose Gate column names
+// the variable.
+function e2ePathGates() {
+  const gates = [];
+  for (const name of fs.readdirSync(E2E)) {
+    if (!name.endsWith('.ts')) continue;
+    const source = fs.readFileSync(path.join(E2E, name), 'utf8');
+    const seen = new Set();
+    for (const [, local, variable] of source.matchAll(/const\s+([A-Za-z_$][\w$]*)\s*=\s*process\.env\.(SIANN_[A-Z0-9_]+)\s*;/g)) {
+      const skip = new RegExp(`test\\.skip\\(\\s*!${local.replace(/\$/g, '\\$')}\\b`);
+      if (skip.test(source) && !seen.has(variable)) {
+        seen.add(variable);
+        gates.push({ spec: name, variable });
+      }
+    }
+  }
+  return gates;
+}
+
+test('every variable a test of an app e2e spec skips without has a section 3.2 row naming the spec', () => {
+  const gates = e2ePathGates();
+  assert.ok(gates.some((g) => g.spec === 'inserts.spec.ts' && g.variable === 'SIANN_TEST_PLUGIN_CLAP'), 'the scan finds the known gate');
+  const rows = section32().split('\n').filter((line) => line.startsWith('| '));
+  for (const { spec, variable } of gates) {
+    const row = rows.find((line) => line.split('|')[1]?.includes(`\`${spec}\``) && line.split('|')[2]?.includes(`\`${variable}\``));
+    assert.ok(row, `${spec} skips without ${variable}: section 3.2 has a row naming ${spec} with ${variable} in its Gate column`);
+  }
+});
+
 function matrixSection(heading) {
   const text = fs.readFileSync(MATRIX, 'utf8').replace(/\r\n/g, '\n');
   const start = text.indexOf(`\n## ${heading}`);

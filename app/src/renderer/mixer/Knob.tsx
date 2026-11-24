@@ -6,7 +6,8 @@
 // needle. Colours are the tokens' values, as knob() reads them. A pending
 // plan's pan (m5b-ui-ghosts) adds knob()'s ghost group: the violet tick at the
 // new angle and its dot, with the knob's part id and -ghost. The svg takes the
-// caller's attributes, so the strip makes it the pan slider.
+// caller's attributes, so the strip makes it the pan slider; a tooltip is its
+// <title> (a disabled knob's reason, m5b-ui-sends-buses).
 
 import type { Ref, SVGProps } from 'react';
 
@@ -21,13 +22,16 @@ export interface KnobProps extends Omit<SVGProps<SVGSVGElement>, 'ref'> {
   // 'solid' while the proposal is heard (m5b-ui-audition).
   readonly ghostMode?: 'solid';
   readonly ref?: Ref<SVGSVGElement>;
+  // The svg's tooltip, as its <title> (a disabled knob's reason).
+  readonly tooltip?: string;
 }
 
-export function Knob({ pan, ghost, ghostMode, ref, ...rest }: KnobProps) {
+export function Knob({ pan, ghost, ghostMode, ref, tooltip, ...rest }: KnobProps) {
   const paths = knobPaths(pan, ghost);
   const part = (rest as Record<string, unknown>)['data-part-of'];
   return (
     <svg className="knob" viewBox="0 0 24 24" ref={ref} {...rest}>
+      {tooltip === undefined ? null : <title>{tooltip}</title>}
       <path d={paths.track} stroke={TOKENS['bg-slot']} strokeWidth="2.4" fill="none" strokeLinecap="round" />
       {paths.arc === null ? null : <path data-knob="arc" d={paths.arc} stroke={TOKENS['tx-1']} strokeWidth="2" fill="none" strokeLinecap="round" />}
       <circle cx="12" cy="12" r="7" fill={TOKENS['button-line']} stroke={TOKENS.divider} />

@@ -80,7 +80,7 @@ TEST_CASE("The master survives a checkpoint and a reopen", "[session][master]") 
     REQUIRE(value != nullptr);
     CHECK(value->gain.milliDb == -6000);
     const Value checkpoint = siann::json::parse(siann::io::readFile(dir.bundle() / "session.json"));
-    CHECK(checkpoint.find("document")->find("schemaVersion")->asString() == "siann.session_document.v3");
+    CHECK(checkpoint.find("document")->find("schemaVersion")->asString() == "siann.session_document.v4");
     REQUIRE(checkpoint.find("document")->find("master") != nullptr);
     CHECK(checkpoint.find("document")->find("master")->find("gainMilliDb")->asNumber() == -6000);
 }

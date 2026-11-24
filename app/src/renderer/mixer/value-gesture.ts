@@ -15,6 +15,12 @@
 //
 // The control shows the value it is given (the read model's select(), with a
 // gesture overlay), so a strip and the Inspector reading the same track agree.
+//
+// m5b-ui-sends-buses: a send's level is a gain on the levelMilliDb field (the
+// gesture target {ref: send:<id>, param: level}), so a control may name its
+// field; and a bus's pan, which the gesture protocol does not take, drives
+// the same handlers through releaseCommit(): nothing goes out while it is
+// dragged, and its last value is one command at release.
 
 import { useRef, type KeyboardEvent, type PointerEvent } from 'react';
 
@@ -40,11 +46,33 @@ function fromPosition(kind: ValueKind, position: number): number {
   return kind === 'gain' ? positionToMilliDb(position) : positionToPan(position);
 }
 
+// What the handlers drive: the GestureController, or releaseCommit()'s stand-in.
+export type ValueGestures = Pick<GestureController, 'begin' | 'move' | 'end'>;
+
+// A stand-in for the gesture controller that sends nothing until the end, and
+// then its last value through `commit` (a bus's pan: one bus.set_pan).
+export function releaseCommit(commit: (value: number) => void): ValueGestures {
+  let last: number | null = null;
+  return {
+    begin: () => {
+      last = null;
+    },
+    move: (value) => {
+      last = value;
+    },
+    end: () => {
+      const value = last;
+      last = null;
+      if (value !== null) commit(value);
+    },
+  };
+}
+
 // A begin, one move and an end: one revision (a keyboard step, a Ctrl-click,
 // a typed value). False when the read model refuses (another gesture is held).
-export function commitValue(gestures: GestureController, ref: string, kind: ValueKind, value: number): boolean {
+export function commitValue(gestures: ValueGestures, ref: string, kind: ValueKind, value: number, field: GestureField = FIELDS[kind]): boolean {
   try {
-    gestures.begin(ref, FIELDS[kind]);
+    gestures.begin(ref, field);
   } catch {
     return false;
   }
@@ -80,7 +108,9 @@ export interface ValueGestureOptions {
   // The entity the gesture targets ("track:<id>").
   readonly entityRef: string;
   readonly value: number;
-  readonly gestures: GestureController;
+  readonly gestures: ValueGestures;
+  // The gesture's field when it is not the kind's own (a send's levelMilliDb).
+  readonly field?: GestureField;
   // The travel of the whole range, in px, measured when a press begins.
   readonly travel: () => number;
   // Shows a value during a drag, in the pointer handler (the cap, the needle).
@@ -100,6 +130,7 @@ export interface ValueGestureHandlers<E extends Element> {
 export function useValueGesture<E extends Element>(options: ValueGestureOptions): ValueGestureHandlers<E> {
   const press = useRef<Press | null>(null);
   const { kind, orientation, entityRef, value, gestures } = options;
+  const field = options.field ?? FIELDS[kind];
   // Pixels along the control, increasing toward a higher value.
   const along = (event: { clientX: number; clientY: number }) => (orientation === 'vertical' ? -event.clientY : event.clientX);
 
@@ -107,7 +138,7 @@ export function useValueGesture<E extends Element>(options: ValueGestureOptions)
     if (event.button !== 0 || press.current) return;
     if (event.ctrlKey || event.metaKey) {
       event.preventDefault();
-      commitValue(gestures, entityRef, kind, defaultValue(kind));
+      commitValue(gestures, entityRef, kind, defaultValue(kind), field);
       return;
     }
     event.currentTarget.setPointerCapture?.(event.pointerId);
@@ -122,7 +153,7 @@ export function useValueGesture<E extends Element>(options: ValueGestureOptions)
     if (!current.began) {
       if (Math.abs(px - current.startPx) < DRAG_THRESHOLD_PX) return;
       try {
-        gestures.begin(entityRef, FIELDS[kind]);
+        gestures.begin(entityRef, field);
       } catch {
         press.current = null;
         return;
@@ -153,7 +184,7 @@ export function useValueGesture<E extends Element>(options: ValueGestureOptions)
     if (next === null) return;
     event.preventDefault();
     event.stopPropagation();
-    if (next !== value) commitValue(gestures, entityRef, kind, next);
+    if (next !== value) commitValue(gestures, entityRef, kind, next, field);
   };
 
   return { onPointerDown, onPointerMove, onPointerUp: release, onPointerCancel: release, onKeyDown };

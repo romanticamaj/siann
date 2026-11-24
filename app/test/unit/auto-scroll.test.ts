@@ -48,3 +48,15 @@ test('nothing moves when stopped, when auto-scroll is off, while a drag is held,
     assert.equal(nextScroll(input({ ...over, cursor: 'cursor' in over ? over.cursor : '600000' })), null, JSON.stringify(over));
   }
 });
+
+test('a cursor at most the lead behind the left edge does not page back: the extrapolation that turned the page ran ahead of the engine', () => {
+  // A page turned at 691 on a cursor extrapolated from a frame at 0; the next frame reads 256 + lead = 376.
+  const turned = { ...VIEW, scrollFrames: '691', framesPerPixel: 256, width: 659 };
+  assert.equal(nextScroll(input({ view: turned, cursor: '376', lead: 4800 })), null);
+  // Without the lead, or further behind than it (a locate, a cycle's wrap): the page back.
+  assert.equal(nextScroll(input({ view: turned, cursor: '376' })), '376');
+  assert.equal(nextScroll(input({ cursor: String(480000 - 4801), lead: 4800 })), String(480000 - 4801));
+  assert.equal(nextScroll(input({ cursor: String(480000 - 4800), lead: 4800 })), null);
+  // Forward past the right edge the lead changes nothing.
+  assert.equal(nextScroll(input({ cursor: '560000', lead: 4800 })), '560000');
+});

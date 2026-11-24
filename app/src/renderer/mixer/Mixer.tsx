@@ -22,6 +22,16 @@
 // strip (GhostStrip) follows the tracks' strips, before the master, in step
 // order; a request to reveal a step's ghosts (a hovered or located step)
 // scrolls the mixer by the least amount that shows its strips.
+//
+// Buses (m5b-ui-sends-buses; UI redesign 3.4; 10.11, 25): the bus strips
+// (BusStrip) stand after the tracks' strips, in busOrder, then the ghost
+// strips of the plan (proposed tracks, then proposed buses), then the
+// master; an engine without features.buses shows none. A press on a bus
+// strip selects the bus (busSelection), Escape in the zone clears it (the
+// lower zone's edit.cancel, which App registers). The
+// rack row of every strip shows the lit rack switch's rack (racks.shown),
+// when the engine can show it. The meters are measured again when the
+// strips move: a new track or bus order, or proposed strips.
 
 import { useContext, useEffect, useRef, useState, useSyncExternalStore, type RefObject } from 'react';
 
@@ -36,6 +46,11 @@ import { MeterBoard } from './meter-board';
 import { MetersContext } from './meters-context';
 import type { MeterTestHooks } from './MixerMeters';
 import { GhostStrip, MasterStrip, Strip } from './Strip';
+import { BusStrip } from './BusStrip';
+import type { BusSelection } from './bus-selection';
+import { availableRacks, busesListed, shownRack } from './routing';
+import { useCapabilities } from '../shell/Capable';
+import type { Rack } from '../shell/layout';
 import { useRecordHost } from '../shell/record-context';
 import { ReviewContext, useGhostView } from '../plans/ghost-context';
 
@@ -46,8 +61,10 @@ export interface MixerProps {
   // The track list's selected track: its strip is .sel.
   readonly selectedTrackId?: string | null;
   readonly onMeterHooks?: (hooks: MeterTestHooks | null) => void;
-  // The rack switches (m5b-ui-inserts-master; siann.layout.v1): Inserts shows the strips' insert racks.
-  readonly racks?: { readonly inserts: boolean };
+  // The rack switches (m5b-ui-inserts-master, m5b-ui-sends-buses; siann.layout.v1): the lit one's rack.
+  readonly racks?: { readonly shown: Rack | null };
+  // The selected bus (m5b-ui-sends-buses).
+  readonly busSelection?: BusSelection;
   // The meter store the Meter tab shares (m5b-ui-meter); one of its own otherwise.
   readonly meterStore?: MeterStore;
   // The track the Channel zone shows while it is shown (its strip's e is lit), and e's press.
@@ -86,8 +103,21 @@ export function useMeterBoard(
   }, [board, container, canvas, realtime, onMeterHooks]);
 }
 
-export function Mixer({ client, gestures, realtime, selectedTrackId = null, onMeterHooks, racks, meterStore, channelTrackId = null, onEditChannel }: MixerProps) {
+const NO_BUSES: readonly string[] = Object.freeze([]);
+const NO_SELECTION = { subscribe: () => () => undefined, getSnapshot: () => null, set: () => undefined };
+
+export function Mixer({ client, gestures, realtime, selectedTrackId = null, onMeterHooks, racks, meterStore, busSelection, channelTrackId = null, onEditChannel }: MixerProps) {
   const t = useT();
+  const can = useCapabilities();
+  const selection = busSelection ?? NO_SELECTION;
+  const selectedBus = useSyncExternalStore(selection.subscribe, selection.getSnapshot, selection.getSnapshot);
+  const busOrder = useSyncExternalStore(
+    (listener) => client.model.subscribe(listener),
+    () => client.model.getSnapshot()?.busOrder ?? NO_BUSES,
+    () => client.model.getSnapshot()?.busOrder ?? NO_BUSES,
+  );
+  const buses = busesListed(can) ? busOrder : NO_BUSES;
+  const rack = shownRack(racks?.shown === undefined ? 'inserts' : racks.shown, availableRacks(can));
   const order = useSyncExternalStore(
     (listener) => client.model.subscribe(listener),
     () => client.model.getSnapshot()?.trackOrder,
@@ -116,8 +146,8 @@ export function Mixer({ client, gestures, realtime, selectedTrackId = null, onMe
   useMeterBoard(board, container, canvas, realtime, onMeterHooks);
 
   // Strips moved without changing size (a new track order): measure again.
-  const proposed = view.ghosts.filter((g) => g.kind === 'track-add').length;
-  useEffect(() => board.meters.invalidate(), [board, order, hasMaster, proposed]);
+  const proposed = view.ghosts.filter((g) => g.kind === 'track-add' || g.kind === 'bus-add').length;
+  useEffect(() => board.meters.invalidate(), [board, order, buses, hasMaster, proposed]);
 
   // A step's ghosts brought into view: the least scroll that shows its strips (after the zone has opened).
   useEffect(
@@ -133,11 +163,21 @@ export function Mixer({ client, gestures, realtime, selectedTrackId = null, onMe
 
   return (
     <MetersContext.Provider value={board}>
-      <section className="mixer" data-testid="mixer" data-part="mixer" aria-label={t('mixer.label')} ref={container}>
+      <section
+        className="mixer"
+        data-testid="mixer"
+        data-part="mixer"
+        aria-label={t('mixer.label')}
+        ref={container}
+      >
         {(order ?? []).map((trackId) => (
-          <Strip key={trackId} trackId={trackId} client={client} gestures={gestures} selected={trackId === selectedTrackId} inserts={racks?.inserts ?? true} editLit={trackId === channelTrackId} onEdit={onEditChannel} />
+          <Strip key={trackId} trackId={trackId} client={client} gestures={gestures} selected={trackId === selectedTrackId} rack={rack} editLit={trackId === channelTrackId} onEdit={onEditChannel} />
+        ))}
+        {buses.map((busId) => (
+          <BusStrip key={busId} busId={busId} client={client} gestures={gestures} selected={busId === selectedBus} rack={rack} onSelect={(id) => selection.set(id)} />
         ))}
         {view.ghosts.map((g) => (g.kind === 'track-add' ? <GhostStrip key={`ghost-${g.trackId}`} ghost={g} view={view} /> : null))}
+        {busesListed(can) ? view.ghosts.map((g) => (g.kind === 'bus-add' ? <GhostStrip key={`ghost-bus-${g.busId}`} ghost={g} view={view} /> : null)) : null}
         {hasMaster ? <MasterStrip client={client} gestures={gestures} /> : null}
         <KnobGradient />
         <canvas className="mixer-meters" data-testid="mixer-meters" ref={canvas} aria-hidden="true" />

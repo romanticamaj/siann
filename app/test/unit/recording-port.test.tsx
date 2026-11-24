@@ -297,14 +297,14 @@ test('a monitored track\'s monitor is lit with its mode in the tooltip', () => {
   assert.ok((monitor.attrs.title ?? '').includes(translator('en')('monitor.mode.input')));
 });
 
-test('the In row is sec(\'Routing\')\'s first .irow, alone inside the box held for the section', () => {
+test('the In row is sec(\'Routing\')\'s first .irow', () => {
   const { inspector } = renderZones();
-  const routing = find(inspector, (el) => classes(el).includes('inspector-hold') && classes(el).includes('routing'));
-  // The box keeps the section's place; it is no part (the section's id arrives with m5b-ui-sends-buses).
-  assert.ok(!('data-part' in routing.attrs));
+  // m5b-ui-sends-buses ported the section around it: the In row, then the Out row.
+  const routing = find(find(inspector, byAttr('data-part', 'inspector-routing')), byClass('sec-b'));
   const rows = elements(routing);
-  assert.equal(rows.length, 1, 'the In row alone');
+  assert.equal(rows.length, 2, 'the In row and the Out row');
   const row = rows[0]!;
+  assert.equal(row.attrs['data-testid'], 'inspector-in-row');
   const mRouting = find(mockupZone(), byAttr('data-part', 'inspector-routing'));
   const mRow = findAll(mRouting, byClass('irow'))[0]!;
   assert.equal(sig(row), sig(mRow));

@@ -213,7 +213,6 @@ export const TOKENS = {
   "tab-media-empty-w": "71.078px",
   "dsp-load-empty-w": "99.484px",
   "tab-meter-empty-w": "69.031px",
-  "hold-inspector-routing-h": "91px",
   "hold-tool-2-w": "27.172px",
   "hold-tool-6-w": "27.172px",
   "hold-tool-7-w": "27.172px",

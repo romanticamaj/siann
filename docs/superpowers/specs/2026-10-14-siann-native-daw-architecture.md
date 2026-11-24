@@ -1698,9 +1698,10 @@ SessionDocument
  |- id: SessionId          (the revision ID lives in the revision envelope, not here)
  |- sampleRate (invariant)
  |- tracks, buses, auxInputs, vcas, groups, ioPorts
- |- tempoMap, meterMap, markers
+ |- tempoMap, meterMap
  |- locators (singleton entity; punch reuses it in M5b, m5b-engine-punch-count-in)
  |- master (singleton entity, M5b; present only while its gain is not 0 dB)
+ |- markers (table of marker entities, M5b; omitted while empty)
  `- media: MediaPool (MediaSource by MediaId, content hash)
 
 Track
@@ -1796,7 +1797,8 @@ Rules:
   v2 may hold `locators`. A v1 document is read through a migration that adds
   nothing, so it has no locators and keeps its entity and document hashes (the
   schemaVersion string is not hashed); a v1 document that carries `locators` is
-  rejected. The engine always writes v2. `locators` is omitted from the document
+  rejected. The engine wrote v2 until v3 and writes v4 since m5b-engine-markers
+  (the version rule and the format bullet after the bus and send bullet). `locators` is omitted from the document
   JSON when absent. A migration that inserted a default locators entity is
   impossible: `Session::open` checks every replayed revision and the checkpoint
   against the recorded document hashes, so an added entity would reject every
@@ -1847,7 +1849,7 @@ Rules:
   `not_found`.
 - Names (follow-up to #123, the plan metadata rule applied to the document): every
   name the document stores, the session's (`root.name`), a track's, a bus's, a
-  media's and a plugin slot's (and a marker's when markers land), is well-formed UTF-8
+  media's, a plugin slot's and a marker's (from m5b-engine-markers), is well-formed UTF-8
   without a control character (U+0000 to U+001F, U+007F to U+009F) and without a
   display-unsafe character: the bidi formatting characters U+061C, U+200E, U+200F,
   U+202A to U+202E and U+2066 to U+2069, and U+2028 and U+2029. An RLO or an
@@ -1855,7 +1857,8 @@ Rules:
   diff row it is shown in (Trojan Source). The rule is
   `siann/model/display_text.hpp`, shared with the plan checks. A name a client
   supplies is refused with `invalid_name`: `track.add`, `track.rename`, `bus.add`,
-  `bus.rename`, `media.add`, `media.rename`, `session.rename`, `plugin.insert`'s
+  `bus.rename`, `media.add`, `media.rename`, `marker.add`, `marker.rename`,
+  `session.rename`, `plugin.insert`'s
   `descriptor.name` and `session.create`'s `name`; nothing is applied. A name the
   engine derives is stripped of those characters, never refused: a media's from
   its file name (`media.import`; `"audio"` when nothing is left), the session's
@@ -1919,8 +1922,9 @@ Rules:
   `{master:master}`, is one revision and undoable; `master.set_gain 0` removes
   the entity, so the document hashes as it did before the first set, and
   `plan.preview` shows `before: null` (or `after: null`) for the 0 dB side. The
-  document stays `siann.session_document.v2`; the features that add entity
-  types raise it (the version rule after the bus and send bullet). Why an entity and not a `masterGainMilliDb` field on the root: the root
+  document stayed `siann.session_document.v2`; m5b-engine-buses-sends raised it
+  to v3 and m5b-engine-markers raises it to v4 (the version rule after the bus
+  and send bullet). Why an entity and not a `masterGainMilliDb` field on the root: the root
   is `root:root`, which `session.rename` and `session.set_tempo` declare, so every
   master fader move would make rename and tempo plans stale and the reverse; the
   gesture target `{ref: "master:master", param: "gain"}` fits the leases unchanged;
@@ -1971,7 +1975,51 @@ Rules:
   raises `siann.session_document` by one from origin/main when it lands (v3, then
   v4); every earlier version is read through a migration that adds nothing, and a
   document of an earlier version that carries a later version's entity type or
-  field is rejected. The second of two parallel features renumbers on rebase.
+  field is rejected. The second of two parallel features renumbers on rebase:
+  m5b-engine-buses-sends landed first with v3, so m5b-engine-markers takes v4, and
+  neither claims a number without checking origin/main.
+- M5b `marker` (m5b-engine-markers, UI redesign E-8 / UR-9): a marker is a
+  document entity of its own, `{schema: "siann.entity.marker.v1", id, number,
+  name, position, length?}`, ref `marker:<id>`, with its own Merkle leaf. `id` is
+  a normal entity id supplied by the client as `markerId`; `number` is an integer
+  `1..9999`; `name` is a string of 0 to 255 UTF-8 bytes (always present, may be
+  empty), longer is `invalid_marker`, and what it may hold is the Names rule
+  above (`invalid_name` from `marker.add` and `marker.rename`, and as a validate
+  issue); `position` is audio-domain frames as a decimal string, `0 <= position
+  <= kMaxPositionMagnitude`; `length` is a decimal string, present only on a
+  cycle marker, `1 <= length` and `position + length <= kMaxPositionMagnitude`,
+  never written as `"0"` (`invalid_marker` otherwise). A marker without `length`
+  is a position marker. Numbers are unique among position markers and,
+  separately, among cycle markers (`marker_number_taken`, from a command and as a
+  validate issue of the document), so a position marker 1 and a cycle marker 1
+  coexist. The document's `markers` table is sorted by id and omitted from the
+  JSON while empty, so a document without markers keeps its hash. Commands, each
+  one revision declaring exactly `{marker:<id>}` and undoable:
+  `marker.add {markerId, position, length?, name?, number?}` (`already_exists` on
+  a used id; an omitted `name` is `""`; an omitted `number` is the lowest free
+  number `>= 1` of its kind in the document the command is applied to),
+  `marker.move {markerId, position, length?}` (`length` only on a cycle marker,
+  to resize it; the kind never changes, so `length` on a position marker is
+  `invalid_params`; number and name are kept), `marker.rename {markerId, name}`
+  and `marker.remove {markerId}`; an unknown id is `not_found`, any other field
+  `invalid_params`. Markers are not part of any graph: a marker revision during
+  playback recompiles nothing. Why entities and not a list on the root: the root
+  is `root:root`, which `session.rename` and `session.set_tempo` declare, so
+  markers on the root would make every marker edit stale those plans and the
+  reverse (the reason the master is an entity too). Consequences: a proposal
+  branch whose `marker.add` left the number out conflicts at merge when main took
+  that number meanwhile (the replay assigns another number, so the entity differs
+  from the branch tip), a plain plan whose `marker.add` left the number out is
+  `plan_stale` on that marker (`modified`) at validate, approve and apply when
+  main took the number it previewed (the staleness check's replay of the steps;
+  it applies again once the number is free), and a rollback that would restore a marker whose number
+  is taken is `rollback_conflict` naming the marker that holds the number.
+- The document format is `siann.session_document.v4` from m5b-engine-markers: v4
+  may hold `markers`. v1, v2 and v3 are read through migrations that add nothing
+  (schemaVersion is not hashed, so every entity and document hash is kept); a v1,
+  v2 or v3 document that carries `markers` is rejected (`unknown_field`). The
+  engine always writes v4, and a v1, v2 or v3 bundle is rewritten as v4 at its
+  next checkpoint while its journal records stay as written.
 
 ### siann-command (pure C++) — the core of SIANN
 
@@ -2262,6 +2310,13 @@ Decisions of 2026-11-04 (m3-plans):
   hash equals the recorded one (absent matches `null`). Otherwise `plan_stale`
   carries `changedEntities`, sorted like the sets, each `"<type>:<id>"` with
   `change` = `added` (recorded `null`, now present), `removed` or `modified`.
+  When every recorded hash matches but the head is not the base, the check also
+  replays the steps on the head and on `baseRevision`: a `writeSet` entity whose
+  result differs between the two is `modified` (m5b-engine-markers: a step whose
+  result depends on more than its declared set, `marker.add` without a number,
+  would otherwise apply an entity other than the one previewed and approved). A
+  replay that fails on the head adds nothing; apply then refuses with the
+  command's own error, as before.
   `plan_stale` never changes the plan's state; an undo that restores the recorded
   hashes makes the plan valid again (per entity, not per head revision).
 - Approval (full or partial) needs a `validated` plan, rejection a `validated` or
@@ -2416,8 +2471,10 @@ Decisions of 2026-11-15 (m5b-engine-agent-requests; human gate
     clamped.
 - Hash payloads (each carries its own `schema` field, so a change is a version bump):
   - `entityHash = sha256(JCS(entity))`, where the entity object excludes any hash
-    field of its own. Root settings (sample rate, tempo map, meter map, markers,
-    top-level ID lists) form one entity with ID `root`. The left and right locators
+    field of its own. Root settings (sample rate, tempo map, meter map, top-level
+    ID lists) form one entity with ID `root`. A marker is an entity of type
+    `marker` with ref `marker:<id>` and its own Merkle leaf (m5b-engine-markers),
+    so a marker edit changes neither the root's hash nor any other entity's. The left and right locators
     are a singleton entity of type `locators` with ID `locators`:
     `{schema: "siann.entity.locators.v1", id: "locators", left, right}`, both
     audio-domain frames as decimal strings, `0 <= left < right <= 2^42`
@@ -2997,7 +3054,9 @@ Protocol v0, agent methods (decided with m3-mcp; the MCP mapping is in
       "track.remove": ["clip", "plugin_slot", "root", "send"]}` (a bus that output
       to the removed bus is changed); a command without cascades is
       absent. The same feature adds `features.buses` and `features.sends` (both
-      true) to `engine.capabilities`.
+      true) to `engine.capabilities`; m5b-engine-markers adds `features.markers:
+      true` and the commands `marker.add`, `marker.move`, `marker.rename` and
+      `marker.remove` to `commands` (no new method or MCP tool).
     - `engine.capabilities {}` -> `{about, scope, scopes: ["propose", "trusted"],
       commands, methods, features: {plans: true, proposals: true, audition: <a port
       is present>, transport: <a port is present>, render: true, plugins,
@@ -3909,10 +3968,12 @@ MySong.siann/                    a directory
   `session_locked` too. A reused pid keeps a stale lock alive until that process
   ends; the user removes the file by hand then.
 - Atomic writes everywhere (temp + rename). Version field and migration functions
-  for every format change. The checkpoint's document is `siann.session_document.v2`
-  since m5-ui-engine-loop-click; a v1 checkpoint and v1 journal records are read
-  through the migration of "siann-model" and rewritten as v2 at the next
-  checkpoint.
+  for every format change. The checkpoint's document is `siann.session_document.v4`
+  since m5b-engine-markers (v2 from m5-ui-engine-loop-click, v3 from
+  m5b-engine-buses-sends); a v1, v2 or v3 checkpoint and journal records of those
+  versions are read through the migrations of "siann-model", the checkpoint is
+  rewritten as v4 at the next checkpoint, and the journal records stay as
+  written.
 - The checkpoint may carry `transport: {cycle: <bool>, punch: {in: <bool>, out:
   <bool>}}` (each absent means false; the schema stays `siann.checkpoint.v1`, whose
   reader ignores it in older builds). It is written with every checkpoint write,

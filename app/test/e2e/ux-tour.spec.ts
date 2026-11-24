@@ -598,7 +598,7 @@ test('UX screenshot tour', async () => {
   await shoot(
     page,
     'Playing meters',
-    `Transport playing from 1.2 s on the fake device, started with the top bar's start button (pressed), with Vox Lead's solo clicked off (FX stays muted) and auto-scroll off; the timeline and the mixer are both in view. The position display reads ${await page.getByTestId('position-primary').textContent()} (Bars+Beats) over ${await page.getByTestId('position-secondary').textContent()} (Seconds). Meter peaks (linear) at the shot: ${peaks.join(', ')}. The project cursor is drawn on the overlay layer at x = ${Math.round((await timeline<number | null>('cursorX')) ?? -1)} px.`,
+    `Transport playing from 1.2 s on the fake device, started with the top bar's start button (pressed), with Vox Lead's solo clicked off (FX stays muted) and auto-scroll off; the timeline and the mixer are both in view. The position display reads ${await page.getByTestId('position-primary').textContent()} (Bars+Beats) over ${await page.getByTestId('position-secondary').textContent()} (Seconds). Meter peaks (linear) at the shot: ${peaks.join(', ')}. The project cursor is drawn on the overlay layer at x = ${Math.round((await timeline<number | null>('cursorX')) ?? -1)} px. The lower zone's tab row ends with the rack switches Routing, Inserts and Sends (m5b-ui-sends-buses), Inserts lit: one rack at a time in the strips' rack row.`,
   );
   await page.getByTestId('transport-stop').click();
   await expect(page.getByTestId('transport-play')).toHaveAttribute('aria-pressed', 'false');
@@ -638,7 +638,7 @@ test('UX screenshot tour', async () => {
   await painted(page);
   expect(await page.evaluate(() => [window.scrollY, document.documentElement.scrollHeight - document.documentElement.clientHeight])).toEqual([0, 0]);
   const inside = (await timeline<{ scrollY?: number }>('view')).scrollY ?? 0;
-  await shoot(page, 'Page scrolled to mixer', `A vertical wheel over the timeline: the page does not scroll (the zones keep their place); the lanes scrolled ${inside} px under the ruler (a transform, not a DOM scroll). The mixer is always in the lower zone.`);
+  await shoot(page, 'Page scrolled to mixer', `A vertical wheel over the timeline: the page does not scroll (the zones keep their place); the lanes scrolled ${inside} px under the ruler (a transform, not a DOM scroll). The mixer is always in the lower zone. The lower zone's tab row ends with the rack switches Routing, Inserts and Sends (m5b-ui-sends-buses), Inserts lit: one rack at a time in the strips' rack row.`);
   await scrollTop();
   // Back to the whole session (Shift+F in the project zone) so the later
   // states show every clip; a click below the lanes focuses the zone.
@@ -663,10 +663,10 @@ test('UX screenshot tour', async () => {
   }
   await gestureSettled();
   const held = (await fader.getAttribute('aria-valuetext')) ?? '';
-  await shoot(page, 'Fader drag held', `Bass fader held mid-drag (pointer down) at ${held} from ${startValue}: the cap, the level value and the tooltip show the gesture's value; no revision is committed until release. The MixConsole is the mockup's strip() (m5-ui-port-mixer-strip): the insert rack (m5b-ui-inserts-master: Vox Lead's SIANN Test Plugin, whose bypass, e and Remove show while the slot is hovered or focused, and the empty + slots), pan knob, M and S, the dB scale, the fader with its unity line, two meter channels, the level and peak readout and the name tag; the automation row is an empty box. The Inserts rack switch ends the lower zone's tab row.`);
+  await shoot(page, 'Fader drag held', `Bass fader held mid-drag (pointer down) at ${held} from ${startValue}: the cap, the level value and the tooltip show the gesture's value; no revision is committed until release. The MixConsole is the mockup's strip() (m5-ui-port-mixer-strip): the insert rack (m5b-ui-inserts-master: Vox Lead's SIANN Test Plugin, whose bypass, e and Remove show while the slot is hovered or focused, and the empty + slots), pan knob, M and S, the dB scale, the fader with its unity line, two meter channels, the level and peak readout and the name tag; the automation row is an empty box. The lower zone's tab row ends with the rack switches Routing, Inserts and Sends (m5b-ui-sends-buses), Inserts lit: one rack at a time in the strips' rack row. The Inspector's Routing section (In and Out rows) and its Sends section (+ Add send) are the mockup's sec().`);
   await page.mouse.up();
   await expect(page.getByTestId('fader-value-trk_bass')).toHaveText(held);
-  await shoot(page, 'Fader released', `Bass fader released: one revision committed at ${held}; the strip's cap and readout show it. The master strip has its fader at 0.0 dB (m5b-ui-inserts-master), its meter, its level and peak value and its name; its M, rack and e are M6c's and their boxes stay empty.`);
+  await shoot(page, 'Fader released', `Bass fader released: one revision committed at ${held}; the strip's cap and readout show it. The master strip has its fader at 0.0 dB (m5b-ui-inserts-master), its meter, its level and peak value and its name; its M, rack and e are M6c's and their boxes stay empty. The lower zone's tab row ends with the rack switches Routing, Inserts and Sends (m5b-ui-sends-buses), Inserts lit: one rack at a time in the strips' rack row.`);
   await scrollTop();
 
   // ---- 5. A clip selected, mid-move, and moved.
@@ -1053,6 +1053,33 @@ test('UX screenshot tour', async () => {
     { number: 42 },
   );
 
+  // ---- 43 (m5b-ui-notepad; UI redesign 3.4): the Inspector's Notepad
+  // section open with text. The text is a draft, discarded afterwards with
+  // Escape, so no revision is added and the later states keep their heads;
+  // the section is closed again, as every earlier state shows it.
+  const notepad = page.locator('[data-part="inspector-notepad"]');
+  if ((await notepad.count()) === 0) {
+    await page.getByTestId('track-header-trk_voxlead').locator('.name').click();
+    await expect(page.getByTestId('track-header-trk_voxlead')).toHaveAttribute('aria-selected', 'true');
+  }
+  await expect(notepad).toHaveClass(/\bshut\b/);
+  await notepad.getByRole('button').click();
+  await expect(notepad).not.toHaveClass(/\bshut\b/);
+  const notepadText = page.getByTestId('notepad-text');
+  await notepadText.click();
+  await page.keyboard.type('Double the chorus vocal at bar 17.\nBreath before the bridge: keep it.');
+  await shoot(
+    page,
+    'Notepad open with text',
+    `The Inspector's Notepad section (sec('Notepad',''), m5b-ui-notepad), opened by a click on its head (shut by default, as every earlier state shows it; kept in siann.layout.v1), with text typed into its text area for ${await page.getByTestId('inspector-track').textContent()}. Leaving the area or Ctrl+Enter commits one track.set_notes (one revision, one undo); Escape discards the draft. While the area has the focus no command key but the focus keys runs, so typing m does not mute. The mockup draws the section shut only: the open state is the app's, built from the shared .sec and .sec-b rules.`,
+    { number: 43 },
+  );
+  await page.keyboard.press('Escape');
+  await expect(notepadText).toHaveValue(/^(?!Double the chorus)/);
+  await notepad.getByRole('button').click();
+  await expect(notepad).toHaveClass(/\bshut\b/);
+  await composerField.click();
+
   // ---- 34 (m5b-ui-inserts-master; UI redesign 3.4): an insert rack with a
   // plugin, and the picker open from an empty slot.
   await page.keyboard.press('Escape');
@@ -1191,6 +1218,31 @@ test('UX screenshot tour', async () => {
   await expect(page.getByTestId('zone-channel')).toBeHidden();
   await page.getByTestId('tab-lower-mixconsole').click();
   recorder.close();
+  // ---- 38 (m5b-ui-sends-buses; UI redesign 3.4; 10.11, 25; numbered
+  // explicitly): a bus strip after the tracks' strips, and Vox Lead's send to
+  // it in the Sends rack and in the Inspector's Sends section.
+  const mixing = await engineClient(page);
+  await mixing.call('command.execute', {
+    commands: [
+      { op: 'bus.add', busId: 'bus_tour', name: 'Verb' },
+      { op: 'send.add', sendId: 'snd_tour', trackId: 'trk_voxlead', busId: 'bus_tour', levelMilliDb: -6000, pre: false },
+    ],
+  });
+  mixing.close();
+  await expect(page.getByTestId('mixer-strip-bus-bus_tour')).toBeVisible();
+  await page.locator('[data-part="mixer-racks"]').getByTestId('rack-sends').click();
+  await expect(page.getByTestId('send-snd_tour')).toBeVisible();
+  await page.getByTestId('track-header-trk_voxlead').click({ position: { x: 30, y: 30 } });
+  await expect(page.locator('[data-part="inspector-sends"] .islot:not(.empty)')).toHaveCount(1);
+  await scrollTo('mixer');
+  await shoot(
+    page,
+    'Bus strip and send slot',
+    'A bus (Verb, bus.add) has its strip after the tracks\' strips and before the master, with the track strip\'s controls: pan, M and S, the fader to +6 dB on bus:<id> with its meter, the level and peak values and its name tag in the palette colour of its id; its e, R, W and record boxes stay empty. The Sends switch is lit: each track strip\'s rack row is its sends rack, Vox Lead\'s holding one send slot to Verb at -6.0 dB (on, the bus name as the level control, POST and Remove, added to the mockup\'s .slot) above one empty + slot; a bus\'s Sends rack is an empty box. The Inspector\'s Sends section lists the same send and "+ Add send", open where the mockup draws it shut. App-only parts: the review reads them by eye.',
+    { number: 38 },
+  );
+  await page.locator('[data-part="mixer-racks"]').getByTestId('rack-inserts').click();
+
 
   // ---- 29 and 30 (m5b-ui-project): the start view, on a launch of its own
   // without SIANN_SESSION_DIR and with a recent list whose last bundle is

@@ -224,6 +224,30 @@ struct Fade {
 std::string_view fadeCurveName(FadeCurve curve) noexcept;
 std::optional<FadeCurve> fadeCurveFromName(std::string_view name) noexcept;
 
+// A position marker or a cycle marker (m5b-engine-markers, UI redesign E-8): an
+// entity of type marker, ref marker:<id>. A length makes it a cycle marker.
+// number is 1..9999, unique among the markers of its kind; name is 0 to 255
+// UTF-8 bytes; 0 <= position, and position + length <= kMaxPositionMagnitude
+// with length >= 1 (invalid_marker otherwise). The name is also display-safe,
+// the rule of every stored name (isDisplaySafeName; invalid_name otherwise).
+struct Marker {
+    std::string id;
+    std::int32_t number = 1;
+    std::string name;
+    std::int64_t position = 0;  // audio-domain frames
+    std::optional<std::int64_t> length;
+
+    bool isCycle() const noexcept { return length.has_value(); }
+    friend bool operator==(const Marker&, const Marker&) = default;
+};
+
+inline constexpr std::int32_t kMinMarkerNumber = 1;
+inline constexpr std::int32_t kMaxMarkerNumber = 9999;
+inline constexpr std::size_t kMaxMarkerNameBytes = 255;
+
+// True for well-formed UTF-8 of 0 to kMaxMarkerNameBytes bytes.
+bool isValidMarkerName(std::string_view name) noexcept;
+
 struct Clip {
     std::string id;
     std::string trackId;

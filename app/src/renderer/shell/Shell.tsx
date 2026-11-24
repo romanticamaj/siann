@@ -83,6 +83,7 @@ import {
 import { useT } from '../i18n/t';
 import type { CommandId, CommandRegistry, ZoneScope } from '../keys/commands';
 import { composingKey, isTextField, resolveKey } from '../keys/dispatcher';
+import { clearEscape, markEscape } from '../keys/escape-intent';
 import { CUBASE_PRESET } from '../keys/preset-cubase';
 import { capabilitySelector } from '../model/capabilities';
 import { FOCUS_COMMANDS, focusMove, ringStep, type FocusPlace } from '../keys/zone-focus';
@@ -101,7 +102,9 @@ import {
   limits,
   nextTab,
   rightTab,
+  RACKS,
   type EffectiveLayout,
+  type Rack,
   type ShellAction,
   type Viewport,
   type Zone,
@@ -109,7 +112,11 @@ import {
 import { useShellState, type LayoutStore } from './layout-store';
 import { Hold } from './Hold';
 import { useCapabilities } from './Capable';
-import { pluginsListed } from '../mixer/inserts';
+import { availableRacks } from '../mixer/routing';
+import type { MessageKey } from '../i18n/en';
+
+// The rack switches' labels (m5b-ui-sends-buses), a literal table.
+const RACK_LABELS: Readonly<Record<Rack, MessageKey>> = { routing: 'racks.routing', inserts: 'racks.inserts', sends: 'racks.sends' };
 import { Icon } from './icons';
 import { StatusBar } from './StatusBar';
 import type { ToastStore } from './toast-store';
@@ -518,8 +525,16 @@ export function Shell({
           zoneRing(frames.current[step.zone], step.zone)[0]?.focus();
           return true;
         case 'root':
+          // The control's blur arrives inside focusZone: it is marked as left
+          // by Escape for that call (keys/escape-intent.ts; the Notepad
+          // discards its draft instead of committing it).
+          markEscape(active);
+          try {
+            focusZone(step.zone, true);
+          } finally {
+            clearEscape();
+          }
           // The key goes on: the zone's own Escape (edit.cancel) still runs.
-          focusZone(step.zone, true);
           return false;
       }
     };
@@ -704,16 +719,20 @@ export function Shell({
   // The lower zone's tab row is the mockup's .tabs (m5-ui-port-mixer-strip):
   // the MixConsole tab with its icon and key, the spacer, and the rack
   // switches (mixer-racks; m5b-ui-inserts-master, UI redesign 3.4) at the
-  // row's end with one switch, Inserts, which shows and hides the strips'
-  // insert racks and is kept in siann.layout.v1. Routing and Sends join it
-  // with m5b-ui-sends-buses; Narrow and the menu the mockup draws there have
-  // no behaviour and are not rendered. On an engine without plugins the
-  // switches are not in the DOM and nothing replaces them: the row ends at its
-  // spacer (3.0). The Editor tab (m5b-ui-editor-channel; the mockup's
-  // span.tab[tab-editor] with ic('wave','s')) follows the MixConsole tab; the
-  // rack switches belong to the MixConsole and are not shown on it.
+  // row's end: Routing, Inserts and Sends (m5b-ui-sends-buses; 10.11, 25),
+  // one lit at a time (racks.shown in siann.layout.v1); pressing the lit one
+  // turns it off and the strips' rack row is then the empty box, pressing
+  // another lights it alone. A switch is rendered only where its rack can be
+  // (mixer/routing.ts). Narrow and the menu the mockup draws there have no
+  // behaviour and are not rendered. On an engine that can show none of the
+  // racks the switches are not in the DOM and nothing replaces them: the row
+  // ends at its spacer (3.0). The Editor tab (m5b-ui-editor-channel; the
+  // mockup's span.tab[tab-editor] with ic('wave','s')) follows the MixConsole
+  // tab; the rack switches belong to the MixConsole and are not shown on it.
   const lowerTab = state.layout.tabs.lower;
-  const racksShown = pluginsListed(can) && lowerTab === 'mixconsole';
+  const available = availableRacks(can);
+  const switches = RACKS.filter((rack) => available[rack]);
+  const racksShown = switches.length > 0 && lowerTab === 'mixconsole';
   const lowerTabs = (
     <div className="tabs" role="tablist" data-part="lower-tabs">
       <button
@@ -743,15 +762,18 @@ export function Shell({
       <span className="spacer" />
       {racksShown ? (
         <span className="mixer-racks" data-part="mixer-racks" role="group" aria-label={t('racks.label')}>
-          <button
-            type="button"
-            className={`rack-switch${state.layout.racks.inserts ? ' on' : ''}`}
-            data-testid="rack-inserts"
-            aria-pressed={state.layout.racks.inserts}
-            onClick={() => store.dispatch({ type: 'rack', rack: 'inserts' })}
-          >
-            {t('racks.inserts')}
-          </button>
+          {switches.map((rack) => (
+            <button
+              key={rack}
+              type="button"
+              className={`rack-switch${state.layout.racks.shown === rack ? ' on' : ''}`}
+              data-testid={`rack-${rack}`}
+              aria-pressed={state.layout.racks.shown === rack}
+              onClick={() => store.dispatch({ type: 'rack', rack })}
+            >
+              {t(RACK_LABELS[rack])}
+            </button>
+          ))}
         </span>
       ) : null}
     </div>

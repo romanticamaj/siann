@@ -301,7 +301,7 @@ test('serialize and parse one object; unknown or corrupt JSON falls back to the 
   const withHeights: Layout = { ...changed, stripWidth: 'narrow', trackHeights: { ses_a: { trk_1: 96 } } };
   const text = serializeLayout(withHeights);
   const object = JSON.parse(text) as Record<string, unknown>;
-  assert.deepEqual(Object.keys(object).sort(), ['autoScroll', 'collapsed', 'racks', 'sizes', 'snap', 'stripWidth', 'tabs', 'timeFormat', 'trackHeights', 'trackList']);
+  assert.deepEqual(Object.keys(object).sort(), ['autoScroll', 'collapsed', 'inspector', 'racks', 'sizes', 'snap', 'stripWidth', 'tabs', 'timeFormat', 'trackHeights', 'trackList']);
   assert.deepEqual(parseLayout(text), withHeights);
   for (const bad of [null, '', '{', 'null', '42', '[]', '"x"']) assert.deepEqual(parseLayout(bad), DEFAULT_LAYOUT, String(bad));
   // Field by field: a bad field falls back, the rest is kept.
@@ -518,32 +518,42 @@ test('auto-scroll and the primary time format: defaults, F and the period key, k
   assert.equal(stored.timeFormat, 'seconds');
 });
 
-// m5b-ui-inserts-master: the rack switches (mixer-racks; UI redesign 3.4)
-// land with Inserts, which shows and hides the insert racks of every strip
-// and is kept in siann.layout.v1.
-test('the Inserts rack switch: shown by default, toggled by the rack action, parsed field by field and stored', () => {
-  assert.deepEqual(DEFAULT_LAYOUT.racks, { inserts: true });
-  const hidden = reduce(start(), { type: 'rack', rack: 'inserts' });
-  assert.deepEqual(hidden.layout.racks, { inserts: false });
-  assert.deepEqual(reduce(hidden, { type: 'rack', rack: 'inserts' }).layout.racks, { inserts: true });
-  assert.equal(reduce(hidden, { type: 'rack', rack: 'inserts', visible: false }), hidden, 'unchanged: the same state');
-  assert.deepEqual(reduce(start(), { type: 'rack', rack: 'sends' as 'inserts' }).layout, DEFAULT_LAYOUT, 'an unknown rack changes nothing');
+// m5b-ui-inserts-master landed the rack switches (mixer-racks; UI redesign
+// 3.4) with Inserts; m5b-ui-sends-buses adds Routing and Sends (10.11, 25):
+// one rack at a time, kept in siann.layout.v1 as racks.shown; pressing the
+// lit switch turns it off (none lit: the rack row is the empty box),
+// pressing another lights it alone; a layout stored by m5b-ui-inserts-master
+// (racks.inserts true or false) reads as "inserts" or none.
+test('the rack switches: Inserts lit by default, one lit at a time, a lit one pressed turns it off, parsed and stored', () => {
+  assert.deepEqual(DEFAULT_LAYOUT.racks, { shown: 'inserts' });
+  const off = reduce(start(), { type: 'rack', rack: 'inserts' });
+  assert.deepEqual(off.layout.racks, { shown: null }, 'the lit switch pressed: none lit');
+  assert.deepEqual(reduce(off, { type: 'rack', rack: 'inserts' }).layout.racks, { shown: 'inserts' });
+  const sends = reduce(start(), { type: 'rack', rack: 'sends' });
+  assert.deepEqual(sends.layout.racks, { shown: 'sends' }, 'another pressed lights it alone');
+  assert.deepEqual(reduce(sends, { type: 'rack', rack: 'routing' }).layout.racks, { shown: 'routing' });
+  assert.equal(reduce(off, { type: 'rack', rack: 'inserts', visible: false }), off, 'unchanged: the same state');
+  assert.deepEqual(reduce(off, { type: 'rack', rack: 'routing', visible: true }).layout.racks, { shown: 'routing' });
+  assert.deepEqual(reduce(start(), { type: 'rack', rack: 'eq' as 'inserts' }).layout, DEFAULT_LAYOUT, 'an unknown rack changes nothing');
   // The zones are untouched.
-  assert.deepEqual(hidden.layout.sizes, DEFAULT_LAYOUT.sizes);
-  // A layout stored before this feature has no racks: the default.
-  assert.deepEqual(parseLayout(JSON.stringify({ trackList: 300 })).racks, { inserts: true });
-  for (const bad of ['no', 1, null, { inserts: 'off' }]) assert.deepEqual(parseLayout(JSON.stringify({ racks: bad })).racks, { inserts: true }, JSON.stringify(bad));
-  assert.deepEqual(parseLayout(JSON.stringify({ racks: { inserts: false } })).racks, { inserts: false });
-  const layout: Layout = { ...DEFAULT_LAYOUT, racks: { inserts: false } };
+  assert.deepEqual(off.layout.sizes, DEFAULT_LAYOUT.sizes);
+  // A layout stored before the switches has no racks: the default.
+  assert.deepEqual(parseLayout(JSON.stringify({ trackList: 300 })).racks, { shown: 'inserts' });
+  for (const bad of ['no', 1, null, { inserts: 'off' }, { shown: 'eq' }]) assert.deepEqual(parseLayout(JSON.stringify({ racks: bad })).racks, { shown: 'inserts' }, JSON.stringify(bad));
+  // The migration from m5b-ui-inserts-master's field.
+  assert.deepEqual(parseLayout(JSON.stringify({ racks: { inserts: false } })).racks, { shown: null });
+  assert.deepEqual(parseLayout(JSON.stringify({ racks: { inserts: true } })).racks, { shown: 'inserts' });
+  for (const shown of ['routing', 'inserts', 'sends', null] as const) assert.deepEqual(parseLayout(JSON.stringify({ racks: { shown } })).racks, { shown });
+  const layout: Layout = { ...DEFAULT_LAYOUT, racks: { shown: 'sends' } };
   assert.deepEqual(parseLayout(serializeLayout(layout)), layout);
 
   const saved = new Map<string, string>();
   const store = createLayoutStore({ storage: { getItem: (k) => saved.get(k) ?? null, setItem: (k, v) => void saved.set(k, v) } });
-  store.dispatch({ type: 'rack', rack: 'inserts' });
-  assert.deepEqual((JSON.parse(saved.get(LAYOUT_KEY)!) as { racks: unknown }).racks, { inserts: false });
+  store.dispatch({ type: 'rack', rack: 'routing' });
+  assert.deepEqual((JSON.parse(saved.get(LAYOUT_KEY)!) as { racks: unknown }).racks, { shown: 'routing' });
   // A reload reads it back.
   const reloaded = createLayoutStore({ storage: { getItem: (k) => saved.get(k) ?? null, setItem: () => undefined } });
-  assert.deepEqual(reloaded.getSnapshot().layout.racks, { inserts: false });
+  assert.deepEqual(reloaded.getSnapshot().layout.racks, { shown: 'routing' });
 });
 
 // m5b-ui-media: the right zone has the Plans and the Media tab (UI redesign
@@ -702,4 +712,29 @@ test('nextTab steps through a zone\'s tabs and wraps; a one-tab zone stays', () 
   assert.equal(nextTab('right', 'plans', 1, {}), 'plans');
   assert.equal(nextTab('left', 'track', 1), 'track');
   assert.equal(nextTab('channel', 'channel', -1), 'channel');
+});
+
+// m5b-ui-notepad (UI redesign 3.4): whether the Inspector's Notepad section is
+// open is kept in siann.layout.v1, shut by default as the mockup draws it.
+test('the Notepad section: shut by default, toggled by its action, parsed field by field and stored', () => {
+  assert.deepEqual(DEFAULT_LAYOUT.inspector, { notepad: false });
+  const open = reduce(start(), { type: 'section', section: 'notepad' });
+  assert.deepEqual(open.layout.inspector, { notepad: true });
+  assert.deepEqual(reduce(open, { type: 'section', section: 'notepad' }).layout.inspector, { notepad: false });
+  assert.equal(reduce(open, { type: 'section', section: 'notepad', open: true }), open, 'unchanged: the same state');
+  assert.deepEqual(reduce(start(), { type: 'section', section: 'sends' as 'notepad' }).layout, DEFAULT_LAYOUT, 'an unknown section changes nothing');
+  assert.deepEqual(open.layout.sizes, DEFAULT_LAYOUT.sizes);
+  // A layout stored before this feature has no inspector field: the default.
+  assert.deepEqual(parseLayout(JSON.stringify({ trackList: 300 })).inspector, { notepad: false });
+  for (const bad of ['yes', 1, null, [], { notepad: 'open' }]) assert.deepEqual(parseLayout(JSON.stringify({ inspector: bad })).inspector, { notepad: false }, JSON.stringify(bad));
+  assert.deepEqual(parseLayout(JSON.stringify({ inspector: { notepad: true } })).inspector, { notepad: true });
+  const layout: Layout = { ...DEFAULT_LAYOUT, inspector: { notepad: true } };
+  assert.deepEqual(parseLayout(serializeLayout(layout)), layout);
+
+  const saved = new Map<string, string>();
+  const store = createLayoutStore({ storage: { getItem: (k) => saved.get(k) ?? null, setItem: (k, v) => void saved.set(k, v) } });
+  store.dispatch({ type: 'section', section: 'notepad' });
+  assert.deepEqual((JSON.parse(saved.get(LAYOUT_KEY)!) as { inspector: unknown }).inspector, { notepad: true });
+  const reloaded = createLayoutStore({ storage: { getItem: (k) => saved.get(k) ?? null, setItem: () => undefined } });
+  assert.deepEqual(reloaded.getSnapshot().layout.inspector, { notepad: true });
 });

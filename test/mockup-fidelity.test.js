@@ -130,7 +130,7 @@ test('each component of M5 has the port feature that owns its parts', () => {
   for (const [id, gate] of Object.entries(owner)) assert.equal(ruleOf(id).gate, gate, id);
   for (const gate of PORTS) assert.ok(Object.values(owner).includes(gate), gate);
   // Parts of a later feature inside a ported component stay that feature's, pending.
-  for (const [id, gate] of Object.entries({ 'tool-2': 'm6a-ui-tools', 'strip-3-read': 'm6a-ui-automation', 'marker-head': 'm5b-ui-markers', 'inspector-notepad': 'm5b-ui-notepad' })) {
+  for (const [id, gate] of Object.entries({ 'tool-2': 'm6a-ui-tools', 'strip-3-read': 'm6a-ui-automation', 'marker-head': 'm5b-ui-markers' })) {
     assert.equal(ruleOf(id).gate, gate, id);
     assert.equal(MANIFEST.gates[gate], 'pending', gate);
   }
@@ -150,6 +150,14 @@ test('each component of M5 has the port feature that owns its parts', () => {
   // The record buttons and the monitor stay m5b-ui-recording's, which landed them (report).
   for (const id of ['track-2-record', 'strip-3-record', 'inspector-record', 'inspector-monitor', 'transport-record']) assert.equal(ruleOf(id).gate, 'm5b-ui-recording', id);
   assert.equal(MANIFEST.gates['m5b-ui-recording'], 'report');
+  // The Notepad section stays m5b-ui-notepad's, which landed it (report).
+  assert.equal(ruleOf('inspector-notepad').gate, 'm5b-ui-notepad');
+  assert.equal(MANIFEST.gates['m5b-ui-notepad'], 'report');
+  // The Routing and Sends sections stay m5b-ui-sends-buses', which landed them (report), and their hold is gone.
+  for (const id of ['inspector-routing', 'inspector-sends']) assert.equal(ruleOf(id).gate, 'm5b-ui-sends-buses', id);
+  assert.equal(MANIFEST.gates['m5b-ui-sends-buses'], 'report');
+  assert.doesNotMatch(read('app', 'renderer', 'tokens.css'), /--hold-inspector-routing-h/);
+  assert.doesNotMatch(read('app', 'renderer', 'shell.css'), /--hold-inspector-routing-h/);
 });
 
 test('a feature that owns parts names its gate in its acceptance, asks for a side-by-side screenshot and never for enforce', () => {
@@ -893,10 +901,11 @@ test('the Inspector port links ui/left-zone.css in the mockup\'s order, its gate
   assert.ok(app.indexOf('ui/top-bar.css') < app.indexOf('ui/left-zone.css') && app.indexOf('ui/left-zone.css') < app.indexOf('ui/project-zone.css'), 'in the mockup\'s order');
   assert.equal(MANIFEST.gates['m5-ui-port-inspector'], 'report');
   // The open sections are held by tokens until their features land; each names a pending part.
-  // Inserts landed (m5b-ui-inserts-master): its box on an engine without plugins is a shell.css calc().
+  // Inserts landed (m5b-ui-inserts-master) and Routing (m5b-ui-sends-buses): their boxes, when the
+  // engine can show neither, are shell.css calc()s; no Inspector section is held any more.
   const tokens = read('app', 'renderer', 'tokens.css');
   const holds = [...tokens.matchAll(/--hold-(inspector-[a-z0-9-]+)-h\s*:/g)].map((m) => m[1]).sort();
-  assert.deepEqual(holds, ['inspector-routing']);
+  assert.deepEqual(holds, []);
   for (const id of holds) assert.equal(MANIFEST.gates[ruleOf(id).gate], 'pending', id);
   // The temporary pre-port rules #136 kept for the Inspector are gone.
   const shell = read('app', 'renderer', 'shell.css').replace(/\/\*[\s\S]*?\*\//g, '');
@@ -1122,7 +1131,8 @@ test('shell.css names tokens only and holds nothing pinned for unported zones', 
   const declared = new Set([...read('app', 'renderer', 'tokens.css').matchAll(/(--[\w-]+)\s*:/g)].map((m) => m[1]));
   const set = new Set([...shell.matchAll(/(--[\w-]+)\s*:/g)].map((m) => m[1]));
   // --channel-zone-w: the Channel zone's width, which Shell sets on .app (m5b-ui-editor-channel).
-  const local = ['--c', '--zoom-at', '--drawer-width', '--channel-zone-w'];
+  // --send-fill: a send slot's level (m5b-ui-sends-buses), set inline from the fader's taper.
+  const local = ['--c', '--zoom-at', '--drawer-width', '--channel-zone-w', '--send-fill'];
   for (const m of shell.matchAll(/var\((--[\w-]+)/g)) assert.ok(declared.has(m[1]) || set.has(m[1]) || local.includes(m[1]), `shell.css names ${m[1]}, which tokens.css does not declare`);
   // The header says what is left, and nothing is "not ported yet".
   assert.doesNotMatch(read('app', 'renderer', 'shell.css'), /not ported yet|until their alignment/);

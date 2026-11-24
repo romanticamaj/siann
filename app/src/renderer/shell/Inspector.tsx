@@ -16,11 +16,10 @@
 //     .i-row     Volume: the label, the slider (.hs: its fill <i> and thumb <u>
 //                at the taper's position), the value (b.num, dB)
 //     .i-row     Pan: the label, the slider (its thumb only), the value (C, L35)
-//   five boxes   where sec() draws Routing, Inserts, Sends, Automation and
-//                Notepad, and between the last two the Agent changes section;
-//                the Routing box holds the In row (m5b-ui-recording: the
-//                input selector, sec('Routing')'s first .irow) at its place
-//                until m5b-ui-sends-buses ports the section around it
+//   sections     sec() for Routing, Inserts, Sends, Automation and Notepad,
+//                and between the last two the Agent changes section (the
+//                Notepad is sec() since m5b-ui-notepad: NotepadSection.tsx);
+//                the pending one (Automation) is an empty box
 //   .z-foot      the Track tab and the box of Editor (the left zone's Editor
 //                tab, Cubase's editor Inspector: no feature of the usable
 //                release, empty through M5b; docs/harness/follow-ups.md)
@@ -37,9 +36,19 @@
 //
 // An absent part keeps its space empty (spec 3.0): the boxes have no role, no
 // focus, no data-part id and are hidden from assistive technology; shell.css
-// sizes them (Routing by --hold-inspector-routing-h until m5b-ui-sends-buses
-// lands it; the shut ones and the buttons by the shared rules' sizes). The
+// sizes them (the shut ones and the buttons by the shared rules' sizes). The
 // capability rule (3.0): an unlisted control leaves its box.
+//
+// Routing and Sends (m5b-ui-sends-buses; UI redesign 3.0, 3.4; 10.11, 25):
+// sec('Routing', ...) holds the In row (m5b-ui-recording's input selector)
+// and the Out row (mixer/OutputSelector.tsx: the master or a bus), each a
+// label and a .pick; it is rendered when either row can be (In: features.
+// recording and track.set_input; Out: features.buses and track.set_output),
+// a row that cannot be an empty .irow box, and with neither it is the empty
+// box shell.css sizes with a calc() of the shared rules' tokens (the 91 px
+// the mockup measures). sec('Sends', body, count) (mixer/SendSlot.tsx) lists
+// the track's sends and one .islot.empty, open where the mockup draws it
+// shut; without features.sends or send.add it is the shut empty box.
 //
 // Inserts (m5b-ui-inserts-master) is the mockup's sec('Inserts', ...)
 // (mixer/InsertSlot.tsx): the head with the count, every slot of the track in
@@ -47,6 +56,13 @@
 // bypass and Remove, then one .islot.empty. On an engine without plugins the
 // section is an empty box, sized by a shell.css calc() of the tokens the
 // shared rules size the section with (the 117 px the mockup measures).
+//
+// Notepad (m5b-ui-notepad; UI redesign 3.4, 10.11 item 24) is the mockup's
+// sec('Notepad','') (NotepadSection.tsx): shut by default, its head opens it (the
+// Shell keeps whether it is open in siann.layout.v1), and open it holds the
+// track's notes in a text area whose drafts are notepad.ts's store. On an
+// engine without the command track.set_notes it is the empty box of the
+// closed section, sized by shell.css (--section-head-h + --hairline).
 //
 // Agent changes (m5b-ui-ghosts; UI redesign 4.2, 4.4) is the mockup's
 // sec('Agent changes'): a .hist row for each applied plan that touched the
@@ -67,7 +83,7 @@
 // aria-hidden (the value text says both values) and leave with the ghosts. A
 // pending mute or solo rings M or S (.msr.ghost), as the header and the strip do.
 
-import { useRef, useSyncExternalStore, type CSSProperties, type PointerEvent } from 'react';
+import { useEffect, useMemo, useRef, useSyncExternalStore, type CSSProperties, type PointerEvent } from 'react';
 
 import { formatDb, formatPan } from '../format';
 import { useT } from '../i18n/t';
@@ -99,6 +115,13 @@ import { pluginsListed } from '../mixer/inserts';
 import { recordGates } from '../model/record';
 import { useRecordHost } from './record-context';
 import { InputRow, MonitorButton, RecordEnable } from './Recording';
+import { Notepad } from './NotepadSection';
+import { createNotepadStore, type NotepadStore } from './notepad';
+import { refusalOf } from '../plans/RefusalLine';
+import { OutputRow } from '../mixer/OutputSelector';
+import { routingListed, sendsListed } from '../mixer/routing';
+import { InspectorSends } from '../mixer/SendSlot';
+import type { RecordHost } from './record-context';
 
 export interface InspectorProps {
   readonly client: SessionClient;
@@ -106,6 +129,12 @@ export interface InspectorProps {
   readonly trackId: string | null;
   // The plans, for the Agent changes section (m5b-ui-ghosts).
   readonly plans?: PlanStore;
+  // The Notepad's drafts (m5b-ui-notepad), kept by App while the window
+  // lives; without one the Inspector keeps its own.
+  readonly notepad?: NotepadStore;
+  // Whether the Notepad section is open (siann.layout.v1) and its head's toggle.
+  readonly notepadOpen?: boolean;
+  readonly onNotepadToggle?: () => void;
   // e (m5b-ui-editor-channel): the Channel zone is shown (on the selected track), and e's press.
   readonly channelVisible?: boolean;
   readonly onEditChannel?: (trackId: string) => void;
@@ -128,6 +157,24 @@ const SECTION_HOLDS: Readonly<Record<(typeof SECTIONS)[number] | 'notepad', stri
 };
 
 const NO_PLANS = { subscribe: () => () => undefined, getSnapshot: () => null };
+
+// sec('Routing', ...): its head and the In and Out rows, a row that cannot be an empty .irow box.
+function RoutingSection({ client, track, record, input, output }: { client: SessionClient; track: TrackEntity; record: RecordHost | null; input: boolean; output: boolean }) {
+  const t = useT();
+  return (
+    <div className="sec" data-part="inspector-routing">
+      <div className="sec-h">
+        <Icon name="chev" small />
+        {t('inspector.routing')}
+        <span />
+      </div>
+      <div className="sec-b">
+        {input && record ? <InputRow host={record} track={track} /> : <div className="irow" aria-hidden="true" />}
+        {output ? <OutputRow client={client} trackId={track.id} name={track.name} /> : <div className="irow" aria-hidden="true" />}
+      </div>
+    </div>
+  );
+}
 
 // sec('Agent changes') for the track: the applied plans that touched it, then what is pending on it.
 function AgentChanges({ client, track, plans }: { client: SessionClient; track: TrackEntity; plans?: PlanStore }) {
@@ -286,9 +333,20 @@ function Foot() {
   );
 }
 
-export function Inspector({ client, gestures, trackId, plans, channelVisible = false, onEditChannel }: InspectorProps) {
+// The Inspector's own drafts when App passes none (a zone rendered alone).
+function useOwnNotepad(client: SessionClient, given: NotepadStore | undefined): NotepadStore {
+  const own = useMemo(
+    () => (given ? null : createNotepadStore({ model: client.model, execute: (commands, revision) => client.execute(commands, revision), blocked: () => false, refusal: refusalOf })),
+    [client, given],
+  );
+  useEffect(() => () => own?.dispose(), [own]);
+  return given ?? own!;
+}
+
+export function Inspector({ client, gestures, trackId, plans, notepad, notepadOpen = false, onNotepadToggle, channelVisible = false, onEditChannel }: InspectorProps) {
   const t = useT();
   const can = useCapabilities();
+  const notes = useOwnNotepad(client, notepad);
   const track = useTrack(client, trackId);
   const view = useGhostView();
   const guard = useEditGuard();
@@ -398,17 +456,16 @@ export function Inspector({ client, gestures, trackId, plans, channelVisible = f
       </div>
       {SECTIONS.map((name) => {
         if (name === 'inserts' && pluginsListed(can)) return <InspectorInserts key={name} client={client} track={track} view={view} />;
-        if (name === 'routing' && record && recordable.input) {
-          return (
-            <div key={name} className={SECTION_HOLDS.routing}>
-              <InputRow host={record} track={track} />
-            </div>
-          );
+        if (name === 'routing') {
+          const input = record !== null && recordable.input;
+          const output = routingListed(can);
+          if (input || output) return <RoutingSection key={name} client={client} track={track} record={record} input={input} output={output} />;
         }
+        if (name === 'sends' && sendsListed(can)) return <InspectorSends key={name} client={client} gestures={gestures} track={track} view={view} />;
         return <Hold key={name} className={SECTION_HOLDS[name]} />;
       })}
       <AgentChanges client={client} track={track} plans={plans} />
-      <Hold className={SECTION_HOLDS.notepad} />
+      {can.command('track.set_notes') ? <Notepad track={track} store={notes} open={notepadOpen} onToggle={onNotepadToggle ?? (() => undefined)} /> : <Hold className={SECTION_HOLDS.notepad} />}
       <Foot />
     </>
   );

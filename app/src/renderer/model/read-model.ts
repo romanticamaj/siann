@@ -26,6 +26,7 @@ import {
   type Entity,
   type FetchedEntity,
   type LocatorsEntity,
+  type MarkerEntity,
   type MasterEntity,
   type MediaEntity,
   type PluginSlotEntity,
@@ -69,6 +70,8 @@ export interface Snapshot {
   readonly buses: readonly BusEntity[];
   readonly sends: readonly SendEntity[];
   readonly busOrder: readonly string[];
+  // Position and cycle markers in id order (m5b-engine-markers).
+  readonly markers: readonly MarkerEntity[];
   // The user-visible track order (root.trackOrder).
   readonly trackOrder: readonly string[];
 }
@@ -78,13 +81,18 @@ export interface Snapshot {
 // Mute, solo and every structural field change only through a commit; clip
 // gain is structural (it changes the track's flattened clip list, a
 // recompile), so no clip field takes an overlay.
-export type GestureField = 'gainMilliDb' | 'pan';
+export type GestureField = 'gainMilliDb' | 'pan' | 'levelMilliDb';
 
 const CONTINUOUS: Readonly<Record<string, readonly GestureField[]>> = {
   track: ['gainMilliDb', 'pan'],
   // The master gain (m5b-ui-inserts-master; protocol-gestures-v0.md: the
   // master target has gain only and always exists).
   master: ['gainMilliDb'],
+  // A bus fader's gain and a send's level (m5b-ui-sends-buses; protocol-gestures-v0.md:
+  // {ref: bus:<id>, param: gain}, {ref: send:<id>, param: level}). A bus's pan is no
+  // gesture target: it commits one bus.set_pan when its drag ends.
+  bus: ['gainMilliDb'],
+  send: ['levelMilliDb'],
 };
 
 // The master entity is absent while its gain is 0 dB, and its gesture target
@@ -150,7 +158,15 @@ function buildSnapshot(
   entities: Record<string, Entity>,
   hashes: Record<string, string>,
 ): Snapshot {
-  const tables: Record<string, Entity[]> = { media: [], track: [], clip: [], plugin_slot: [], bus: [], send: [] };
+  const tables: Record<string, Entity[]> = {
+    media: [],
+    track: [],
+    clip: [],
+    plugin_slot: [],
+    bus: [],
+    send: [],
+    marker: [],
+  };
   let root: RootEntity | null = null;
   let locators: LocatorsEntity | null = null;
   let master: MasterEntity | null = null;
@@ -178,6 +194,7 @@ function buildSnapshot(
     buses: Object.freeze(tables.bus as BusEntity[]),
     sends: Object.freeze(tables.send as SendEntity[]),
     busOrder: root?.busOrder ?? Object.freeze([]),
+    markers: Object.freeze(tables.marker as MarkerEntity[]),
     trackOrder: root ? root.trackOrder : Object.freeze([]),
   });
 }

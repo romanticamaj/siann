@@ -86,11 +86,12 @@ import { displayWrites, transportEnabled } from './shell/Transport';
 import type { MeterTestHooks } from './mixer/MixerMeters';
 import type { EditorTestHooks } from './editor/SampleEditorCanvas';
 import { PickerController } from './mixer/picker';
+import { BusSelection } from './mixer/bus-selection';
 import { PluginActions } from './model/plugin-actions';
 import { createFrameRecorder, installFrameMarks, readyLineAt, type FrameTestHooks } from './perf/frame-marks';
 import type { TimelineTestHooks } from './timeline/TimelineCanvas';
 import type { MediaBridge } from './model/media-bridge';
-import { structuralBlocked } from './model/edit-guard';
+import { GUARD_REASON, structuralBlocked } from './model/edit-guard';
 import { MediaImporter, type ImportResult } from './model/media-import';
 import type { MediaHost } from './media/MediaTab';
 
@@ -337,6 +338,9 @@ const project = new ProjectController({ client, shell: shellPort, locale: () => 
 void project.start();
 const studioSetup = new StudioSetupController({ client, status: engineStatus, locale: () => locales.getSnapshot() });
 
+// The selected bus (m5b-ui-sends-buses): the strips set it, the menu's Remove Bus follows it.
+const busSelection = new BusSelection();
+
 const menuBridge = bridge?.menu;
 if (menuBridge) {
   let sentMenu = '';
@@ -346,6 +350,9 @@ if (menuBridge) {
       recent: project.getSnapshot().recent,
       shell: shellPort !== null,
       can: capabilitySelector(client.getState().capabilities),
+      busSelected: busSelection.getSnapshot() !== null,
+      // The edit guard (4.5 C5): Add Bus and Remove Bus are disabled with its reason while a proposal is heard.
+      guard: structuralBlocked(plans.getSnapshot().heard) ? translator(locales.getSnapshot())(GUARD_REASON) : null,
     });
     const text = JSON.stringify(model);
     if (text === sentMenu) return;
@@ -355,6 +362,8 @@ if (menuBridge) {
   locales.subscribe(pushMenu);
   project.subscribe(pushMenu);
   client.subscribe(pushMenu);
+  busSelection.subscribe(pushMenu);
+  plans.subscribe(pushMenu);
   pushMenu();
   menuBridge.onCommand((command) => {
     if ((COMMAND_IDS as readonly string[]).includes(command)) commands.run('window', command as CommandId);
@@ -475,6 +484,7 @@ const app = (
     inserts={inserts}
     media={media}
     record={record}
+    buses={busSelection}
   />
 );
 createRoot(container).render(

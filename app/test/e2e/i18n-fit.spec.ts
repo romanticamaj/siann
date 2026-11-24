@@ -479,6 +479,95 @@ test('the rack switch, the slots, the Inspector\'s Inserts section and the picke
   expect(failures).toEqual([]);
 });
 
+
+// m5b-ui-sends-buses (UI redesign 3.4, 6.3): the three rack switches, a send
+// slot's controls (on, PRE / POST, Remove) and the empty slot's +, the output
+// selector's slot, the Inspector's Routing and Sends sections, the bus
+// picker and the Add Bus and Remove Bus menu labels fit in en, zh-TW and
+// zh-CN at 1440x900. The bus name in a slot ellipsises inside its box by
+// design, so the check is on the controls, and on the room the name keeps
+// in a strip's slot (a strip's PRE / POST is measured focused, where it shows).
+const SENDS = '[data-part=mixer-racks] button, .slot:hover button:not(.pre), .slot.empty, .islot button, .islot.empty, [data-part=inspector-routing] .irow > span:first-child, [data-part=inspector-sends] .sec-h, [data-part=inspector-routing] .sec-h';
+const ROUTING = '.ins .slot, [data-part=inspector-routing] .pick';
+
+test('the rack switches, the send slots, the output selector, the Routing and Sends sections and the bus picker fit in every locale', async () => {
+  scratch = fs.mkdtempSync(path.join(os.tmpdir(), 'siann-fit-sends-'));
+  const sessionDir = seedBundle(scratch, TRACKS);
+  app = await launchApp({ sessionDir, userData: path.join(scratch, 'user-data'), languages: ['en-US'] });
+  page = await app.firstWindow();
+  await expect(page.getByTestId('status')).toHaveAttribute('data-status', 'connected');
+  const engine = await engineClient(page);
+  await engine.call('command.execute', {
+    commands: [
+      { op: 'bus.add', busId: 'bus_fit', name: 'Verb' },
+      { op: 'send.add', sendId: 'snd_fit', trackId: 'trk_keys', busId: 'bus_fit', levelMilliDb: 0, pre: false },
+      { op: 'bus.add', busId: 'bus_fit_pre', name: 'Delay' },
+      { op: 'send.add', sendId: 'snd_fit_pre', trackId: 'trk_bass', busId: 'bus_fit_pre', levelMilliDb: 0, pre: true },
+    ],
+  });
+  engine.close();
+  await resize(SIZES[0]!);
+  await expect(page.getByTestId('mixer-strip-bus-bus_fit')).toBeVisible();
+  await page.getByTestId('track-header-trk_keys').click();
+  const failures: string[] = [];
+  for (const locale of ['en', 'zh-Hant', 'zh-Hans'] as const) {
+    await page.evaluate((next) => (window as unknown as { __siannLocale: { setLocale(l: string): void } }).__siannLocale.setLocale(next), locale);
+    await expect(page.locator('html')).toHaveAttribute('data-locale', locale);
+    const measure = (selector: string) => page.evaluate((selector) => {
+      const out: string[] = [];
+      for (const el of document.querySelectorAll<HTMLElement>(selector)) {
+        if (el.getClientRects().length === 0) continue;
+        if (el.scrollWidth > el.clientWidth) out.push(`${el.className} "${(el.textContent ?? '').trim().slice(0, 40)}" ${el.scrollWidth} > ${el.clientWidth}`);
+        for (const node of el.childNodes) {
+          if (node.nodeType !== Node.TEXT_NODE || !node.textContent?.trim()) continue;
+          const range = document.createRange();
+          range.selectNodeContents(node);
+          if (new Set([...range.getClientRects()].map((r) => Math.round(r.top))).size > 1) out.push(`${el.className} "${node.textContent.trim()}" wraps`);
+        }
+      }
+      return out;
+    }, selector);
+    // The Sends rack, its slot hovered (its buttons show then).
+    await page.locator('[data-part="mixer-racks"]').getByTestId('rack-sends').click();
+    // The level (the bus name) keeps its room in the strip's 80 px slot: more
+    // than half of it at rest, a pre-fader send's too, and more than a third
+    // hovered, beside on and Remove (fix round 1).
+    const room = (id: string) => page.getByTestId(`send-${id}`).evaluate((slot) => {
+      const level = slot.querySelector('.send-level')!;
+      return level.getBoundingClientRect().width / slot.getBoundingClientRect().width;
+    });
+    await page.mouse.move(1, 1);
+    for (const id of ['snd_fit', 'snd_fit_pre']) {
+      const share = await room(id);
+      if (share <= 0.5) failures.push(`${locale}: ${id} at rest, the level has ${share.toFixed(2)} of the slot`);
+      await page.getByTestId(`send-${id}`).hover();
+      const hovered = await room(id);
+      if (hovered <= 1 / 3) failures.push(`${locale}: ${id} hovered, the level has ${hovered.toFixed(2)} of the slot`);
+    }
+    await page.getByTestId('send-snd_fit').hover();
+    await expect(page.getByTestId('send-snd_fit').locator('button')).toHaveCount(3);
+    for (const entry of await measure(SENDS)) failures.push(`${locale}: ${entry}`);
+    // A strip's PRE / POST shows while it holds the keyboard focus.
+    await page.getByTestId('send-pre-snd_fit').focus();
+    for (const entry of await measure('.ins > .slot:focus-within > button.pre')) failures.push(`${locale}: ${entry}`);
+    expect(await page.getByTestId('send-pre-snd_fit').evaluate((el) => el.getBoundingClientRect().width), `${locale}: PRE / POST focused`).toBeGreaterThan(0);
+    // The bus picker of an empty slot.
+    await page.getByTestId('mixer-strip-trk_bass').locator('.slot.empty').first().click();
+    await expect(page.getByTestId('bus-picker')).toBeVisible();
+    for (const entry of await measure('.bus-picker button, .bus-picker .picker-title')) failures.push(`${locale}: ${entry}`);
+    await page.getByTestId('bus-picker').getByTestId('picker-close').click();
+    await expect(page.getByTestId('bus-picker')).toBeHidden();
+    // The Routing rack: the output selectors' slots and the Inspector's Out row.
+    await page.locator('[data-part="mixer-racks"]').getByTestId('rack-routing').click();
+    for (const entry of await measure(ROUTING)) failures.push(`${locale}: ${entry}`);
+    // The menu labels: the catalog's words, different from the English ones in Chinese.
+    const labels = await app.evaluate(({ Menu }) => ['mixer.bus.add', 'mixer.bus.remove'].map((id) => Menu.getApplicationMenu()?.getMenuItemById(id)?.label ?? null));
+    expect(labels.every((l) => typeof l === 'string' && l.length > 0), `${locale}: ${labels.join(', ')}`).toBe(true);
+    if (locale !== 'en') expect(labels.some((l) => /\p{Script=Han}/u.test(l ?? '')), locale).toBe(true);
+    await page.locator('[data-part="mixer-racks"]').getByTestId('rack-inserts').click();
+  }
+  expect(failures).toEqual([]);
+});
 // m5b-ui-edit-more (UI redesign 3.2, 6.3): the snap type menu, open, and the
 // repeat dialog (Ctrl+K), open, fit in every locale at both window sizes: no
 // item or label overflows its box or wraps.
@@ -782,6 +871,64 @@ test('the Editor tab, the Channel zone button, e, the editor\'s empty text and t
         }, SELECTORS);
         for (const entry of report) failures.push(`${size.width}x${size.height} ${locale} ${tab}: ${entry}`);
       }
+    }
+  }
+  expect(failures).toEqual([]);
+});
+
+// m5b-ui-notepad (UI redesign 3.4, 6.3): the Notepad section open with text,
+// its refusal line and its "changed elsewhere" line fit in every locale at
+// either window size: the head's title stays on its line, nothing overflows
+// its box, and the section stays inside the left zone.
+test('the Notepad section, its refusal line and its changed-elsewhere line fit in every locale at either window size', async () => {
+  test.setTimeout(150_000);
+  scratch = fs.mkdtempSync(path.join(os.tmpdir(), 'siann-fit-notepad-'));
+  const sessionDir = seedBundle(scratch, TRACKS);
+  app = await launchApp({ sessionDir, userData: path.join(scratch, 'user-data'), languages: ['en-US'] });
+  page = await app.firstWindow();
+  await expect(page.getByTestId('status')).toHaveAttribute('data-status', 'connected');
+  await resize(SIZES[0]!);
+  const engine = await engineClient(page);
+  const header = page.getByTestId('track-header-trk_voxlead');
+  await header.locator('.name').click();
+  await expect(header).toHaveAttribute('aria-selected', 'true');
+  const notepad = page.locator('[data-part="inspector-notepad"]');
+  await notepad.getByRole('button').click();
+  const area = page.getByTestId('notepad-text');
+  // A refused draft (U+202E is display-unsafe), kept; then a change from another connection.
+  await area.fill('Double the chorus vocal at bar 17 ‮');
+  await header.locator('.name').click();
+  await expect(page.getByTestId('notepad-refusal')).toHaveAttribute('data-code', 'invalid_notes');
+  await engine.call('command.execute', { commands: [{ op: 'track.set_notes', trackId: 'trk_voxlead', notes: 'Set elsewhere' }] });
+  await expect(page.getByTestId('notepad-changed')).toBeVisible();
+  engine.close();
+  const NOTEPAD = '[data-part=inspector-notepad] .sec-h, [data-part=inspector-notepad] textarea, [data-testid=notepad-refusal], [data-testid=notepad-refusal] button, [data-testid=notepad-changed]';
+  const failures: string[] = [];
+  for (const locale of LOCALES) {
+    await page.evaluate((next) => window.__siannLocale!.setLocale(next as never), locale);
+    await expect(page.locator('html')).toHaveAttribute('data-locale', locale);
+    for (const size of SIZES) {
+      await resize(size);
+      // Under 1100 px the left zone starts hidden: its button shows it for this window.
+      // Probe only once the shell has laid out the new size (its data-viewport), or
+      // the probe reads the last size's layout (the zone still shown, about to hide)
+      // and skips the button, as the Media tab's probe above does.
+      await expect(page.getByTestId('shell')).toHaveAttribute('data-viewport', `${size.width}x${size.height}`);
+      if ((await page.getByTestId('zone-left').getAttribute('data-visible')) !== 'true') await page.getByTestId('zone-button-left').click();
+      await expect(page.getByTestId('zone-left')).toHaveAttribute('data-visible', 'true');
+      // The zones' grid animates to its new columns: measure once it has.
+      await expect.poll(() => page.evaluate(() => document.getAnimations().filter((a) => a instanceof CSSTransition).length)).toBe(0);
+      await expect(area).toBeVisible();
+      for (const entry of await overflowing(NOTEPAD)) failures.push(`${locale} ${size.width}x${size.height} (notepad): ${entry}`);
+      for (const entry of await wrapped('[data-part=inspector-notepad] .sec-h, [data-testid=notepad-refusal] button')) failures.push(`${locale} ${size.width}x${size.height} (notepad): ${entry}`);
+      const inside = await notepad.evaluate((el) => {
+        const zone = el.closest('[data-zone=left]')!.getBoundingClientRect();
+        return [...el.querySelectorAll<HTMLElement>('*')].every((child) => {
+          const r = child.getBoundingClientRect();
+          return r.width === 0 || (r.left >= zone.left - 0.5 && r.right <= zone.right + 0.5);
+        });
+      });
+      if (!inside) failures.push(`${locale} ${size.width}x${size.height}: the Notepad section leaves the left zone`);
     }
   }
   expect(failures).toEqual([]);
