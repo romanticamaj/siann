@@ -257,10 +257,18 @@ test('(c) removing a bus with a send asks, naming the track; one revision; one u
   await expect(busStrip(bus)).not.toHaveClass(/\bsel\b/);
 });
 
-async function dragBy(control: Locator, dx: number, shift = false): Promise<void> {
+// The centre of a control a raw mouse gesture starts on, read once the control
+// is scrolled into view, visible and stable (Playwright's actionability checks
+// for hover) and hovered, so a section laid out late, a scroll or the hover
+// state cannot move it between the read and the press.
+async function centreOf(control: Locator): Promise<{ x: number; y: number }> {
+  await control.hover();
   const box = (await control.boundingBox())!;
-  const x = box.x + box.width / 2;
-  const y = box.y + box.height / 2;
+  return { x: box.x + box.width / 2, y: box.y + box.height / 2 };
+}
+
+async function dragBy(control: Locator, dx: number, shift = false): Promise<void> {
+  const { x, y } = await centreOf(control);
   await page.mouse.move(x, y);
   if (shift) await page.keyboard.down('Shift');
   await page.mouse.down();
@@ -296,11 +304,11 @@ test('(d) the send level is one revision per drag, Shift fine, Ctrl-click 0 dB; 
 
   // The bus pan: nothing while dragging, one bus.set_pan at release.
   const knob = page.getByTestId(`pan-${bus}`);
-  const box = (await knob.boundingBox())!;
+  const centre = await centreOf(knob);
   const before = await revisions();
-  await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2);
+  await page.mouse.move(centre.x, centre.y);
   await page.mouse.down();
-  await page.mouse.move(box.x + box.width / 2 - 30, box.y + box.height / 2, { steps: 5 });
+  await page.mouse.move(centre.x - 30, centre.y, { steps: 5 });
   expect(await revisions()).toBe(before, 'no revision while held');
   await page.mouse.up();
   await expect.poll(() => revisions()).toBe(before + 1);
@@ -430,11 +438,11 @@ test('(g) a bus strip: the fader is one bus gain gesture, M and S one revision e
   const bus = await addBusFromMenu();
   // The fader: one gesture on bus:<id> (gain), one revision.
   const cap = page.getByTestId(`fader-${bus}`).locator('[data-part-of="cap"]');
-  const box = (await cap.boundingBox())!;
+  const centre = await centreOf(cap);
   await oneRevision(async () => {
-    await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2);
+    await page.mouse.move(centre.x, centre.y);
     await page.mouse.down();
-    await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2 + 40, { steps: 5 });
+    await page.mouse.move(centre.x, centre.y + 40, { steps: 5 });
     await page.mouse.up();
   });
   expect((await entity(`bus:${bus}`))!.gainMilliDb as number).toBeLessThan(0);
@@ -518,10 +526,10 @@ test('(i) while a proposal is heard every bus, send and routing control is disab
     await expect(knob).toBeVisible();
     await expect(knob).toHaveAttribute('aria-disabled', 'true');
     await expect(knob.locator('title')).toHaveText(reason);
-    const knobBox = (await knob.boundingBox())!;
-    await page.mouse.move(knobBox.x + knobBox.width / 2, knobBox.y + knobBox.height / 2);
+    const knobCentre = await centreOf(knob);
+    await page.mouse.move(knobCentre.x, knobCentre.y);
     await page.mouse.down();
-    await page.mouse.move(knobBox.x + knobBox.width / 2 - 30, knobBox.y + knobBox.height / 2, { steps: 5 });
+    await page.mouse.move(knobCentre.x - 30, knobCentre.y, { steps: 5 });
     await page.mouse.up();
     // The Sends rack: on, PRE / POST and Remove; the empty slot.
     await expect(rackSwitch('sends')).toHaveAttribute('aria-pressed', 'true');
@@ -548,10 +556,10 @@ test('(i) while a proposal is heard every bus, send and routing control is disab
     // The bus fader and the send level are gestures: they go onto the branch, main's head stays.
     const from = watcher.events.length;
     const cap = page.getByTestId(`fader-${bus}`).locator('[data-part-of="cap"]');
-    const capBox = (await cap.boundingBox())!;
-    await page.mouse.move(capBox.x + capBox.width / 2, capBox.y + capBox.height / 2);
+    const capCentre = await centreOf(cap);
+    await page.mouse.move(capCentre.x, capCentre.y);
     await page.mouse.down();
-    await page.mouse.move(capBox.x + capBox.width / 2, capBox.y + capBox.height / 2 + 30, { steps: 5 });
+    await page.mouse.move(capCentre.x, capCentre.y + 30, { steps: 5 });
     await page.mouse.up();
     await expect.poll(() => watcher.events.slice(from).filter((e) => e.type === 'proposal.changed').length).toBeGreaterThan(0);
     const level = page.locator('[data-part="inspector-sends"]').getByTestId(`islot-send-level-${sendId}`);
