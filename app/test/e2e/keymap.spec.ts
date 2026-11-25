@@ -182,6 +182,9 @@ test('(b) Shift+Enter starts, Shift+0 stops, Ctrl+1 and Ctrl+2 set the locators'
   await locateTo(3 * BAR);
   await page.keyboard.press(`${MOD}+Digit2`);
   await expect.poll(async () => (await entity('locators:locators'))?.right ?? null).toBe(String(3 * BAR));
+  // Set Left needs the range in the renderer's document (without locators it
+  // sets nothing): the transport shows the locators once the renderer has them.
+  await expect(page.getByTestId('display-locators')).toBeVisible();
   await locateTo(BAR);
   await page.keyboard.press(`${MOD}+Digit1`);
   await expect.poll(async () => (await entity('locators:locators'))?.left ?? null).toBe(String(BAR));
@@ -230,7 +233,11 @@ test('(d) menu clicks run Edit > Glue, Project > Add Bus and Project > Remove Bu
   // Glue: split the clip at the cursor, select both pieces, Edit > Glue joins them back.
   await focusProject();
   await locateTo(RATE / 4);
-  const clipRect = await page.evaluate(() => (window as unknown as { __siannTimeline: { clips(): Array<{ clipId: string; x: number; y: number; width: number; height: number }> } }).__siannTimeline.clips()[0]!);
+  // The canvas lays the clip out after its draw: poll until the timeline lists it.
+  type ClipRect = { clipId: string; x: number; y: number; width: number; height: number };
+  const laidOut = () => page.evaluate(() => (window as unknown as { __siannTimeline?: { clips(): ClipRect[] } }).__siannTimeline?.clips()[0] ?? null);
+  await expect.poll(laidOut).not.toBeNull();
+  const clipRect = (await laidOut())!;
   const canvas = (await page.getByTestId('timeline-canvas').boundingBox())!;
   await page.mouse.click(canvas.x + clipRect.x + clipRect.width / 2, canvas.y + clipRect.y + clipRect.height / 2);
   let at = await revisions();
