@@ -73,6 +73,61 @@ The goal is not to replace producer judgment. The goal is to make detailed sessi
 - **Privacy by design:** provider data flow must be visible and intentional.
 - **Extensible for developers:** the system should support new tools, providers, and production workflows over time.
 
+## Project Status
+
+SIANN is in active development and has no tagged release yet. Every build of the main branch produces a Windows installer you can try (see [Running SIANN](#running-siann)). The interface is available in English, Traditional Chinese and Simplified Chinese. It follows Cubase's layout and default key commands.
+
+**Status as of November 2026:** the "usable release" milestone is nearly finished.
+
+| Milestone | What it delivers | Status |
+|---|---|---|
+| Foundations | Native audio engine, command protocol, session documents, plans with review and rollback | Done |
+| Agent access | Agents work only through reviewed plans (MCP adapter): approve, partially approve, reject, audition, roll back | Done |
+| Plugins | CLAP, VST3 and AU hosting, with latency compensation and crash survival | Done; Mac compatibility pass pending |
+| Desktop UI v1 | The studio window: event display, MixConsole, Inspector, Plans tab | Done; design review pending |
+| Usable release | Open with one installer and work as a Cubase user would (details below) | Nearly done: the end-to-end walkthrough is next |
+| Automation | Automation lanes with Write, Touch, Latch and Trim; the remaining edit tools | Planned |
+| Recording production | Loop recording with takes, MIDI recording, long sessions | Planned |
+| Mixing structure | Groups, VCAs, sidechain, bounce and stems, a full master channel | Planned |
+| Embedded | A headless engine on an arm64 Linux board, controlled from a browser | Planned |
+
+**What works in the current build:**
+
+- **Projects:** a start view with New, Open, recent projects and Save. Studio Setup picks the audio device and inputs.
+- **Media:**
+  - drag audio files in from the file manager;
+  - use the Media tab;
+  - track notes in a Notepad.
+- **Arranging:**
+  - a bars-and-beats ruler with grid and snap, zoom and scroll;
+  - move, copy, split, glue, trim, erase, nudge and repeat (Ctrl+D);
+  - fades and clip volume;
+  - undo and redo;
+  - markers, and a cycle range saved with the project;
+  - a time signature;
+  - a sample editor in the lower zone.
+- **Transport:**
+  - play, stop, record, cycle, click, count-in and punch;
+  - position display;
+  - numeric keypad commands with laptop alternatives.
+- **MixConsole:**
+  - faders to +6 dB on a dB scale, pan, mute and solo;
+  - meters with peak hold and clip lights;
+  - inserts, sends and buses;
+  - a master fader with loudness;
+  - a Channel zone for the selected track.
+- **Recording:** choose an input, arm a track, monitor it, and record takes into clips.
+- **AI plans:**
+  - an agent's proposed changes appear as ghosts in the event display and the MixConsole;
+  - audition them A/B against the current session, then approve all or some steps, reject them, or merge;
+  - ask the connected agent for changes from the Plans tab.
+
+**Still open before the usable release is complete:**
+
+- **Key commands:** the audit of Cubase's default key commands and the Key Commands list.
+- **Walkthrough:** an end-to-end test that plays a Cubase user's session, plus the screenshot tour in all three languages.
+- **Hands-on checks:** testing on a real audio interface, a clean Windows machine and macOS.
+
 ## Running SIANN
 
 **Windows installer.** Each build of the main branch produces `SIANN-Setup-<version>-x64.exe` with a `.sha256` file beside it. Check the hash, run the installer, and start SIANN from the Start menu. The installer is not code-signed yet, so Windows SmartScreen may say it "protected your PC": choose **More info**, then **Run anyway**, once you have checked the hash. Uninstall SIANN from Windows Settings, under Apps.
