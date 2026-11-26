@@ -2,15 +2,16 @@
 
 # SIANN 聲
 
-### The AI-native DAW that works like Cubase and listens like a collaborator.
+<p><strong>An open-source, AI-native digital audio workstation.</strong><br>
+Arrange, mix and record the way you would in Cubase. Let an AI agent propose changes you can see, hear, approve or roll back.</p>
 
-**Arrange, mix and record by hand. Let an AI agent propose changes you can see, hear, approve or roll back.**
-
-[![Status: under construction](https://img.shields.io/badge/status-under%20construction-orange?style=flat-square)](#-project-status)
+[![Status: under construction](https://img.shields.io/badge/status-under%20construction-orange?style=flat-square)](#project-status)
 [![License: GPL-2.0-or-later](https://img.shields.io/badge/license-GPL--2.0--or--later-blue?style=flat-square)](LICENSE)
-[![Platform](https://img.shields.io/badge/platform-Windows%20%7C%20macOS%20%7C%20Linux-lightgrey?style=flat-square)](#-try-it)
-[![Languages](https://img.shields.io/badge/UI-English%20%7C%20%E7%B9%81%E9%AB%94%E4%B8%AD%E6%96%87%20%7C%20%E7%AE%80%E4%BD%93%E4%B8%AD%E6%96%87-success?style=flat-square)](#-what-works-today)
-[![Agents](https://img.shields.io/badge/agents-MCP-8a63d2?style=flat-square)](#-how-ai-fits-in)
+[![Platform](https://img.shields.io/badge/platform-Windows%20%7C%20macOS%20%7C%20Linux-lightgrey?style=flat-square)](#try-it)
+[![Languages](https://img.shields.io/badge/UI-English%20%7C%20%E7%B9%81%E9%AB%94%E4%B8%AD%E6%96%87%20%7C%20%E7%AE%80%E4%BD%93%E4%B8%AD%E6%96%87-success?style=flat-square)](#what-works-today)
+[![Agents](https://img.shields.io/badge/agents-MCP-8a63d2?style=flat-square)](#how-ai-fits-in)
+
+<p><a href="#why-siann">About</a> &nbsp;·&nbsp; <a href="#screenshots">Screenshots</a> &nbsp;·&nbsp; <a href="#project-status">Status</a> &nbsp;·&nbsp; <a href="#try-it">Try it</a> &nbsp;·&nbsp; <a href="#developer-access">Developers</a> &nbsp;·&nbsp; <a href="#license">License</a></p>
 
 <img src="docs/images/readme/studio-en.png" alt="The SIANN studio window: event display with markers, an AI plan shown as violet ghost changes, the MixConsole and the Plans tab" width="100%">
 
@@ -19,11 +20,11 @@
 </div>
 
 > [!WARNING]
-> **🚧 Under construction.** SIANN has no tagged release yet. Every build of `main` produces a Windows installer you can try, but projects, file formats and features can still change between builds. Don't use it for work you can't afford to lose yet.
+> **This project is under construction.** SIANN has no tagged release yet. Every build of `main` produces a Windows installer you can try, but projects, file formats and features can still change between builds. Don't use it for work you can't afford to lose yet.
 
 ---
 
-## 🎧 Why "SIANN"?
+## Why "SIANN"
 
 **SIANN** is *聲* in Taiwanese Hokkien (Tâi-gí, pronounced *siann*): **sound**, and also **voice**.
 
@@ -34,18 +35,18 @@ That double meaning is the idea behind the project:
 
 The name is a Taiwanese word on purpose. SIANN is built in Taiwan, its interface speaks Traditional Chinese, Simplified Chinese and English from day one, and it is meant to feel at home for Mandarin-speaking producers who learned their craft on Cubase.
 
-## ✨ Highlights
+## Highlights
 
-| | |
+| Feature | Description |
 |---|---|
-| 🎛️ **A DAW you already know** | Cubase's layout and default key commands: event display, MixConsole, Inspector, Channel zone, numeric keypad transport. |
-| 👻 **See the AI's changes before they happen** | An agent's plan appears as violet *ghosts* on the clips, faders and knobs it would change. Nothing touches your session until you approve. |
-| 🔀 **Audition A/B** | Hear the proposal against your current mix, then approve all steps, some steps, reject with a reason, or merge. |
-| ↩️ **Reversible by design** | Every change is a revision. Plans are hashed and journaled, so an approved plan can't be altered and anything can be rolled back. |
-| 🔌 **Real plugins** | CLAP, VST3 and AU hosting with latency compensation and crash survival. |
-| 🏠 **Local-first** | Your audio, stems and lyrics stay on your machine. Agents connect over MCP and only through reviewed plans. |
+| **A DAW you already know** | Cubase's layout and default key commands: event display, MixConsole, Inspector, Channel zone, numeric keypad transport. |
+| **See the AI's changes before they happen** | An agent's plan appears as violet *ghosts* on the clips, faders and knobs it would change. Nothing touches your session until you approve. |
+| **Audition A/B** | Hear the proposal against your current mix, then approve all steps, some steps, reject with a reason, or merge. |
+| **Reversible by design** | Every change is a revision. Plans are hashed and journaled, so an approved plan can't be altered and anything can be rolled back. |
+| **Real plugins** | CLAP, VST3 and AU hosting with latency compensation and crash survival. |
+| **Local-first** | Your audio, stems and lyrics stay on your machine. Agents connect over MCP and only through reviewed plans. |
 
-## 🖼️ Screenshots
+## Screenshots
 
 <table>
 <tr>
@@ -58,7 +59,7 @@ The name is a Taiwanese word on purpose. SIANN is built in Taiwan, its interface
 </tr>
 </table>
 
-## 🤖 How AI fits in
+## How AI fits in
 
 SIANN is closer to **Cursor for music production** than to a prompt-to-song generator. You bring the stems, loops, FX and taste. The agent helps with the detailed session work:
 
@@ -75,23 +76,23 @@ SIANN is closer to **Cursor for music production** than to a prompt-to-song gene
 
 The engine is the trust boundary. Agents and the UI never edit the session directly; every change is a typed, validated command, and an agent can only reject or discard its own plans.
 
-## 🚧 Project status
+## Project status
 
 **November 2026: the "usable release" milestone is nearly finished.**
 
 | Milestone | What it delivers | Status |
 |---|---|---|
-| Foundations | Native audio engine, command protocol, session documents, plans with review and rollback | ✅ Done |
-| Agent access | Agents work only through reviewed plans (MCP adapter): approve, partially approve, reject, audition, roll back | ✅ Done |
-| Plugins | CLAP, VST3 and AU hosting, with latency compensation and crash survival | ✅ Done, Mac compatibility pass pending |
-| Desktop UI v1 | The studio window: event display, MixConsole, Inspector, Plans tab | ✅ Done, design review pending |
-| **Usable release** | Open with one installer and work as a Cubase user would | 🚧 **Nearly done**, key command audit and end-to-end walkthrough next |
-| Automation | Automation lanes with Write, Touch, Latch and Trim; the remaining edit tools | 📋 Planned |
-| Recording production | Loop recording with takes, MIDI recording, long sessions | 📋 Planned |
-| Mixing structure | Groups, VCAs, sidechain, bounce and stems, a full master channel | 📋 Planned |
-| Embedded | A headless engine on an arm64 Linux board, controlled from a browser | 📋 Planned |
+| Foundations | Native audio engine, command protocol, session documents, plans with review and rollback | Done |
+| Agent access | Agents work only through reviewed plans (MCP adapter): approve, partially approve, reject, audition, roll back | Done |
+| Plugins | CLAP, VST3 and AU hosting, with latency compensation and crash survival | Done (Mac compatibility pass pending) |
+| Desktop UI v1 | The studio window: event display, MixConsole, Inspector, Plans tab | Done (design review pending) |
+| **Usable release** | Open with one installer and work as a Cubase user would | **In progress**: key command audit and end-to-end walkthrough remain |
+| Automation | Automation lanes with Write, Touch, Latch and Trim; the remaining edit tools | Planned |
+| Recording production | Loop recording with takes, MIDI recording, long sessions | Planned |
+| Mixing structure | Groups, VCAs, sidechain, bounce and stems, a full master channel | Planned |
+| Embedded | A headless engine on an arm64 Linux board, controlled from a browser | Planned |
 
-### ✅ What works today
+### What works today
 
 <details open>
 <summary><b>Projects, media and arranging</b></summary>
@@ -123,13 +124,13 @@ The engine is the trust boundary. Agents and the UI never edit the session direc
 
 </details>
 
-### 🔜 Still open before the usable release
+### Still open before the usable release
 
 - [ ] Audit of Cubase's default key commands and the Key Commands list
 - [ ] An end-to-end "Cubase user" walkthrough test and the screenshot tour in three languages
 - [ ] Hands-on checks on a real audio interface, a clean Windows machine and macOS
 
-## 🚀 Try it
+## Try it
 
 **Windows installer.** Each build of the main branch produces `SIANN-Setup-<version>-x64.exe` with a `.sha256` file beside it. Check the hash, run the installer, and start SIANN from the Start menu. The installer is not code-signed yet, so Windows SmartScreen may say it "protected your PC": choose **More info**, then **Run anyway**, once you have checked the hash. Uninstall SIANN from Windows Settings, under Apps.
 
@@ -142,7 +143,7 @@ npm run app -- --plan   # shows those steps without running them
 
 The first run builds the audio engine and takes a while; later runs start straight away.
 
-## 🧭 Product principles
+## Product principles
 
 - **Producer control first:** AI proposes, explains and previews; it applies only what you approve.
 - **Real sessions, not disposable generations:** built for iterative work on your own material.
@@ -150,12 +151,12 @@ The first run builds the audio engine and takes a while; later runs start straig
 - **Reversible by default:** experimenting should never make a session fragile.
 - **Privacy by design:** provider data flow is visible and intentional; cloud and local models both work.
 
-## 🙌 Built for
+## Built for
 
 Producers arranging songs, cues, drops and transitions · film, trailer and game audio teams with large asset packs · remixers working from stems · developers building AI-native music tools · artists who want AI help without giving up local control.
 
 
-## Developer Access
+## Developer access
 
 This repository contains the public project materials, contributor guidance, and the first developer bridge for exploring SIANN command workflows.
 
