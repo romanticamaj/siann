@@ -123,6 +123,10 @@ contextBridge.exposeInMainWorld('siann', {
   // command id of a click in.
   menu: {
     set: (model: unknown): void => ipcRenderer.send('siann:menu:set', model),
+    // m5b-ui-keymap: whether a text field has the focus (the Edit menu's text items act on it).
+    textFocus: (focused: boolean): void => {
+      if (typeof focused === 'boolean') ipcRenderer.send('siann:menu:text-focus', focused);
+    },
     onCommand: (callback: (command: string) => void): void => {
       ipcRenderer.on('siann:menu:command', (_event, value: unknown) => {
         if (typeof value === 'string') callback(value);

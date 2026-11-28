@@ -32,6 +32,8 @@ import { useEffect, useRef, useState } from 'react';
 
 import { refusalLine } from '../i18n/errors';
 import { useLocale, useT, type MessageKey } from '../i18n/t';
+import { keyOf, tipWithKey } from '../keys/chord-label';
+import type { CommandId } from '../keys/commands';
 import { Icon, type IconName } from '../shell/icons';
 import { useEditGuard } from '../plans/heard-context';
 import { ISOLATE } from '../plans/isolate';
@@ -82,6 +84,9 @@ export interface ProposalPillProps {
 }
 
 // The mockup's nine tools in tool()'s order; the ones SIANN has carry their tool.
+// Each tool's command, whose key its tooltip names (m5b-ui-keymap).
+const TOOL_COMMANDS: Readonly<Record<Tool, CommandId>> = { select: 'tool.select', split: 'tool.split', glue: 'tool.glue', erase: 'tool.erase' };
+
 const TOOLS: ReadonlyArray<{ readonly key: number; readonly landed?: { readonly icon: IconName; readonly tool: Tool; readonly testid: string; readonly label: MessageKey } }> = [
   { key: 1, landed: { icon: 'ptr', tool: 'select', testid: 'tool-select', label: 'tool.select' } },
   { key: 2 },
@@ -136,7 +141,7 @@ export function Toolbar({ tool, snap, autoScroll, gates, error, onTool, onSnapTo
                 data-testid={landed.testid}
                 aria-pressed={on}
                 aria-label={t(landed.label)}
-                title={guarded ?? t(landed.label)}
+                title={guarded ?? tipWithKey(t, t(landed.label), TOOL_COMMANDS[landed.tool])}
                 disabled={guarded !== null}
                 onClick={() => onTool(landed.tool)}
               >
@@ -156,7 +161,7 @@ export function Toolbar({ tool, snap, autoScroll, gates, error, onTool, onSnapTo
             aria-pressed={snap.on}
             aria-haspopup="menu"
             aria-expanded={snapMenu !== null}
-            title={t('snap.toggle')}
+            title={tipWithKey(t, t('snap.toggle'), 'edit.snapToggle')}
             onClick={(event) => {
               // The chevron opens the snap type menu; the rest of the field turns snap on and off.
               const target = event.target as Element | null;
@@ -213,7 +218,7 @@ export function Toolbar({ tool, snap, autoScroll, gates, error, onTool, onSnapTo
             data-testid="auto-scroll"
             aria-pressed={autoScroll}
             aria-label={t('transport.autoScroll')}
-            title={t('toolbar.autoScrollTitle')}
+            title={tipWithKey(t, t('toolbar.autoScrollTitle'), 'view.autoScroll')}
             style={{ padding: '0 var(--space-1h)' }}
             onClick={onAutoScroll}
           >
@@ -266,7 +271,7 @@ function ProposalPill({ lead, steps, on, onToggle }: ProposalPillProps) {
         <b>{lead}</b>
         {` · ${steps}`}
       </span>
-      <button type="button" className="tog" data-testid="proposal-pill-toggle" aria-pressed={on} aria-label={t('pill.toggle')} title={t('pill.toggle')} onClick={onToggle}>
+      <button type="button" className="tog" data-testid="proposal-pill-toggle" aria-pressed={on} aria-label={t('pill.toggle', { key: keyOf('plans.toggleGhosts') })} title={t('pill.toggle', { key: keyOf('plans.toggleGhosts') })} onClick={onToggle}>
         <Icon name="check" small />
         {t('pill.ghosts')}
       </button>

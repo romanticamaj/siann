@@ -41,6 +41,7 @@ import type { PickerController } from '../../src/renderer/mixer/picker';
 import { parseEngineStatus } from '../../src/renderer/model/engine-status';
 import type { PluginActions } from '../../src/renderer/model/plugin-actions';
 import { Inspector } from '../../src/renderer/shell/Inspector';
+import { currentPlatform, formatChord } from '../../src/renderer/keys/chord-label';
 import { RecordContext } from '../../src/renderer/shell/record-context';
 import { recordHost } from './support/record-host';
 import { translator } from '../../src/renderer/i18n/t';
@@ -132,13 +133,20 @@ test('the left zone has the template\'s rows in its order and classes', () => {
   assert.deepEqual(elements(track).map(sig), ['div.i-name', 'div.i-btns', 'div.i-row', 'div.i-row']);
 });
 
+// The hint is the preset's Alt+I written for the platform the test runs on
+// (formatChord, as the head does): Alt+I on Windows and Linux, as the mockup
+// draws it, and ⌥I on macOS, so the mockup's text is compared without it.
 test('the head: the title and the key hint of the left zone', () => {
+  assert.equal(formatChord('Alt+I', 'other'), 'Alt+I');
+  assert.equal(formatChord('Alt+I', 'mac'), '⌥I');
+  const hint = formatChord('Alt+I', currentPlatform());
   for (const [locale, lang] of [['en', 'en'], ['zh-Hant', 'zh-TW']] as const) {
     const head = find(render([vox()], { locale }), byClass('z-head'));
     const mHead = find(mockupZone(lang), byClass('z-head'));
-    assert.equal(text(head), text(mHead), locale);
     assert.deepEqual(elements(head).map(sig), ['span.k']);
-    assert.equal(text(elements(head)[0]!), 'Alt+I');
+    assert.equal(text(elements(head)[0]!), hint);
+    assert.equal(text(elements(mHead)[0]!), 'Alt+I');
+    assert.equal(text(head).slice(0, -hint.length), text(mHead).slice(0, -'Alt+I'.length), locale);
   }
 });
 

@@ -30,7 +30,8 @@
 import { useEffect, useRef, useSyncExternalStore } from 'react';
 
 import { useT } from '../i18n/t';
-import type { CommandRegistry } from '../keys/commands';
+import { tipWithKey } from '../keys/chord-label';
+import type { CommandId, CommandRegistry } from '../keys/commands';
 import type { EngineStatusSource } from '../model/engine-status';
 import type { PlanStore } from '../model/plan-store';
 import type { SessionClient } from '../model/session-client';
@@ -98,6 +99,13 @@ function DspLoad({ source }: { source: EngineStatusSource }) {
 }
 
 const ZONE_ORDER: readonly Zone[] = ['channel', 'left', 'lower', 'right'];
+// Each zone button's command, whose key its tooltip names (m5b-ui-keymap).
+const ZONE_COMMAND: Readonly<Record<(typeof ZONE_ORDER)[number], CommandId>> = {
+  channel: 'zone.channel.toggle',
+  left: 'zone.left.toggle',
+  lower: 'zone.lower.toggle',
+  right: 'zone.right.toggle',
+};
 const ZONE_ICON: Readonly<Record<Zone, IconName>> = { channel: 'zCh', left: 'zLeft', lower: 'zLow', right: 'zRight' };
 
 export function TopBar({
@@ -178,14 +186,22 @@ export function TopBar({
               data-part={`zone-button-${zone}`}
               aria-pressed={zones[zone].visible}
               aria-label={t(`zone.${zone}`)}
-              title={t(`zone.${zone}`)}
+              title={tipWithKey(t, t(`zone.${zone}`), ZONE_COMMAND[zone])}
               onClick={() => onToggle(zone)}
             >
               <Icon name={ZONE_ICON[zone]} />
             </button>
           ))}
         </span>
-        <button type="button" className="aibtn" data-testid="plans-button" data-part="plans-button" aria-pressed={zones.right.visible} onClick={onPlans}>
+        <button
+          type="button"
+          className="aibtn"
+          data-testid="plans-button"
+          data-part="plans-button"
+          aria-pressed={zones.right.visible}
+          title={tipWithKey(t, t('topbar.plans'), 'zone.right.plans')}
+          onClick={onPlans}
+        >
           <Icon name="spark" />
           {t('topbar.plans')}
           {pending > 0 ? (

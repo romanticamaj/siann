@@ -84,6 +84,7 @@ import { useT } from '../i18n/t';
 import type { CommandId, CommandRegistry, ZoneScope } from '../keys/commands';
 import { composingKey, isTextField, resolveKey } from '../keys/dispatcher';
 import { clearEscape, markEscape } from '../keys/escape-intent';
+import { chordsOf, formatChord } from '../keys/chord-label';
 import { CUBASE_PRESET } from '../keys/preset-cubase';
 import { capabilitySelector } from '../model/capabilities';
 import { FOCUS_COMMANDS, focusMove, ringStep, type FocusPlace } from '../keys/zone-focus';
@@ -149,8 +150,9 @@ const COLLAPSE_THRESHOLD = 4;
 // The focus keys run before any element's handler; the rest after.
 const FOCUS_PRESET = CUBASE_PRESET.filter((b) => FOCUS_COMMANDS.has(b.commandId));
 const COMMAND_PRESET = CUBASE_PRESET.filter((b) => !FOCUS_COMMANDS.has(b.commandId));
-// The MixConsole tab's key, as the mockup writes it (the preset's first chord for it).
-const MIXCONSOLE_KEY = CUBASE_PRESET.find((b) => b.commandId === 'zone.lower.mixconsole')?.chord ?? '';
+// The MixConsole tab's key, as the mockup writes it (the preset's first chord
+// for it), written for the platform (m5b-ui-keymap: keys/chord-label.ts).
+const MIXCONSOLE_CHORD = chordsOf('zone.lower.mixconsole')[0];
 const TRANSPORT_METHODS = ['transport.play', 'transport.stop', 'transport.locate'];
 const TABBABLE ='a[href], button, input, select, textarea, [tabindex], [contenteditable="true"]';
 
@@ -745,7 +747,7 @@ export function Shell({
         onClick={() => store.dispatch({ type: 'tab', zone: 'lower', tab: 'mixconsole' })}
       >
         <Icon name="sliders" small />
-        {t('tab.mixconsole')} <kbd>{MIXCONSOLE_KEY}</kbd>
+        {t('tab.mixconsole')} <kbd>{MIXCONSOLE_CHORD === undefined ? '' : formatChord(MIXCONSOLE_CHORD, platform)}</kbd>
       </button>
       <button
         type="button"

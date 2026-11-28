@@ -55,7 +55,7 @@ import { createRoot } from 'react-dom/client';
 
 import { App } from './App';
 import { COMMAND_IDS, CommandRegistry, type CommandId } from './keys/commands';
-import { platformOf } from './keys/dispatcher';
+import { isTextField, platformOf } from './keys/dispatcher';
 import { createLocaleStore, htmlLang, type LocaleStorage, type LocaleStore } from './i18n/locale';
 import { reconnectedMessage } from './i18n/messages';
 import { installLocaleStore, translator } from './i18n/t';
@@ -77,7 +77,7 @@ import { RecordController, RecordStore, earlyEndLine } from './model/record';
 import { capabilitySelector, type Capabilities } from './model/capabilities';
 import { ProjectController, SavedMark, type ShellPort, type ShellProjectState } from './model/project';
 import { StudioSetupController } from './model/studio-setup';
-import { appMenuModel, type MenuModel } from './shell/app-menu';
+import { appMenuModel, runMenuCommand, type MenuModel } from './shell/app-menu';
 import { TransportController } from './model/transport';
 import { createLayoutStore } from './shell/layout-store';
 import { announceReconnects, ToastStore } from './shell/toast-store';
@@ -119,6 +119,8 @@ declare global {
       menu?: {
         set(model: MenuModel): void;
         onCommand(callback: (command: string) => void): void;
+        // m5b-ui-keymap: whether a text field has the focus (the Edit menu's text items act on it).
+        textFocus?(focused: boolean): void;
       };
     };
     // The gesture controller, for the e2e tests to wait on (settled).
@@ -353,6 +355,7 @@ if (menuBridge) {
       busSelected: busSelection.getSnapshot() !== null,
       // The edit guard (4.5 C5): Add Bus and Remove Bus are disabled with its reason while a proposal is heard.
       guard: structuralBlocked(plans.getSnapshot().heard) ? translator(locales.getSnapshot())(GUARD_REASON) : null,
+      platform: platformOf(navigator.platform),
     });
     const text = JSON.stringify(model);
     if (text === sentMenu) return;
@@ -365,9 +368,20 @@ if (menuBridge) {
   busSelection.subscribe(pushMenu);
   plans.subscribe(pushMenu);
   pushMenu();
+  // A click runs the handler the command's key runs, in its key's scope (m5b-ui-keymap).
   menuBridge.onCommand((command) => {
-    if ((COMMAND_IDS as readonly string[]).includes(command)) commands.run('window', command as CommandId);
+    if ((COMMAND_IDS as readonly string[]).includes(command)) runMenuCommand(commands, command as CommandId);
   });
+  // The Edit menu's text items act on a focused text field (m5b-ui-keymap): the shell hears when one has the focus.
+  let textFocused = false;
+  const reportFocus = () => {
+    const focused = isTextField(document.activeElement);
+    if (focused === textFocused) return;
+    textFocused = focused;
+    menuBridge.textFocus?.(focused);
+  };
+  document.addEventListener('focusin', reportFocus);
+  document.addEventListener('focusout', () => queueMicrotask(reportFocus));
 }
 
 // The window title: the session's name, the saved mark, the app's name.

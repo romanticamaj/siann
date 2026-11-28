@@ -6,6 +6,10 @@
 // Cubase writes Ctrl/Cmd+Alt/Opt+L; here that is Mod+Alt+L.
 //
 // Phase 1 binds what m5-ui-shell implements; each later ticket adds its rows.
+// app/test/unit/support/cubase-reference.ts transcribes research section 7, and the audit
+// (key-audit.test.ts) holds this table to it (m5b-ui-keymap). Nothing else
+// writes a key: menus, tooltips and the Key Commands list read this table
+// through keys/chord-label.ts.
 
 import type { Binding } from './commands';
 
@@ -178,4 +182,26 @@ export const CUBASE_PRESET: readonly Binding[] = [
   { chord: 'Numpad9', commandId: 'marker.goTo9', scope: 'window' },
   { chord: 'Shift+N', commandId: 'marker.next', scope: 'window' },
   { chord: 'Shift+B', commandId: 'marker.previous', scope: 'window' },
+  // The rest of Cubase's transport keys (m5b-ui-keymap; spec 3.1, 3.6;
+  // research/cubase.md 7.1): Num - and Num + rewind and forward a bar, Ctrl+Num
+  // - and Ctrl+Num + nudge the cursor a grid step, Shift+T types the tempo,
+  // Num , is Go to Project Start too. The laptop fallbacks (SIANN additions,
+  // 3.6): - and = wind, Ctrl+- and Ctrl+= nudge, Shift+Enter starts and Shift+0
+  // stops (Shift and the digit mirror Num 0, as Shift+1 and Shift+2 mirror Num
+  // 1 and Num 2), Ctrl+1 and Ctrl+2 set the locators (Cubase's Set Marker 1
+  // and 2, which are the locators: a difference the audit lists).
+  { chord: 'NumpadSubtract', commandId: 'transport.rewind', scope: 'window' },
+  { chord: 'NumpadAdd', commandId: 'transport.forward', scope: 'window' },
+  { chord: 'Minus', commandId: 'transport.rewind', scope: 'window' },
+  { chord: 'Equal', commandId: 'transport.forward', scope: 'window' },
+  { chord: 'Mod+NumpadSubtract', commandId: 'transport.nudgeCursorLeft', scope: 'window' },
+  { chord: 'Mod+NumpadAdd', commandId: 'transport.nudgeCursorRight', scope: 'window' },
+  { chord: 'Mod+Minus', commandId: 'transport.nudgeCursorLeft', scope: 'window' },
+  { chord: 'Mod+Equal', commandId: 'transport.nudgeCursorRight', scope: 'window' },
+  { chord: 'Shift+T', commandId: 'transport.enterTempo', scope: 'window' },
+  { chord: 'NumpadComma', commandId: 'transport.toStart', scope: 'window' },
+  { chord: 'Shift+Enter', commandId: 'transport.start', scope: 'window' },
+  { chord: 'Shift+0', commandId: 'transport.stop', scope: 'window' },
+  { chord: 'Mod+1', commandId: 'transport.setLeftLocator', scope: 'window' },
+  { chord: 'Mod+2', commandId: 'transport.setRightLocator', scope: 'window' },
 ];

@@ -90,6 +90,7 @@ import { MeterPanel } from './shell/MeterPanel';
 import type { LayoutStore } from './shell/layout-store';
 import { Shell, useViewport } from './shell/Shell';
 import { StartView } from './shell/StartView';
+import { KeyCommands } from './shell/KeyCommands';
 import { StudioSetup } from './shell/StudioSetup';
 import { TimeFormatContext } from './shell/time-format';
 import type { ToastStore } from './shell/toast-store';
@@ -334,6 +335,17 @@ export function App({
       }),
     [commands, client],
   );
+  // Help > Key Commands (m5b-ui-keymap; UI redesign 3.6): the read-only list, from the menu only.
+  const [keysOpen, setKeysOpen] = useState(false);
+  const closeKeys = useCallback(() => setKeysOpen(false), []);
+  useEffect(
+    () =>
+      commands.register('window', 'help.keyCommands', () => {
+        setKeysOpen(true);
+        return true;
+      }),
+    [commands],
+  );
   const sessionRate = useSyncExternalStore(
     (listener) => client.model.subscribe(listener),
     () => client.model.getSnapshot()?.root?.sampleRate ?? null,
@@ -472,6 +484,7 @@ export function App({
           saved={saved}
           onStudioSetup={setupAvailable ? openSetup : undefined}
         />
+        <KeyCommands open={keysOpen} onClose={closeKeys} />
         {inserts && pluginsListed(capabilitySelector(capabilities)) ? <PluginPicker picker={inserts.picker} trackName={trackName} busName={busName} /> : null}
         {removing ? (
           <ConfirmDialog

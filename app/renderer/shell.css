@@ -22,7 +22,7 @@
 /* The app's overlays, which the mockup does not draw, keep the plain text
    styles of the page before the port: every zone takes base.css's body text,
    as the mockup does. */
-.toasts, .about-panel, .confirm-dialog, .studio-setup, .start-view, .time-format-menu, .grid-type-menu, .event-display-menu, .click-level, .record-options, .pending-takes {
+.toasts, .about-panel, .confirm-dialog, .studio-setup, .start-view, .time-format-menu, .grid-type-menu, .event-display-menu, .click-level, .record-options, .pending-takes, .key-commands {
   line-height: var(--line-height);
   letter-spacing: normal;
   font-variant-numeric: tabular-nums;
@@ -242,6 +242,11 @@ code, dd { font-family: var(--font-mono); }
   color: var(--tx-0);
 }
 .position-field[aria-invalid="true"] { border-color: var(--err); }
+/* The tempo field over the tempo cell (Shift+T; m5b-ui-keymap): the position
+   field's look, in the tempo value's size. */
+.lcd .cell[data-part="display-tempo"] { position: relative; }
+.lcd .cell[data-part="display-tempo"][data-editing="true"] [data-testid="transport-tempo"] { visibility: hidden; }
+.position-field.tempo-field { padding: 0 var(--space); font-size: var(--fs-session); }
 /* The metronome's level (right-click on its button). */
 .click-level {
   position: fixed;
@@ -601,6 +606,9 @@ input.marker-rename {
    shows and a click on it opens the list. A row that cannot be keeps the
    .irow's height empty. */
 .irow[aria-hidden="true"] { min-height: var(--control-h); }
+/* The label column keeps the mockup's width and grows for a longer label
+   (the pseudo-locale's "[Out~~]"), never cut, as the fit check asks. */
+[data-part="inspector-routing"] .irow { grid-template-columns: minmax(var(--inspector-routing-label-w), max-content) minmax(0, 1fr); }
 .irow .pick { position: relative; min-width: 0; }
 .irow .pick-name { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .irow .pick-select { position: absolute; inset: 0; width: 100%; height: 100%; opacity: 0; cursor: pointer; }
@@ -883,7 +891,7 @@ input.marker-rename {
 .statusbar .about:hover:not(:disabled) { color: var(--tx-2); }
 .about-summary { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
 .about-tail { flex: none; white-space: pre; }
-.about-panel, .confirm-dialog, .studio-setup, .pending-takes {
+.about-panel, .confirm-dialog, .studio-setup, .pending-takes, .key-commands {
   width: min(var(--dialog-w), calc(100vw - var(--dialog-margin)));
   max-height: calc(100vh - var(--dialog-margin));
   overflow: auto;
@@ -895,10 +903,10 @@ input.marker-rename {
   font-size: var(--fs-body);
   white-space: normal;
 }
-.about-panel::backdrop, .confirm-dialog::backdrop, .studio-setup::backdrop, .pending-takes::backdrop { background: var(--scrim); }
-.about-panel h2, .studio-setup h2 { margin: 0 0 calc(var(--space) * 2); font-size: var(--fs-plan); font-weight: 600; }
+.about-panel::backdrop, .confirm-dialog::backdrop, .studio-setup::backdrop, .pending-takes::backdrop, .key-commands::backdrop { background: var(--scrim); }
+.about-panel h2, .studio-setup h2, .key-commands h2 { margin: 0 0 calc(var(--space) * 2); font-size: var(--fs-plan); font-weight: 600; }
 .about-panel-line { margin: 0 0 calc(var(--space) * 3); overflow-wrap: anywhere; user-select: text; }
-.about-panel h3, .studio-setup h3 { margin: 0 0 var(--space); font-size: var(--fs-small); font-weight: 600; color: var(--tx-2); }
+.about-panel h3, .studio-setup h3, .key-commands h3 { margin: 0 0 var(--space); font-size: var(--fs-small); font-weight: 600; color: var(--tx-2); }
 .about-diagnostics {
   display: grid;
   grid-template-columns: max-content 1fr;
@@ -928,6 +936,40 @@ input.marker-rename {
   border-radius: var(--radius-m);
 }
 .setup-error { margin: 0 0 calc(var(--space) * 3); color: var(--err); overflow-wrap: anywhere; }
+
+/* The Key Commands list (m5b-ui-keymap; UI redesign 3.6): the About panel's
+   dialog chrome (above) as a column: the title, the search field, the list
+   scrolling between them and Close, each command a row of name and keys,
+   the keys as the MixConsole tab's kbd draws them. The mockup has no such
+   dialog; existing tokens only. */
+.key-commands[open] { display: flex; flex-direction: column; overflow: hidden; }
+.key-commands-search {
+  flex: none;
+  min-height: var(--control-h);
+  margin: 0 0 calc(var(--space) * 3);
+  padding: 0 var(--space);
+  background: var(--bg-3);
+  color: inherit;
+  font: inherit;
+  border: var(--hairline) solid var(--line-2);
+  border-radius: var(--radius-s);
+}
+.key-commands-list { flex: 1 1 auto; min-height: 0; overflow: auto; margin: 0 0 calc(var(--space) * 3); }
+.key-commands-list section { margin: 0 0 calc(var(--space) * 3); }
+.key-commands-list table { width: 100%; border-collapse: collapse; font-size: var(--fs-small); }
+.key-commands-list th, .key-commands-list td { padding: var(--space-half) var(--space); text-align: start; border-bottom: var(--hairline) solid var(--line-2); }
+.key-commands-list th { font-weight: normal; color: var(--tx-1); }
+.key-commands-list .keys { text-align: end; white-space: nowrap; }
+.key-commands-list kbd {
+  margin-inline-start: var(--space);
+  font: var(--fw-ui) var(--fs-9) var(--font-num);
+  color: var(--tx-3);
+  border: var(--hairline) solid var(--line-2);
+  border-radius: var(--radius-s);
+  padding: 0 var(--space-3q);
+  white-space: nowrap;
+}
+.key-commands-none { margin: 0; color: var(--tx-3); }
 .setup-none { margin: 0 0 calc(var(--space) * 3); color: var(--tx-3); }
 
 /* The start view (m5b-ui-project): over the zones, between the top bar and

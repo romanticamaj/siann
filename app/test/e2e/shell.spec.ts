@@ -114,7 +114,7 @@ test('the renderer connects with the token handshake', async () => {
   });
   expect([...bridge.top].sort()).toEqual(['engine', 'media', 'menu', 'power', 'project']);
   expect([...bridge.project].sort()).toEqual(['chooseNew', 'chooseOpen', 'onChange', 'opened', 'state']);
-  expect([...bridge.menu].sort()).toEqual(['onCommand', 'set']);
+  expect([...bridge.menu].sort()).toEqual(['onCommand', 'set', 'textFocus']);
   expect([...bridge.engine].sort()).toEqual(['current', 'onChange']);
   expect([...bridge.media].sort()).toEqual(['choose', 'pathForFile']);
   expect([...bridge.power]).toEqual(['recording']);

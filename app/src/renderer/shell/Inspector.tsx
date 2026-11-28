@@ -87,7 +87,7 @@ import { useEffect, useMemo, useRef, useSyncExternalStore, type CSSProperties, t
 
 import { formatDb, formatPan } from '../format';
 import { useT } from '../i18n/t';
-import { CUBASE_PRESET } from '../keys/preset-cubase';
+import { chordsOf, currentPlatform, formatChord } from '../keys/chord-label';
 import { percent, toggleTrack, useTrack } from '../mixer/Strip';
 import { isAboveCap, MINUS_INFINITY_MILLI_DB } from '../mixer/taper';
 import { ValueReadout } from '../mixer/ValueControl';
@@ -140,8 +140,10 @@ export interface InspectorProps {
   readonly onEditChannel?: (trackId: string) => void;
 }
 
-// The zone's key hint: the preset's last chord that shows it (Alt+I, as the mockup writes it).
-const KEY_HINT = CUBASE_PRESET.filter((binding) => binding.commandId === 'zone.left.toggle').at(-1)?.chord ?? '';
+// The zone's key hint: the preset's last chord that shows it (Alt+I, as the
+// mockup writes it), written for the platform (m5b-ui-keymap: keys/chord-label.ts).
+const KEY_CHORD = chordsOf('zone.left.toggle').at(-1);
+const KEY_HINT = KEY_CHORD === undefined ? '' : formatChord(KEY_CHORD, currentPlatform());
 
 // The sections sec() draws, in its order, as the classes of their empty boxes
 // (spec 3.0): the section's name, and .shut where the mockup draws it shut (an

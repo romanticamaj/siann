@@ -25,6 +25,7 @@ import { en } from '../../src/renderer/i18n/en';
 import { zhHant } from '../../src/renderer/i18n/zh-Hant';
 import type { Locale, LocaleStore } from '../../src/renderer/i18n/locale';
 import { installLocaleStore, localeStore, translator } from '../../src/renderer/i18n/t';
+import { CANCEL_CHORD, formatChord } from '../../src/renderer/keys/chord-label';
 import type { Capabilities } from '../../src/renderer/model/capabilities';
 import type { TrackEntity } from '../../src/renderer/model/document';
 import type { GestureController } from '../../src/renderer/model/gesture-controller';
@@ -200,7 +201,9 @@ test('the refusal line and the "changed elsewhere" line render from the catalogs
     const root = renderStore(fakeClient([vox('v2')]), flagged, locale);
     const line = find(root, byAttr('data-testid', 'notepad-changed'));
     assert.equal(line.attrs.role, 'status');
-    assert.equal(text(line), catalog['notepad.changedElsewhere']);
+    // The key comes from the formatter: Esc, on every platform.
+    assert.equal(text(line), String(catalog['notepad.changedElsewhere']).replace('{key}', formatChord(CANCEL_CHORD, 'other')));
+    assert.ok(text(line).includes('Esc'), text(line));
     assert.equal(text(find(root, (el) => el.tag === 'textarea')), 'mine');
   }
 });

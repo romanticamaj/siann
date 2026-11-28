@@ -157,6 +157,15 @@ export const COMMAND_IDS = [
   'marker.goTo9',
   'marker.next',
   'marker.previous',
+  // The rest of Cubase's transport keys and the Key Commands list
+  // (m5b-ui-keymap; spec 3.1, 3.6, UR-11): rewind and forward a bar, nudge
+  // the cursor a grid step, type the tempo; Help > Key Commands, unbound.
+  'transport.rewind',
+  'transport.forward',
+  'transport.nudgeCursorLeft',
+  'transport.nudgeCursorRight',
+  'transport.enterTempo',
+  'help.keyCommands',
 ] as const;
 export type CommandId = (typeof COMMAND_IDS)[number];
 
